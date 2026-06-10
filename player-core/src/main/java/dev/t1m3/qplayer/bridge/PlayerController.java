@@ -67,6 +67,9 @@ public final class PlayerController {
 
     /** Current library (local + transient netease). Bumped on any change. */
     public final Property<List<Track>> tracks = new Property<>(Collections.<Track>emptyList());
+    /** Reactive row counts for Repeater {@code model:} bindings (int model). */
+    public final Property<Integer> libraryCount = new Property<>(0);
+    public final Property<Integer> resultCount = new Property<>(0);
     /** Parsed lyric lines for the current track (syllable-level when available). */
     public final Property<List<LyricLine>> lyrics = new Property<>(Collections.<LyricLine>emptyList());
     /** Latest netease search results. */
@@ -136,10 +139,36 @@ public final class PlayerController {
         library.clear();
         library.addAll(found);
         tracks.set(new ArrayList<>(library));
+        libraryCount.set(library.size());
     }
 
     public int trackCount() {
         return library.size();
+    }
+
+    // Row accessors for Repeater delegates (model bound to libraryCount).
+    public String trackTitle(int i) {
+        return i >= 0 && i < library.size() ? orEmpty(library.get(i).title) : "";
+    }
+
+    public String trackArtist(int i) {
+        return i >= 0 && i < library.size() ? orEmpty(library.get(i).artist) : "";
+    }
+
+    // Row accessors for search results (model bound to resultCount).
+    public String resultTitle(int i) {
+        List<NeteaseSong> r = searchResults.peek();
+        return i >= 0 && i < r.size() ? orEmpty(r.get(i).name) : "";
+    }
+
+    public String resultArtist(int i) {
+        List<NeteaseSong> r = searchResults.peek();
+        return i >= 0 && i < r.size() ? orEmpty(r.get(i).artist) : "";
+    }
+
+    public long resultId(int i) {
+        List<NeteaseSong> r = searchResults.peek();
+        return i >= 0 && i < r.size() ? r.get(i).id : 0L;
     }
 
     // --- Playback control (invoked from QML, render thread) ---------------
@@ -235,7 +264,10 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
-                post(() -> searchResults.set(r));
+                post(() -> {
+                    searchResults.set(r);
+                    resultCount.set(r.size());
+                });
             } catch (Throwable e) {
                 Logger.warn("search failed: {}", e.getMessage());
             }
@@ -291,6 +323,7 @@ public final class PlayerController {
             idx = library.size() - 1;
         }
         tracks.set(new ArrayList<>(library));
+        libraryCount.set(library.size());
         index.set(idx);
         title.set(orEmpty(t.title));
         artist.set(orEmpty(t.artist));

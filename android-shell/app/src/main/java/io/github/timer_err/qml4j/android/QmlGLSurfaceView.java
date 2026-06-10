@@ -26,6 +26,8 @@ import io.github.timer_err.qml4j.render.ResourceLoader;
 import io.github.timer_err.qml4j.render.SurfaceBackend;
 import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
+import dev.t1m3.qplayer.bridge.PlayerController;
+
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
@@ -36,6 +38,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private final ResourceLoader resources;
     private QmlView view;
     private SkijaGlSurface surface;
+    private PlayerController controller;
     // Logical-pixel scale: QML is authored in dp; render at the screen density so
     // Material components are physically sized (and the canvas drawn larger).
     private final float uiScale;
@@ -176,6 +179,12 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         return view;
     }
 
+    /** Expose a controller to QML as the {@code player} context global. Must be
+     *  set before the GL thread first lays out (i.e. right after construction). */
+    public void setController(PlayerController c) {
+        this.controller = c;
+    }
+
     void sendSyntheticKey(final int code, final String text) {
         queueEvent(new Runnable() {
             @Override public void run() {
@@ -266,6 +275,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         hideImeOnUiThread();
                     }
                 });
+                if (controller != null) view.context("player", controller);
                 view.load(qmlSource);
             }
             if (view.root() != null) {
@@ -280,6 +290,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             DirtyQueue dq = view.dirtyQueue();
             dq.install();
             try {
+                if (controller != null) controller.pump();
                 view.tickAnimations(System.nanoTime());
                 dq.flush();
                 Canvas canvas = surface.acquireCanvas();
