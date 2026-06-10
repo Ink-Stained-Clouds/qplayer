@@ -1,0 +1,17 @@
+# Reference clones — source-mined, not part of this repo
+/qml4j/
+/Haedus/
+
+# Build output
+target/
+build/
+.gradle/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# App runtime data
+.musicplayer/

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.musicplayer</groupId>
+        <artifactId>musicplayer-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>player-core</artifactId>
+    <name>Player Core</name>
+    <description>Platform-neutral player logic (netease, lyrics, audio abstraction, QML bridge) — must stay Android-dexable: no javax.sound, no native deps.</description>
+
+    <dependencies>
+        <!-- QML engine: needed for the reactive Property bridge to QML.
+             skija stays out — player-core touches engine.binding only, not render. -->
+        <dependency>
+            <groupId>io.github.timer-err</groupId>
+            <artifactId>qml4j-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+
+        <!-- Pure-Java QR encoding for the netease login dialog. core only —
+             no javase/ImageIO module, so it stays Android-dexable. -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+    </dependencies>
+</project>
