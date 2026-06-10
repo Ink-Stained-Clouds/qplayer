@@ -42,7 +42,7 @@ Rectangle {
                     Layout.alignment: Qt.AlignVCenter
                     type: "filled"
                     leadingIcon: "search"
-                    placeholderText: "搜索网易云歌曲"
+                    label: "搜索网易云歌曲"
                     onAccepted: player.search(query.text)
                 }
 
