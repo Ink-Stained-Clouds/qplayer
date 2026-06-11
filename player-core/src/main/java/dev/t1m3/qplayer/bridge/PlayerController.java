@@ -521,28 +521,53 @@ public final class PlayerController {
         return i >= 0 && i < queue.size() ? queue.get(i) : null;
     }
 
-    // --- Login ------------------------------------------------------------
+    // --- Login (fully async: qrLoginKey/qrLoginCheck are blocking HTTP, must
+    //     never run on the render thread the QML handlers call from) ----------
 
     private volatile String pendingUnikey;
+    /** QR module matrix (true=dark) as nested Lists so QML can index [y][x]. */
+    public final Property<List<List<Boolean>>> qrImage =
+            new Property<>(Collections.<List<Boolean>>emptyList());
+    /** 0 loading / 800 expired / 801 waiting / 802 scanned / 803 success. */
+    public final Property<Integer> qrStatus = new Property<>(0);
 
-    /** QR payload to encode for login (the QML dialog draws it via {@link #qrMatrix()}). */
-    public String qrLoginContent() {
-        try {
-            String key = netease.qrLoginKey();
-            pendingUnikey = key;
-            return netease.qrLoginContent(key);
-        } catch (Throwable e) {
-            Logger.warn("qrLoginContent failed: {}", e.getMessage());
-            return "";
-        }
+    /** Mint a login key + matrix off-thread; publishes to {@link #qrImage}/{@link #qrStatus}. */
+    public void startQrLogin() {
+        post(() -> qrStatus.set(0));
+        worker.submit(() -> {
+            try {
+                String key = netease.qrLoginKey();
+                pendingUnikey = key;
+                List<List<Boolean>> m = toMatrix(netease.qrMatrix(key));
+                post(() -> {
+                    qrImage.set(m);
+                    qrStatus.set(801);
+                });
+            } catch (Throwable e) {
+                Logger.warn("startQrLogin failed: {}", e.getMessage());
+                post(() -> qrStatus.set(800));
+            }
+        });
     }
 
-    /** QR module matrix ({@code true}=dark) for the current login key, as nested
-     *  Lists so QML can index it (.length / [y][x]); null if unavailable. */
-    public List<List<Boolean>> qrMatrix() {
+    /** Poll the scan status off-thread; updates {@link #qrStatus}. */
+    public void pollQrLogin() {
         String key = pendingUnikey;
-        boolean[][] m = key == null ? null : netease.qrMatrix(key);
-        if (m == null) return null;
+        if (key == null) return;
+        worker.submit(() -> {
+            try {
+                int code = netease.qrLoginCheck(key);
+                post(() -> qrStatus.set(code));
+                if (code == 803) refreshLogin();
+                else if (code == 800) startQrLogin();
+            } catch (Throwable e) {
+                // transient network blip — keep waiting
+            }
+        });
+    }
+
+    private static List<List<Boolean>> toMatrix(boolean[][] m) {
+        if (m == null) return Collections.emptyList();
         List<List<Boolean>> out = new ArrayList<>(m.length);
         for (boolean[] row : m) {
             List<Boolean> r = new ArrayList<>(row.length);
@@ -550,19 +575,6 @@ public final class PlayerController {
             out.add(r);
         }
         return out;
-    }
-
-    /** Poll QR status: 800 expired / 801 waiting / 802 scanned / 803 success. */
-    public int qrLoginCheck() {
-        String key = pendingUnikey;
-        if (key == null) return 800;
-        try {
-            int code = netease.qrLoginCheck(key);
-            if (code == 803) refreshLogin();
-            return code;
-        } catch (Throwable e) {
-            return 801;
-        }
     }
 
     private void refreshLogin() {

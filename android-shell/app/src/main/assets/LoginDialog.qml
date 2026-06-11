@@ -2,17 +2,14 @@ import QtQuick
 import QtQuick.Layouts
 import md3.Core
 
-// Netease QR login. On open, fetches a login key + module matrix and draws it
-// on a Canvas, then polls the scan status every 800ms (801 waiting / 802
-// scanned / 803 success / 800 expired -> refresh).
+// Netease QR login. All network work is async on the controller: startQrLogin()
+// mints the key + matrix off-thread into player.qrImage, and pollQrLogin() polls
+// the scan status into player.qrStatus — nothing blocks the render thread.
 Rectangle {
     id: dialog
 
     property bool active: false
     signal closed()
-
-    property var qr: null
-    property string status: "正在获取二维码…"
 
     anchors.fill: parent
     opacity: active ? 1 : 0
@@ -20,31 +17,29 @@ Rectangle {
     color: "#99000000"
     Behavior on opacity { NumberAnimation { duration: 150 } }
 
-    onActiveChanged: if (active) refresh(); else poll.stop()
+    onActiveChanged: if (active) player.startQrLogin()
 
-    function refresh() {
-        player.qrLoginContent();          // mints a key (stored controller-side)
-        qr = player.qrMatrix();
-        status = "请用网易云音乐 App 扫码";
-        canvas.requestPaint();
-        poll.restart();
+    function statusText(code) {
+        if (code === 0) return "正在获取二维码…";
+        if (code === 802) return "已扫码，请在手机上确认";
+        if (code === 803) return "登录成功";
+        if (code === 800) return "二维码已过期，正在刷新…";
+        return "请用网易云音乐 App 扫码";
     }
 
-    // swallow taps on the scrim
-    MouseArea { anchors.fill: parent }
+    // redraw when the matrix arrives; close on success
+    property var qr: player.qrImage
+    onQrChanged: canvas.requestPaint()
+    property int st: player.qrStatus
+    onStChanged: if (st === 803) dialog.closed()
+
+    MouseArea { anchors.fill: parent }   // swallow scrim taps
 
     Timer {
-        id: poll
         interval: 800
         repeat: true
         running: dialog.active
-        onTriggered: {
-            var code = player.qrLoginCheck();
-            if (code === 801) dialog.status = "请用网易云音乐 App 扫码";
-            else if (code === 802) dialog.status = "已扫码，请在手机上确认";
-            else if (code === 803) { dialog.status = "登录成功"; poll.stop(); dialog.closed(); }
-            else if (code === 800) { dialog.status = "二维码已过期，正在刷新…"; dialog.refresh(); }
-        }
+        onTriggered: player.pollQrLogin()
     }
 
     Rectangle {
@@ -95,12 +90,17 @@ Rectangle {
                         }
                     }
                 }
+                LoadingIndicator {
+                    anchors.centerIn: parent
+                    running: dialog.st === 0
+                    visible: dialog.st === 0
+                }
             }
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.fillWidth: true
-                text: dialog.status
+                text: dialog.statusText(player.qrStatus)
                 horizontalAlignment: Text.AlignHCenter
                 color: Theme.color.onSurfaceVariantColor
                 fontSize: 14

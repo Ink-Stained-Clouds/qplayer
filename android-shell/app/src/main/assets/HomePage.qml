@@ -26,7 +26,8 @@ Item {
 
         Column {
             id: col
-            width: parent.width
+            x: 8
+            width: parent.width - 16
             spacing: 0
 
             Item {
@@ -44,6 +45,7 @@ Item {
 
             Flow {
                 width: col.width
+                spacing: 12
                 Repeater {
                     id: recPlaylists
                     model: player.recommendPlaylists
