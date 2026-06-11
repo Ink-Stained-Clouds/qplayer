@@ -28,6 +28,9 @@ import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
@@ -39,6 +42,18 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private QmlView view;
     private SkijaGlSurface surface;
     private PlayerController controller;
+    private volatile boolean failed;
+    private ErrorListener errorListener;
+
+    /** Notified (with a full stack trace) when QML load/render throws, so the
+     *  host can surface the error instead of the GL thread crashing the app. */
+    public interface ErrorListener {
+        void onError(String trace);
+    }
+
+    public void setErrorListener(ErrorListener l) {
+        this.errorListener = l;
+    }
     // Logical-pixel scale: QML is authored in dp; render at the screen density so
     // Material components are physically sized (and the canvas drawn larger).
     private final float uiScale;
@@ -266,27 +281,32 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
         @Override
         public void onSurfaceChanged(GL10 gl, int width, int height) {
+            if (failed) return;
             surface.resize(width, height);
-            if (view == null) {
-                view = QmlView.withStockTypes(engine).resources(resources);
-                view.setClipboard(new AndroidClipboard(getContext()));
-                view.setFocusListener((nf, of) -> {
-                    if (of instanceof TextEditable && !(nf instanceof TextEditable)) {
-                        hideImeOnUiThread();
-                    }
-                });
-                if (controller != null) view.context("player", controller);
-                view.load(qmlSource);
-            }
-            if (view.root() != null) {
-                view.root().width.set(width / uiScale);
-                view.root().height.set(height / uiScale);
+            try {
+                if (view == null) {
+                    view = QmlView.withStockTypes(engine).resources(resources);
+                    view.setClipboard(new AndroidClipboard(getContext()));
+                    view.setFocusListener((nf, of) -> {
+                        if (of instanceof TextEditable && !(nf instanceof TextEditable)) {
+                            hideImeOnUiThread();
+                        }
+                    });
+                    if (controller != null) view.context("player", controller);
+                    view.load(qmlSource);
+                }
+                if (view.root() != null) {
+                    view.root().width.set(width / uiScale);
+                    view.root().height.set(height / uiScale);
+                }
+            } catch (Throwable t) {
+                reportError(t);
             }
         }
 
         @Override
         public void onDrawFrame(GL10 gl) {
-            if (view == null) return;
+            if (failed || view == null) return;
             DirtyQueue dq = view.dirtyQueue();
             dq.install();
             try {
@@ -303,9 +323,37 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 renderer.render(canvas, view.root());
                 canvas.restoreToCount(sc);
                 surface.present();
+            } catch (Throwable t) {
+                reportError(t);
             } finally {
                 dq.uninstall();
             }
+        }
+    }
+
+    // First QML load/render failure: stop the loop (so it doesn't crash-spin),
+    // dump the trace to a file we can pull, and hand it to the host to display.
+    private void reportError(Throwable t) {
+        if (failed) return;
+        failed = true;
+        StringWriter sw = new StringWriter();
+        t.printStackTrace(new PrintWriter(sw));
+        String trace = sw.toString();
+        // App-private external dir needs no permission and always succeeds:
+        //   /sdcard/Android/data/<pkg>/files/qplayer-crash.log
+        writeTrace(getContext().getExternalFilesDir(null), trace);
+        // Also try public Downloads (may be denied under scoped storage).
+        writeTrace(android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS), trace);
+        ErrorListener l = errorListener;
+        if (l != null) l.onError(trace);
+    }
+
+    private static void writeTrace(java.io.File dir, String trace) {
+        if (dir == null) return;
+        try (java.io.FileWriter w = new java.io.FileWriter(new java.io.File(dir, "qplayer-crash.log"), false)) {
+            w.write(trace);
+        } catch (Throwable ignored) {
         }
     }
 

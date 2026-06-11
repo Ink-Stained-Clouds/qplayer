@@ -39,8 +39,6 @@ Item {
             text: card.name
             color: Theme.color.onSurfaceColor
             fontSize: 14
-            maximumLineCount: 2
-            wrapMode: Text.WrapAnywhere
             elide: Text.ElideRight
         }
         Text {

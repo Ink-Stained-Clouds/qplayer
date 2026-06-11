@@ -81,6 +81,7 @@ public final class QPlayerActivity extends Activity {
         glView = new QmlGLSurfaceView(this, engine, qml,
                 new AssetResourceLoader(getAssets()), density);
         glView.setController(controller);
+        glView.setErrorListener(trace -> runOnUiThread(() -> showError(trace)));
         setContentView(glView);
 
         controller.loadHome();
@@ -104,6 +105,17 @@ public final class QPlayerActivity extends Activity {
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             scanMusic();
         }
+    }
+
+    private void showError(String trace) {
+        android.widget.TextView tv = new android.widget.TextView(this);
+        tv.setText(trace);
+        tv.setTextSize(11f);
+        tv.setTextIsSelectable(true);
+        tv.setPadding(24, 24, 24, 24);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(tv);
+        setContentView(sv);
     }
 
     private void scanMusic() {
