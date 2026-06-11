@@ -2,11 +2,10 @@ import QtQuick
 import md3.Core
 import "."
 
-// Windowed song list: qml4j neither virtualizes ListView nor culls off-screen
-// Flickable children, so a long Repeater paints + lays out every row each frame
-// (and keeps doing so off-page while playback keeps the scene dirty). Here only
-// the visible window (+buffer) of SongRows exists; as `first` tracks contentY
-// the rows rebind/reposition (recycle). `list` is the full List Property.
+// Windowed song list. Only a fixed pool of SongRows exists; as you scroll, each
+// delegate maps to the item whose index ≡ its slot (mod pool size), so a one-row
+// scroll recycles exactly ONE delegate (not all of them) — avoids the per-row
+// stutter a naive `first+index` window caused. `list` is the full List Property.
 Flickable {
     id: view
 
@@ -17,8 +16,10 @@ Flickable {
     signal activated()
 
     property int count: list ? list.length : 0
+    // Fixed pool size (independent of scroll position so the Repeater never
+    // rebuilds mid-scroll); +4 buffer rows above/below the viewport.
+    property int pool: Math.min(count, Math.ceil(height / rowH) + 4)
     property int first: Math.max(0, Math.floor(contentY / rowH) - 2)
-    property int visCount: Math.max(0, Math.min(count - first, Math.ceil(height / rowH) + 4))
 
     clip: true
     contentWidth: width
@@ -29,13 +30,20 @@ Flickable {
         height: view.contentHeight
 
         Repeater {
-            model: view.visCount
+            model: view.pool
             SongRow {
-                property int abs: view.first + index
+                // Item index this slot currently shows (only one slot's value
+                // changes when `first` steps by one).
+                property int abs: view.pool > 0
+                    ? view.first + (((index - view.first) % view.pool) + view.pool) % view.pool
+                    : -1
                 width: view.width
                 y: abs * view.rowH
-                rowTitle: { var it = view.list[abs]; return it ? (view.isLocal ? it.title : it.name) : "" }
-                rowArtist: { var it = view.list[abs]; return it ? it.artist : "" }
+                visible: abs >= 0 && abs < view.count
+                rowTitle: { var it = (abs >= 0 && abs < view.count) ? view.list[abs] : null;
+                            return it ? (view.isLocal ? it.title : it.name) : "" }
+                rowArtist: { var it = (abs >= 0 && abs < view.count) ? view.list[abs] : null;
+                             return it ? it.artist : "" }
                 highlighted: view.isLocal && abs === player.index
                 onActivated: { view.activatedIndex = abs; view.activated() }
             }
