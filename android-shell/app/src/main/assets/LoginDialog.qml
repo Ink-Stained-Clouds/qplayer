@@ -15,8 +15,10 @@ Rectangle {
     property string status: "正在获取二维码…"
 
     anchors.fill: parent
-    visible: active
+    opacity: active ? 1 : 0
+    visible: opacity > 0.01
     color: "#99000000"
+    Behavior on opacity { NumberAnimation { duration: 150 } }
 
     onActiveChanged: if (active) refresh(); else poll.stop()
 
@@ -51,6 +53,8 @@ Rectangle {
         height: 400
         radius: 24
         color: Theme.color.surfaceContainerHigh
+        scale: dialog.active ? 1 : 0.9
+        Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
         ColumnLayout {
             anchors.fill: parent

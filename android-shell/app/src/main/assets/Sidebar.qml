@@ -77,6 +77,7 @@ Rectangle {
 
                 // selection pill: always present, fades its alpha in/out
                 Rectangle {
+                    id: pill
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: 6
@@ -106,8 +107,8 @@ Rectangle {
                     Behavior on color { ColorAnimation { duration: 200 } }
                 }
                 Ripple {
-                    anchors.fill: parent
-                    clipRadius: 12
+                    anchors.fill: pill
+                    clipRadius: 16
                     onClicked: { rail.pendingIndex = index; rail.navigate() }
                 }
             }
