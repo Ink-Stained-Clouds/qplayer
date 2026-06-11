@@ -79,9 +79,8 @@ Rectangle {
                 width: 220; height: 220; radius: 12
                 color: "#ffffff"
 
-                // Spinner shows while loading (incl. during the open); the QR
-                // Canvas is simply hidden until the matrix is ready, so the
-                // spinner beneath is visible without relying on canvas alpha.
+                // Loading spinner while the QR isn't shown yet. Now crisp: the
+                // engine backs canvases at device resolution.
                 CircularProgress {
                     anchors.centerIn: parent
                     width: 48; height: 48
