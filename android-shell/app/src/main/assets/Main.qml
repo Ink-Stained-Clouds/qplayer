@@ -3,181 +3,100 @@ import QtQuick.Layouts
 import md3.Core
 import "."
 
-// Player screen. Layout is driven by ColumnLayout/RowLayout + Layout.* — no
-// hand-coded x/y. Icons are Material Symbols glyphs (IconButton.icon), not
-// emoji. Everything reactive binds to the `player` context global.
+// SPlayer-style shell: left rail + paged content + bottom mini player, with a
+// playlist-detail overlay, the QR login dialog and the debug log on top.
 Rectangle {
-    id: root
+    id: app
     color: Theme.color.surface
 
+    property int page: 0
+    property bool detailOpen: false
+    property bool loginOpen: false
     property bool showLog: false
-
-    function fmt(ms) {
-        if (ms <= 0) return "0:00";
-        var s = Math.floor(ms / 1000);
-        var m = Math.floor(s / 60);
-        var r = s % 60;
-        return m + ":" + (r < 10 ? "0" + r : r);
-    }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // --- search bar -------------------------------------------------
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 76
-            color: Theme.color.surfaceContainer
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 4
-                spacing: 4
-
-                TextField {
-                    id: query
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "filled"
-                    leadingIcon: "search"
-                    label: "搜索网易云歌曲"
-                    onAccepted: player.search(query.text)
-                }
-
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "filled"
-                    icon: "search"
-                    onClicked: player.search(query.text)
-                }
-
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "standard"
-                    icon: "bug_report"
-                    onClicked: root.showLog = !root.showLog
-                }
-            }
-        }
-
-        // --- scrollable content -----------------------------------------
-        // Column (positioner) gives a definite height for contentHeight, and
-        // the lists bind their List Property directly as the model so a new
-        // result set re-binds modelData even when the row count is unchanged.
-        Flickable {
-            id: scroll
+        // content region: rail + pages, with the detail overlay on top
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            contentHeight: content.height
-
-            Column {
-                id: content
-                width: scroll.width
-                spacing: 0
-
-                SectionHeader {
-                    width: content.width
-                    text: "搜索结果"
-                    visible: player.resultCount > 0
-                }
-
-                Repeater {
-                    model: player.searchResults
-                    SongRow {
-                        width: content.width
-                        rowTitle: modelData.name
-                        rowArtist: modelData.artist
-                        onActivated: player.playSearchResult(index)
-                    }
-                }
-
-                SectionHeader {
-                    width: content.width
-                    text: "本地音乐"
-                    visible: player.libraryCount > 0
-                }
-
-                Repeater {
-                    model: player.tracks
-                    SongRow {
-                        width: content.width
-                        rowTitle: modelData.title
-                        rowArtist: modelData.artist
-                        highlighted: index === player.index
-                        onActivated: player.play(index)
-                    }
-                }
-            }
-        }
-
-        // --- mini player ------------------------------------------------
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 80
-            color: Theme.color.surfaceContainerHigh
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 4
-                spacing: 8
+                spacing: 0
+
+                Sidebar {
+                    Layout.fillHeight: true
+                    currentIndex: app.page
+                    loggedIn: player.loggedIn
+                    userName: player.userName
+                    onNavigate: {
+                        app.page = idx;
+                        if (idx === 2) player.loadMyPlaylists();
+                        else if (idx === 3) player.loadRecent();
+                    }
+                    onAccount: if (!player.loggedIn) app.loginOpen = true
+                }
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: 2
+                    Layout.fillHeight: true
+                    spacing: 0
 
-                    Text {
+                    // slim top bar (debug access)
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: player.title.length > 0 ? player.title : "未播放"
-                        color: Theme.color.onSurfaceColor
-                        fontSize: 15
-                        elide: Text.ElideRight
+                        Layout.preferredHeight: 44
+                        Layout.rightMargin: 4
+                        Item { Layout.fillWidth: true }
+                        IconButton {
+                            Layout.alignment: Qt.AlignVCenter
+                            type: "standard"; icon: "bug_report"
+                            onClicked: app.showLog = !app.showLog
+                        }
                     }
-                    Text {
-                        Layout.fillWidth: true
-                        text: player.artist + (player.durationMs > 0
-                              ? "   " + fmt(player.positionMs) + " / " + fmt(player.durationMs) : "")
-                        color: Theme.color.onSurfaceVariantColor
-                        fontSize: 12
-                        elide: Text.ElideRight
-                    }
-                }
 
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "standard"
-                    icon: player.currentLiked ? "favorite" : "favorite_border"
-                    onClicked: player.toggleLike()
-                }
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "standard"
-                    icon: "skip_previous"
-                    onClicked: player.prev()
-                }
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "filled"
-                    icon: player.playing ? "pause" : "play_arrow"
-                    onClicked: player.toggle()
-                }
-                IconButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    type: "standard"
-                    icon: "skip_next"
-                    onClicked: player.next()
+                    StackLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        currentIndex: app.page
+
+                        HomePage {
+                            onOpenPlaylist: { player.openPlaylist(pl.id); app.detailOpen = true }
+                        }
+                        SearchPage {}
+                        LibraryPage {
+                            onOpenPlaylist: { player.openPlaylist(pl.id); app.detailOpen = true }
+                            onRequestLogin: app.loginOpen = true
+                        }
+                        RecentPage {
+                            onRequestLogin: app.loginOpen = true
+                        }
+                        LocalPage {}
+                    }
                 }
             }
+
+            PlaylistDetailPage {
+                anchors.fill: parent
+                visible: app.detailOpen
+                onBack: app.detailOpen = false
+            }
         }
+
+        MiniPlayer { Layout.fillWidth: true }
     }
 
-    // --- log overlay ----------------------------------------------------
+    LoginDialog {
+        active: app.loginOpen
+        onClosed: app.loginOpen = false
+    }
+
+    // --- debug log overlay ---------------------------------------------
     Rectangle {
-        visible: root.showLog
+        visible: app.showLog
         anchors.fill: parent
         color: Theme.color.surfaceContainerHighest
 
@@ -196,7 +115,7 @@ Rectangle {
                     fontSize: 18
                 }
                 IconButton { type: "standard"; icon: "delete"; onClicked: player.clearLog() }
-                IconButton { type: "standard"; icon: "close"; onClicked: root.showLog = false }
+                IconButton { type: "standard"; icon: "close"; onClicked: app.showLog = false }
             }
 
             Flickable {
@@ -204,7 +123,7 @@ Rectangle {
                 Layout.fillHeight: true
                 Layout.margins: 12
                 clip: true
-                contentHeight: logText.implicitHeight
+                contentHeight: logText.height
                 Text {
                     id: logText
                     width: parent.width

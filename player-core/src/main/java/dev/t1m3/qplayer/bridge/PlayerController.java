@@ -534,10 +534,19 @@ public final class PlayerController {
         }
     }
 
-    /** QR module matrix ({@code true}=dark) for the current login key, or null. */
-    public boolean[][] qrMatrix() {
+    /** QR module matrix ({@code true}=dark) for the current login key, as nested
+     *  Lists so QML can index it (.length / [y][x]); null if unavailable. */
+    public List<List<Boolean>> qrMatrix() {
         String key = pendingUnikey;
-        return key == null ? null : netease.qrMatrix(key);
+        boolean[][] m = key == null ? null : netease.qrMatrix(key);
+        if (m == null) return null;
+        List<List<Boolean>> out = new ArrayList<>(m.length);
+        for (boolean[] row : m) {
+            List<Boolean> r = new ArrayList<>(row.length);
+            for (boolean b : row) r.add(b);
+            out.add(r);
+        }
+        return out;
     }
 
     /** Poll QR status: 800 expired / 801 waiting / 802 scanned / 803 success. */
