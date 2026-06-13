@@ -403,19 +403,29 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 profBumpTick += Property.changeVersion() - v0;
                 long t1 = System.nanoTime();
                 Canvas canvas = surface.acquireCanvas();
-                int sc = canvas.save();
-                canvas.scale(uiScale, uiScale);
-                // The view's own renderer is wired with the component factory + resource
-                // loader (via resources()); reuse it rather than a bare Renderer.
-                io.github.timer_err.qml4j.render.Renderer renderer = view.renderer();
-                renderer.setGpuContext(surface.recordingContext());
-                boolean skipLayout = Property.changeVersion() == renderedVersion;
-                if (skipLayout) profSkips++;
-                long vBeforeRender = Property.changeVersion();
-                renderer.render(canvas, view.root(), skipLayout);
-                renderedVersion = Property.changeVersion();
-                profBumpRender += renderedVersion - vBeforeRender;
-                canvas.restoreToCount(sc);
+                // When the lyric page is fully open it covers the screen with an
+                // opaque backdrop, so skip rendering the QML scene underneath
+                // entirely — otherwise a heavy list page keeps repainting behind
+                // it and drops frames. Render the scene during the slide (when
+                // part of it still shows) and whenever the page isn't fully open.
+                boolean lyricsOpen = controller != null
+                        && Boolean.TRUE.equals(controller.lyricsOpen.peek());
+                boolean sceneCovered = lyricsOpen && lyricSlide >= 0.999f;
+                if (!sceneCovered) {
+                    int sc = canvas.save();
+                    canvas.scale(uiScale, uiScale);
+                    // The view's own renderer is wired with the component factory + resource
+                    // loader (via resources()); reuse it rather than a bare Renderer.
+                    io.github.timer_err.qml4j.render.Renderer renderer = view.renderer();
+                    renderer.setGpuContext(surface.recordingContext());
+                    boolean skipLayout = Property.changeVersion() == renderedVersion;
+                    if (skipLayout) profSkips++;
+                    long vBeforeRender = Property.changeVersion();
+                    renderer.render(canvas, view.root(), skipLayout);
+                    renderedVersion = Property.changeVersion();
+                    profBumpRender += renderedVersion - vBeforeRender;
+                    canvas.restoreToCount(sc);
+                }
                 drawLyricOverlay(canvas);
                 long t1b = System.nanoTime();
                 surface.present();
@@ -489,14 +499,26 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             }
         }
 
-        // 3) lyrics column below the header, clipped so lines scrolling past the
-        // top/bottom don't bleed over the header or appear out of nowhere.
+        // 3) lyrics column below the header. Render into a layer, then multiply
+        // a vertical alpha gradient (DST_IN) so lines fade to transparent toward
+        // the top/bottom edges instead of being hard-clipped.
         float topY = 140f;
         float colH = h - topY - 24f;
-        int lc = canvas.save();
-        canvas.clipRect(io.github.humbleui.types.Rect.makeXYWH(0f, topY, w, colH));
+        io.github.humbleui.types.Rect colRect = io.github.humbleui.types.Rect.makeXYWH(0f, topY, w, colH);
+        int lc = canvas.saveLayer(colRect, null);
         LyricSkia.setCanvas(canvas);
         lyricRenderer.render(canvas, pad, topY, w - 2f * pad, colH, controller.position());
+        try (Paint mask = new Paint()) {
+            float f = Math.min(0.4f, 40f / colH);   // fade band as a fraction of the column
+            io.github.humbleui.skija.Shader grad = io.github.humbleui.skija.Shader.makeLinearGradient(
+                    0f, topY, 0f, topY + colH,
+                    new int[]{0x00FFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00FFFFFF},
+                    new float[]{0f, f, 1f - f, 1f});
+            mask.setShader(grad);
+            mask.setBlendMode(io.github.humbleui.skija.BlendMode.DST_IN);
+            canvas.drawRect(colRect, mask);
+            grad.close();
+        }
         canvas.restoreToCount(lc);
 
         canvas.restoreToCount(sc);

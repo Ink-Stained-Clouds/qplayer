@@ -48,9 +48,10 @@ public class LyricRenderer {
      * Sub-line (translation / romaji) advance, relative to its own font size.
      */
     private static final float SUB_ROW_HEIGHT_RATIO = 1.1f;
-    // Extra gap above the translation/romaji block when the main lyric wrapped
-    // (wrapped rows sit on the tight wrap height, so the sub-line needs room).
-    private static final float WRAP_SUB_GAP = 10f;
+    // Small extra gap above the translation/romaji block when the main lyric
+    // wrapped. Kept well under one wrap-row height — too large (≈ a row) reads
+    // as a blank line between the lyric and its translation.
+    private static final float WRAP_SUB_GAP = 4f;
 
     /**
      * How many lines above/below the active line to actually draw.
@@ -1050,7 +1051,12 @@ public class LyricRenderer {
         float rowRightX = sylLeft[n];
         if (rowRightX - startX <= 0f) return;
 
-        float sweepX = computeSweepX(syllables, from, to, sylLeft, pos);
+        // Line-level (LRC) lyrics have no real per-syllable timing — the
+        // karaoke sweep over the same-timed tokens would read as a fake
+        // per-character wipe. Gate the sweep (and lift) on per-syllable timing;
+        // without it the line just lights up as a whole via baseAlpha/activeK.
+        boolean animate = enableLift;
+        float sweepX = animate ? computeSweepX(syllables, from, to, sylLeft, pos) : 0f;
 
         // Layer bounds wide enough for the peak lift + glyph descender.
         float ascent = font.getMetrics().getAscent();   // negative
@@ -1112,8 +1118,10 @@ public class LyricRenderer {
             // dimmer than sung). Coupling to activeK avoids the snap on
             // enter: crossing startMs no longer instantly drops the
             // unsung region from 0.42 to 0.2; both endpoints lerp.
-            float maskDark = 1f - (1f - DARK_MASK_ALPHA) * activeK;
-            applySweepMask(canvas, layerBounds, sweepX, maskDark);
+            if (animate) {
+                float maskDark = 1f - (1f - DARK_MASK_ALPHA) * activeK;
+                applySweepMask(canvas, layerBounds, sweepX, maskDark);
+            }
         } finally {
             canvas.restore();
             layerPaint.close();
