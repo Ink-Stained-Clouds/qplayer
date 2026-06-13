@@ -81,6 +81,7 @@ Rectangle {
         anchors.verticalCenterOffset: 1
         type: "standard"
         icon: player.currentLiked ? "favorite" : "favorite_border"
+        contentColor: player.currentLiked ? "#FF5277" : Theme.color.onSurfaceVariantColor
         onClicked: player.toggleLike()
     }
     IconButton {

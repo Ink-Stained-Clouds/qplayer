@@ -744,8 +744,12 @@ public final class PlayerController {
                 NeteaseUser u = id > 0 ? netease.userDetail(id) : null;
                 boolean in = netease.isLoggedIn();
                 String name = u != null ? u.nickname : "";
+                // uid is a plain volatile field (not a Property), so set it here on
+                // the worker thread -- refreshLiked() runs synchronously right below
+                // and reads uid; deferring it via post() left uid == 0 there, so the
+                // liked set never loaded and the like button never lit.
+                uid = id;
                 post(() -> {
-                    uid = id;
                     loggedIn.set(in);
                     userName.set(name == null ? "" : name);
                 });

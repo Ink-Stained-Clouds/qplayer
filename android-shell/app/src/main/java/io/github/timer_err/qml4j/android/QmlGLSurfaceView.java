@@ -673,7 +673,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                     cx, cy, 44f, 0xFFFFFFFF, p);
             drawIcon(canvas, "skip_next", cx + gap, cy, 32f, 0xFFFFFFFF, p);
             boolean liked = Boolean.TRUE.equals(controller.currentLiked.peek());
-            drawIcon(canvas, "favorite", cx + 2f * gap, cy, 26f, liked ? 0xFFFF6E8A : 0x99FFFFFF, p);
+            drawIcon(canvas, "favorite", cx + 2f * gap, cy, 26f, liked ? 0xFFFF5277 : 0x99FFFFFF, p);
         }
     }
 
