@@ -81,7 +81,14 @@ public final class FluidBackground {
 
     private final long startNs;
     private Image cover;
+    // Cover sampled as a shader child every frame. The texture only changes on a
+    // track change, so build the child shader once (not per frame) and reuse it;
+    // makeShader + close on the cover every frame was needless native churn.
+    private Shader coverShader;
     private String coverKey;
+    // Reused across frames -- the per-frame `new Paint()` was a native alloc/free
+    // each frame the lyric page is visible.
+    private final Paint fluidPaint = new Paint();
 
     public FluidBackground(long startNs) {
         this.startNs = startNs;
@@ -96,50 +103,61 @@ public final class FluidBackground {
         boolean keyChanged = !Objects.equals(trackKey, coverKey);
         boolean nullButReady = cover == null && coverBytes != null && coverBytes.length > 0;
         if (keyChanged || nullButReady) {
+            if (coverShader != null) {
+                coverShader.close();
+                coverShader = null;
+            }
             if (cover != null) {
                 cover.close();
                 cover = null;
             }
             cover = buildTexture(coverBytes);
             coverKey = trackKey;
+            if (cover != null) {
+                coverShader = cover.makeShader(
+                        FilterTileMode.CLAMP, FilterTileMode.CLAMP,
+                        SamplingMode.LINEAR, Matrix33.IDENTITY);
+            }
         }
-        if (cover == null) {
+        if (coverShader == null) {
             renderFallback(canvas, w, h, 0xFF0A0A0E);
             return;
         }
 
         float time = (nowNs - startNs) / 1_000_000_000f;
 
-        Shader child = null;
+        // The runtime shader bakes its uniforms at makeShader time, so the animated
+        // `time` forces a rebuild every frame -- but that just instantiates the
+        // already-compiled effect; the cover child shader and the Paint are reused.
         Shader shaded = null;
         try {
-            child = cover.makeShader(
-                    FilterTileMode.CLAMP, FilterTileMode.CLAMP,
-                    SamplingMode.LINEAR, Matrix33.IDENTITY);
             try (RuntimeEffectBuilder b = new RuntimeEffectBuilder(effect())) {
                 b.setUniform("resolution", w, h);
                 b.setUniform("time", time);
-                b.setChild("cover", child);
+                b.setChild("cover", coverShader);
                 shaded = b.makeShader();
             }
-            try (Paint paint = new Paint()) {
-                paint.setShader(shaded);
-                canvas.drawRect(Rect.makeXYWH(0, 0, w, h), paint);
-            }
+            fluidPaint.setShader(shaded);
+            canvas.drawRect(Rect.makeXYWH(0, 0, w, h), fluidPaint);
         } catch (Throwable e) {
             dev.t1m3.qplayer.util.Logger.warn("fluid render failed: {}", e.getMessage());
             renderFallback(canvas, w, h, 0xFF0A0A0E);
         } finally {
+            fluidPaint.setShader(null);
             if (shaded != null) shaded.close();
-            if (child != null) child.close();
         }
     }
 
     public void dispose() {
+        if (coverShader != null) {
+            coverShader.close();
+            coverShader = null;
+        }
         if (cover != null) {
             cover.close();
             cover = null;
         }
+        fluidPaint.close();
         coverKey = null;
     }
 

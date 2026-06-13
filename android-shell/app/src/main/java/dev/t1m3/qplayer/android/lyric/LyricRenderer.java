@@ -228,6 +228,13 @@ public class LyricRenderer {
     private float[] cachedLineHeights;
     private float[] lineTopsBuf = new float[0];
     private float[] interludeBuf = new float[0];
+    // Reused per active line each frame (syllable left edges); was new float[n+1].
+    private float[] sylLeftBuf = new float[0];
+    // Reused saveLayer paint for the active row's composite alpha; was a native
+    // Paint allocated per active line per frame. Kept alive for the renderer's
+    // lifetime (one line's saveLayer/restore completes before the next), so the
+    // "keep alive until restore" constraint below is satisfied without per-call new.
+    private final io.github.humbleui.skija.Paint lyricLayerPaint = new io.github.humbleui.skija.Paint();
     private List<LyricLine> layoutKeyLines;
     private int layoutKeyN;
     private int layoutKeyLyricSize;
@@ -1075,7 +1082,8 @@ public class LyricRenderer {
 
         // Pre-compute syllable left edges + row geometry.
         int n = to - from;
-        float[] sylLeft = new float[n + 1];
+        if (sylLeftBuf.length < n + 1) sylLeftBuf = new float[n + 1];
+        float[] sylLeft = sylLeftBuf;
         sylLeft[0] = startX;
         for (int i = 0; i < n; i++) {
             sylLeft[i + 1] = sylLeft[i] + perCharWidth(syllables.get(from + i).text, font);
@@ -1109,8 +1117,9 @@ public class LyricRenderer {
         // freed the native peer mid-layer, and restore composited from a
         // dangling pointer. Symptom: the global canvas matrix would
         // corrupt and every subsequent HUD draw rendered scaled from
-        // (0,0) ("整个 skia 叠加层都被以(0,0)为中心放大").
-        Paint layerPaint = new Paint();
+        // (0,0) ("整个 skia 叠加层都被以(0,0)为中心放大"). Reused field, so
+        // it's always alive; never closed per call.
+        Paint layerPaint = lyricLayerPaint;
         layerPaint.setAlphaf(baseAlpha);
         canvas.saveLayer(layerBounds, layerPaint);
         try {
@@ -1156,7 +1165,6 @@ public class LyricRenderer {
             }
         } finally {
             canvas.restore();
-            layerPaint.close();
         }
     }
 
