@@ -1,46 +1,26 @@
 import QtQuick
 import md3.Core
-import "."
 
 // One song/track row. Plain anchors — NOT nested RowLayout/ColumnLayout: the
 // Layout measure passes run for every visible row on every dirty frame (playback
 // ticks the scene ~5x/s), which was a real source of stutter. `highlighted`
-// marks the playing entry. A leading album thumbnail is shown when `coverUrl` is
-// set, otherwise a glyph; the cover Image fetches/decodes only when the row is
-// actually painted (off-screen rows are culled), so a long list doesn't fetch
-// every cover at once.
+// marks the playing entry. Leading glyph only (album thumbnails were reverted:
+// instantiating a CoverImage subtree per row cost too much on long lists).
 Rectangle {
     id: row
 
     property string rowTitle: ""
     property string rowArtist: ""
-    property string coverUrl: ""
     property bool highlighted: false
     property bool removable: false
     signal activated()
     signal removeRequested()
 
-    // Text starts past the leading slot — a wider gap when a thumbnail is shown.
-    property real leadGap: row.coverUrl.length > 0 ? 68 : 52
-
     implicitHeight: 64
     color: ma.containsMouse ? Theme.color.surfaceContainerHigh : "transparent"
 
-    CoverImage {
-        id: cover
-        visible: row.coverUrl.length > 0
-        anchors.left: parent.left
-        anchors.leftMargin: 12
-        anchors.verticalCenter: parent.verticalCenter
-        width: 44; height: 44
-        radius: 6
-        iconSize: 20
-        source: row.coverUrl
-    }
-
     Text {
         id: glyph
-        visible: row.coverUrl.length === 0
         anchors.left: parent.left
         anchors.leftMargin: 16
         anchors.verticalCenter: parent.verticalCenter
@@ -51,8 +31,8 @@ Rectangle {
     }
 
     Text {
-        anchors.left: parent.left
-        anchors.leftMargin: row.leadGap
+        anchors.left: glyph.right
+        anchors.leftMargin: 14
         anchors.right: parent.right
         anchors.rightMargin: row.removable ? 52 : 16
         anchors.bottom: parent.verticalCenter
@@ -64,8 +44,8 @@ Rectangle {
     }
 
     Text {
-        anchors.left: parent.left
-        anchors.leftMargin: row.leadGap
+        anchors.left: glyph.right
+        anchors.leftMargin: 14
         anchors.right: parent.right
         anchors.rightMargin: row.removable ? 52 : 16
         anchors.top: parent.verticalCenter
