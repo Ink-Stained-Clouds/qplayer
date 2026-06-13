@@ -217,6 +217,26 @@ public class LyricRenderer {
     // monotonic toward the target.)
     private final SpringAnim scrollAnim = new SpringAnim(180.0, 28.0);
 
+    // Wrap layout cache. rowStarts (syllable break indices per line) and the
+    // per-line heights depend only on (lines, font sizes, weight, column width,
+    // sub-line visibility) — NOT on the play head — yet the layout pass recomputed
+    // them, and reshaped+reallocated an int[] per line, every single frame. Cache
+    // them and rebuild only when an input changes; per frame we recompute just the
+    // play-head-dependent interlude slots and cumulative tops (plain arithmetic,
+    // reused buffers). Mirrors the engine's "don't recompute invariants per frame".
+    private int[][] cachedRowStarts;
+    private float[] cachedLineHeights;
+    private float[] lineTopsBuf = new float[0];
+    private float[] interludeBuf = new float[0];
+    private List<LyricLine> layoutKeyLines;
+    private int layoutKeyN;
+    private int layoutKeyLyricSize;
+    private int layoutKeySubSize;
+    private int layoutKeyColW = -1;
+    private boolean layoutKeyBold;
+    private boolean layoutKeyRomaji;
+    private boolean layoutKeyTranslation;
+
     /**
      * Renderer has at least one parsed lyric line — used by the view
      * layer to decide whether to draw the timeline or a "no lyrics" hint.
@@ -425,30 +445,68 @@ public class LyricRenderer {
         boolean showRomaji = cfg.showRomaji.getValue();
         boolean showTranslation = cfg.showTranslation.getValue();
 
-        // ---- Layout pass: wrap each line at syllable boundaries and
-        // compute cumulative Y positions. O(N * syllables) per frame; fine
-        // for typical lyric sizes (~100 lines × ~10 syllables = 1000 ops).
+        // ---- Layout pass. Wrapping + per-line heights depend only on the inputs
+        // below, NOT on the play head, so compute them once and cache. wrapStarts()
+        // reshapes text and allocates an int[] per line; doing that for all N lines
+        // every frame was the lyric page's dominant per-frame cost + garbage.
         int n = lines.size();
-        int[][] rowStarts = new int[n][];
-        float[] lineHeights = new float[n];
-        float[] lineTops = new float[n];
+        int colW = Math.round(columnWidth);
+        boolean layoutValid = cachedRowStarts != null
+                && layoutKeyLines == lines
+                && layoutKeyN == n
+                && layoutKeyLyricSize == lyricFontSize
+                && layoutKeySubSize == subFontSize
+                && layoutKeyColW == colW
+                && layoutKeyBold == useBold
+                && layoutKeyRomaji == showRomaji
+                && layoutKeyTranslation == showTranslation;
+        if (!layoutValid) {
+            int[][] rowStarts = new int[n][];
+            float[] lineHeights = new float[n];
+            for (int i = 0; i < n; i++) {
+                LyricLine line = lines.get(i);
+                boolean isBg = isBackground(line.vocalChannel);
+                Font font = isBg ? bgFont : lyricFont;
+                float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
 
-        // Interlude row height — DYNAMIC. Grows from 0 → INTERLUDE_DOTS_ROW_H
-        // as the play head approaches the gap, holds full height during
-        // the interlude, collapses back to 0 as the next group starts.
-        // Other lines below the slot push down / spring back up as the
-        // slot inflates / deflates; combined with the spring scrollAnim
-        // this looks like the dots "fold in" between the lines.
-        //
-        // Unlike BG slots (which always reserve fixed space but don't
-        // move scroll), the interlude slot both moves scroll AND
-        // dynamically claims layout space.
-        float[] interludeBefore = new float[groups.size()];
-        // gi == 0 is the INTRO gap: from track start (0) to the first
-        // group's startMs. AMLL handles this via `k === -1` in
-        // computeCurrentInterlude — without it, the dots never appear
-        // during a song's intro no matter how long.
+                rowStarts[i] = wrapStarts(line.syllables, font, columnWidth);
+                int subRowCount = Math.max(1, rowStarts[i].length - 1);
+
+                float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
+                boolean hasSub = (line.romaji != null && showRomaji) || (line.translation != null && showTranslation);
+                // Wrapped rows use the tight wrap height, so a sub-line sitting right
+                // under the last row feels cramped — give it a little extra breathing
+                // room (reserved here so neighbours don't overlap; drawn at subY).
+                if (hasSub && subRowCount > 1) lh += WRAP_SUB_GAP;
+                if (line.romaji != null && showRomaji) lh += subLineHeight;
+                if (line.translation != null && showTranslation) lh += subLineHeight;
+                lh += lineGap;
+                // BG lines reserve their full layout height upfront so neighbouring
+                // lines never shift when the BG scales in / collapses.
+                lineHeights[i] = lh;
+            }
+            cachedRowStarts = rowStarts;
+            cachedLineHeights = lineHeights;
+            layoutKeyLines = lines;
+            layoutKeyN = n;
+            layoutKeyLyricSize = lyricFontSize;
+            layoutKeySubSize = subFontSize;
+            layoutKeyColW = colW;
+            layoutKeyBold = useBold;
+            layoutKeyRomaji = showRomaji;
+            layoutKeyTranslation = showTranslation;
+        }
+        int[][] rowStarts = cachedRowStarts;
+        float[] lineHeights = cachedLineHeights;
+
+        // Interlude row height — DYNAMIC, play-head driven. Grows 0 → full as the
+        // play head nears the gap, holds, collapses as the next group starts; lines
+        // below push down / spring back. So this and the cumulative tops below are
+        // the only layout work that genuinely runs every frame. Buffers are reused.
+        if (interludeBuf.length != groups.size()) interludeBuf = new float[groups.size()];
+        float[] interludeBefore = interludeBuf;
         for (int gi = 0; gi < groups.size(); gi++) {
+            interludeBefore[gi] = 0f;
             long prevEnd = (gi == 0) ? 0L : groups.get(gi - 1).endMs;
             long currStart = groups.get(gi).startMs;
             long effectiveEnd = currStart - INTERLUDE_TRAIL_TRIM_MS;
@@ -457,39 +515,13 @@ public class LyricRenderer {
             interludeBefore[gi] = computeInterludeSlot(positionMs, prevEnd, effectiveEnd);
         }
 
+        // Cumulative tops = stacked cached heights + the per-frame interlude slots.
+        if (lineTopsBuf.length != n) lineTopsBuf = new float[n];
+        float[] lineTops = lineTopsBuf;
         for (int i = 0; i < n; i++) {
-            LyricLine line = lines.get(i);
-            boolean isBg = isBackground(line.vocalChannel);
-            Font font = isBg ? bgFont : lyricFont;
-            float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
-
-            rowStarts[i] = wrapStarts(line.syllables, font, columnWidth);
-            int subRowCount = Math.max(1, rowStarts[i].length - 1);
-
-            float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
-            boolean hasSub = (line.romaji != null && showRomaji) || (line.translation != null && showTranslation);
-            // Wrapped rows use the tight wrap height, so a sub-line sitting right
-            // under the last row feels cramped — give it a little extra breathing
-            // room (reserved here so neighbours don't overlap; drawn at subY).
-            if (hasSub && subRowCount > 1) lh += WRAP_SUB_GAP;
-            if (line.romaji != null && showRomaji) lh += subLineHeight;
-            if (line.translation != null && showTranslation) lh += subLineHeight;
-            lh += lineGap;
-
-            // BG lines reserve their full layout height upfront — the
-            // next group sits *below* the BG, even while it's collapsed
-            // to scale 0. Previously BG was zero-height + popped into
-            // the visual gap, which meant the next line slid down when
-            // the BG activated (and back up when it collapsed). Pre-
-            // reserving the space keeps neighbouring lines static; the
-            // BG just fades / scales into the slot that's always been
-            // there.
-
-            lineHeights[i] = lh;
             float prevBottom = i == 0 ? 0f : lineTops[i - 1] + lineHeights[i - 1];
-            // First line of a group with preceding interlude gets the
-            // dot-row inserted above it (it shows up as a gap of
-            // INTERLUDE_DOTS_ROW_H px before this line's top).
+            // First line of a group with a preceding interlude gets the dot-row slot
+            // inserted above it.
             int gi = lineToGroup[i];
             if (!groups.isEmpty() && gi >= 0 && gi < groups.size()
                     && groups.get(gi).from == i && interludeBefore[gi] > 0f) {
