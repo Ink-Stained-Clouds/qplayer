@@ -7,7 +7,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "io.github.timer_err.qml4j.android"
+        applicationId = "dev.t1m3.qplayer"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

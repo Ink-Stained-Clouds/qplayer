@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- No ActionBar (drops the "qplayer" title bar); status + navigation bars
-         painted with the app surface colour so they stop reading as black
-         strips above/below the content. -->
+    <!-- No ActionBar (drops the "qplayer" title bar). Edge-to-edge: transparent
+         system bars; the app draws behind them and avoids them via insets. -->
     <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@color/app_surface</item>
-        <item name="android:statusBarColor">@color/app_surface</item>
-        <item name="android:navigationBarColor">@color/app_surface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

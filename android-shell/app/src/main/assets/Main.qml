@@ -78,6 +78,7 @@ Rectangle {
     TopAppBar {
         id: topBar
         anchors.top: parent.top
+        anchors.topMargin: settings.topInset   // clear the status bar (edge-to-edge)
         anchors.left: parent.left
         anchors.right: parent.right
         height: 64
@@ -205,7 +206,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 76
+        // Nav content sits in the top 76; the extra height is background that fills
+        // behind the gesture/navigation bar (edge-to-edge).
+        height: 76 + settings.bottomInset
         currentIndex: app.page
         onNavigate: app.switchTo(bottomNav.pendingIndex)
     }

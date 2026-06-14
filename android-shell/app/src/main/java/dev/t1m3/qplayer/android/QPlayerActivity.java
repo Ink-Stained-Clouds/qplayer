@@ -125,6 +125,8 @@ public final class QPlayerActivity extends Activity {
             }
         });
         setContentView(rootView);
+        enableEdgeToEdge();
+        attachInsetListener(rootView);
         applySystemBars(settings.resolvedDarkValue());
 
         controller.loadHome();
@@ -201,17 +203,54 @@ public final class QPlayerActivity extends Activity {
         }
     }
 
-    /** Paint the status + navigation bars with a theme-appropriate surface and flip
-     *  the bar-icon contrast so they read on either light or dark backgrounds. */
+    /** Draw the app behind the system bars (edge-to-edge) with transparent bars. */
+    private void enableEdgeToEdge() {
+        android.view.Window w = getWindow();
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+        } else {
+            w.getDecorView().setSystemUiVisibility(
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+    }
+
+    /** Feed the system-bar insets (in QML logical units) to the scene so the chrome
+     *  can avoid the status bar and gesture/navigation bar. */
+    private void attachInsetListener(android.view.View root) {
+        final float density = getResources().getDisplayMetrics().density;
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int top, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars =
+                        insets.getInsets(android.view.WindowInsets.Type.systemBars());
+                top = bars.top;
+                bottom = bars.bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            final double t = top / density;
+            final double b = bottom / density;
+            if (glView != null) glView.queueEvent(() -> settings.setInsets(t, b));
+            return insets;
+        });
+        root.requestApplyInsets();
+    }
+
+    /** Keep the system bars transparent and flip the bar-icon contrast so they read on
+     *  either light or dark content. */
     private void applySystemBars(boolean dark) {
         android.view.Window w = getWindow();
         // The dark listener can fire during settings.load(), before setContentView
         // has created the decor view; getInsetsController() NPEs then. Skip until the
         // window is ready -- the post-setContentView call applies the initial state.
         if (w == null || w.peekDecorView() == null) return;
-        int surface = dark ? 0xFF141218 : 0xFFFEF7FF;
-        w.setStatusBarColor(surface);
-        w.setNavigationBarColor(surface);
+        w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= 30) {
             android.view.WindowInsetsController c = w.getInsetsController();
             if (c != null) {

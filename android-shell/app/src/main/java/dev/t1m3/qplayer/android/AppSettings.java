@@ -30,6 +30,17 @@ public final class AppSettings extends QObject {
     public final Property<Boolean> monetEnabled = new Property<>(Boolean.TRUE);
     public final Property<Boolean> resolvedDark = new Property<>(Boolean.FALSE);
 
+    // System-bar insets in QML logical units (px / density), for edge-to-edge layout:
+    // the top bar drops below the status bar, the bottom nav clears the gesture bar.
+    public final Property<Double> topInset = new Property<>(0.0);
+    public final Property<Double> bottomInset = new Property<>(0.0);
+
+    /** Set the system-bar insets (render thread). */
+    public void setInsets(double top, double bottom) {
+        topInset.set(top);
+        bottomInset.set(bottom);
+    }
+
     /** Notified (on the thread that mutates the policy) when the resolved dark
      *  value changes, so the host can repaint the system bars. */
     public interface DarkListener {
