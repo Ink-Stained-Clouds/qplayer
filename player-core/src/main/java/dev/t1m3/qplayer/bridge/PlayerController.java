@@ -377,8 +377,13 @@ public final class PlayerController {
             return;
         }
         worker.submit(() -> {
-            String hex = ex.dominantHex(data);
-            if (hex != null) post(() -> coverSeed.set(hex));
+            try {
+                String hex = ex.dominantHex(data);
+                Logger.info("cover seed = {}", hex);
+                if (hex != null) post(() -> coverSeed.set(hex));
+            } catch (Throwable e) {
+                Logger.warn("seed extraction failed: {}", e.toString());
+            }
         });
     }
 

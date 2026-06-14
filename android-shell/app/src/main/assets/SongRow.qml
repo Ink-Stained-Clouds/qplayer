@@ -76,13 +76,25 @@ Rectangle {
         onClicked: row.activated()
     }
 
-    // Declared after the row MouseArea so it sits on top and consumes the tap.
-    IconButton {
+    // Lightweight remove control: a glyph + MouseArea with explicit geometry.
+    // The md3 IconButton (internal Ripple + MouseArea) got stuck mispositioned and
+    // untappable when a delegate was rebuilt on a queue removal under cachedLayout;
+    // this single-pass control avoids that and is cheaper per row. Declared last so
+    // it sits above the row tap.
+    MouseArea {
         visible: row.removable
+        width: 48
+        height: parent.height
         anchors.right: parent.right
-        anchors.rightMargin: 4
         anchors.verticalCenter: parent.verticalCenter
-        type: "standard"; icon: "close"
         onClicked: row.removeRequested()
+
+        Text {
+            anchors.centerIn: parent
+            text: "close"
+            font.family: Theme.iconFont.name
+            font.pixelSize: 20
+            color: Theme.color.onSurfaceVariantColor
+        }
     }
 }
