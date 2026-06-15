@@ -42,8 +42,14 @@ public final class PlaybackService extends Service {
 
     /** Set by the activity before the service is started (same-process handoff). */
     static volatile PlayerController controller;
+    /** The activity's listener that boot-starts this service; restored on destroy so a
+     *  later play re-bootstraps. While the service lives it registers itself instead, so
+     *  refreshes run in-process (no startForegroundService — which is barred from the
+     *  background on Android 12+, the bug that left controls stuck after a focus pause). */
+    static volatile PlayerController.PlaybackListener bootstrapListener;
 
     private MediaSessionCompat session;
+    private final PlayerController.PlaybackListener selfListener = this::onControllerChanged;
 
     @Override
     public void onCreate() {
@@ -83,6 +89,18 @@ public final class PlaybackService extends Service {
             }
         });
         session.setActive(true);
+        // Take over as the controller's listener so state changes refresh us directly,
+        // in-process, instead of round-tripping through startForegroundService.
+        PlayerController c = controller;
+        if (c != null) c.setPlaybackListener(selfListener);
+    }
+
+    private void onControllerChanged() {
+        try {
+            refresh();
+        } catch (Throwable e) {
+            Logger.error("PlaybackService: refresh failed: {}", e.toString());
+        }
     }
 
     @Override
@@ -104,6 +122,9 @@ public final class PlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        // Hand the listener back so the next play boot-starts a fresh service.
+        PlayerController c = controller;
+        if (c != null) c.setPlaybackListener(bootstrapListener);
         session.setActive(false);
         session.release();
         super.onDestroy();
@@ -143,17 +164,11 @@ public final class PlaybackService extends Service {
                 .build());
 
         Notification n = buildNotification(t, playing, art);
-        // Always satisfy the startForegroundService contract (startForeground within
-        // ~5s of each delivery), then detach while paused so the service can be
-        // reclaimed — the notification stays, dismissible, for quick resume.
+        // Stay foreground for the whole session — including while paused — so we never
+        // need to re-promote from the background (Android 12+ forbids starting a FGS
+        // from the background, which previously left controls stuck after a pause).
+        // The notification is dismissible (setOngoing not set) and STOP fully exits.
         startForeground(NOTIF_ID, n);
-        if (!playing) {
-            if (Build.VERSION.SDK_INT >= 24) {
-                stopForeground(Service.STOP_FOREGROUND_DETACH);
-            } else {
-                stopForeground(false);
-            }
-        }
     }
 
     private Notification buildNotification(Track t, boolean playing, Bitmap art) {

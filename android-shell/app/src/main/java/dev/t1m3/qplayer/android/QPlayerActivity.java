@@ -72,7 +72,7 @@ public final class QPlayerActivity extends Activity {
         // Cookies / config live in app-private storage on Android.
         AppDirs.setBase(getFilesDir().getAbsolutePath());
 
-        AudioBackend backend = new AndroidAudioBackend();
+        AudioBackend backend = new AndroidAudioBackend(this);
         reader = new AndroidMetadataReader();
         controller = new PlayerController(backend, reader);
         controller.setColorExtractor(new AndroidColorExtractor());
@@ -83,7 +83,12 @@ public final class QPlayerActivity extends Activity {
         mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         controller.setMainExecutor(mainHandler::post);
         PlaybackService.controller = controller;
-        controller.setPlaybackListener(this::onPlaybackChanged);
+        // Boot-start listener: starts the foreground service (from the foreground, on
+        // first play). Once alive the service registers itself and handles refreshes
+        // in-process, so this only fires before the service exists.
+        PlayerController.PlaybackListener bootstrap = this::onPlaybackChanged;
+        PlaybackService.bootstrapListener = bootstrap;
+        controller.setPlaybackListener(bootstrap);
 
         settings = new AppSettings();
         settings.setDarkListener(dark -> runOnUiThread(() -> applySystemBars(dark)));

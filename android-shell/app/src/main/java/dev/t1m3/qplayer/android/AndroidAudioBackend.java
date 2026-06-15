@@ -1,6 +1,9 @@
 package dev.t1m3.qplayer.android;
 
+import android.content.Context;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
@@ -27,6 +30,21 @@ public final class AndroidAudioBackend implements AudioBackend {
     private boolean prepared;
     private Runnable onComplete;
     private Runnable onStarted;
+    private Runnable onPaused;
+    private Runnable onResumed;
+
+    // Audio focus: pause on loss (call / other player), duck on transient-can-duck,
+    // resume on regain when the loss was transient.
+    private final AudioManager audioManager;
+    private AudioFocusRequest focusRequest;
+    private boolean hasFocus;
+    private boolean resumeOnGain;
+    private boolean ducked;
+
+    public AndroidAudioBackend(Context ctx) {
+        audioManager = (AudioManager) ctx.getApplicationContext()
+                .getSystemService(Context.AUDIO_SERVICE);
+    }
 
     @Override
     public synchronized void play(String src, long startMs) {
@@ -36,6 +54,7 @@ public final class AndroidAudioBackend implements AudioBackend {
         pendingSeekMs = Math.max(0L, startMs);
         wantPlay = true;
         prepared = false;
+        requestFocus();
 
         MediaPlayer mp = new MediaPlayer();
         mp.setAudioAttributes(new AudioAttributes.Builder()
@@ -91,6 +110,7 @@ public final class AndroidAudioBackend implements AudioBackend {
     @Override
     public synchronized void resume() {
         wantPlay = true;
+        requestFocus();
         if (player != null && prepared) {
             player.start();
         }
@@ -154,6 +174,16 @@ public final class AndroidAudioBackend implements AudioBackend {
     }
 
     @Override
+    public synchronized void setOnPaused(Runnable callback) {
+        this.onPaused = callback;
+    }
+
+    @Override
+    public synchronized void setOnResumed(Runnable callback) {
+        this.onResumed = callback;
+    }
+
+    @Override
     public synchronized void setOnComplete(Runnable callback) {
         this.onComplete = callback;
     }
@@ -161,6 +191,82 @@ public final class AndroidAudioBackend implements AudioBackend {
     @Override
     public synchronized void release() {
         releasePlayer();
+        abandonFocus();
+    }
+
+    // --- Audio focus ------------------------------------------------------
+
+    private void requestFocus() {
+        if (hasFocus || audioManager == null) return;
+        AudioFocusRequest req = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                .setOnAudioFocusChangeListener(this::onFocusChange)
+                .setWillPauseWhenDucked(false)
+                .build();
+        focusRequest = req;
+        hasFocus = audioManager.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    }
+
+    private void abandonFocus() {
+        if (audioManager != null && focusRequest != null) {
+            audioManager.abandonAudioFocusRequest(focusRequest);
+        }
+        focusRequest = null;
+        hasFocus = false;
+        ducked = false;
+        resumeOnGain = false;
+    }
+
+    private synchronized void onFocusChange(int change) {
+        switch (change) {
+            case AudioManager.AUDIOFOCUS_LOSS:
+                // Another app took over for good: pause, don't auto-resume.
+                resumeOnGain = false;
+                if (player != null && prepared && player.isPlaying()) {
+                    player.pause();
+                    wantPlay = false;
+                    fire(onPaused);
+                }
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                // Call / brief interruption: pause and remember to resume on regain.
+                if (player != null && prepared && player.isPlaying()) {
+                    player.pause();
+                    wantPlay = false;
+                    resumeOnGain = true;
+                    fire(onPaused);
+                }
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                if (player != null && prepared && player.isPlaying()) {
+                    ducked = true;
+                    player.setVolume(volume * 0.3f, volume * 0.3f);
+                }
+                break;
+            case AudioManager.AUDIOFOCUS_GAIN:
+                if (ducked) {
+                    ducked = false;
+                    applyVolume();
+                }
+                if (resumeOnGain) {
+                    resumeOnGain = false;
+                    if (player != null && prepared) {
+                        player.start();
+                        wantPlay = true;
+                        fire(onResumed);
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    private static void fire(Runnable r) {
+        if (r != null) r.run();
     }
 
     private void releasePlayer() {

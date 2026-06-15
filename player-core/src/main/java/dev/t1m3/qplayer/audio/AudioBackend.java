@@ -54,6 +54,15 @@ public interface AudioBackend {
      */
     default void setOnStarted(Runnable callback) { }
 
+    /**
+     * Callbacks for playback paused / resumed by the backend itself (not the user) —
+     * e.g. losing or regaining audio focus on a phone call. Let the controller keep
+     * its intended-play state and the media session in sync. Default no-op.
+     */
+    default void setOnPaused(Runnable callback) { }
+
+    default void setOnResumed(Runnable callback) { }
+
     /** Stop playback and free native resources. */
     void release();
 }

@@ -213,6 +213,18 @@ public final class PlayerController {
         // Re-baseline the media session's position once audio actually starts (the
         // backend prepares asynchronously, so the position at play() time is stale).
         backend.setOnStarted(this::notifyPlayback);
+        // Audio-focus driven pause/resume (phone call, another player): keep the
+        // intended-play state, the UI, and the media session in sync.
+        backend.setOnPaused(() -> {
+            playingIntent = false;
+            post(() -> playing.set(false));
+            notifyPlayback();
+        });
+        backend.setOnResumed(() -> {
+            playingIntent = true;
+            post(() -> playing.set(true));
+            notifyPlayback();
+        });
         if (netease.isLoggedIn()) {
             loggedIn.set(true);
             refreshLogin();
