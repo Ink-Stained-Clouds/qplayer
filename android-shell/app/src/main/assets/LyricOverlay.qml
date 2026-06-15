@@ -76,6 +76,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
+            anchors.topMargin: 18
             wavy: true
             value: player.lyricProgress
         }
@@ -109,6 +110,7 @@ Item {
         Row {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
+            anchors.bottomMargin: 14
             spacing: 18
             IconButton {
                 type: "standard"

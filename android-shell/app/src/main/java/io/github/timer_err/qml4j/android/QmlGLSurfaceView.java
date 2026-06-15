@@ -489,12 +489,19 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         float w = surface.width() / uiScale;
         float h = surface.height() / uiScale;
         ensureLyricShaders(h);
-        // The fluid + lyrics fill the screen opaquely while open; the open/close
-        // animation is a cross-fade -- the QML main UI fades out (revealing this) and
-        // the QML LyricOverlay fades in, both off player.lyricSlide. No vertical slide
-        // here (it would leave the app's opaque background showing through the gap).
         int sc = canvas.save();
         canvas.scale(uiScale, uiScale);
+
+        // The page slides up from the bottom. Fill behind it with a dark backdrop so the
+        // area above the rising sheet isn't a stale buffer (the main UI is hidden during
+        // the slide). The QML LyricOverlay chrome slides with the same offset.
+        lyMaskPaint.setShader(null);
+        lyMaskPaint.setBlendMode(io.github.humbleui.skija.BlendMode.SRC_OVER);
+        lyMaskPaint.setColor(0xFF0B0B10);
+        canvas.drawRect(io.github.humbleui.types.Rect.makeXYWH(0f, 0f, w, h), lyMaskPaint);
+
+        float ease = lyricSlide * lyricSlide * (3f - 2f * lyricSlide); // smoothstep
+        canvas.translate(0f, (1f - ease) * h);
 
         // 1) fluid backdrop, keyed by the current track.
         byte[] cover = (byte[]) controller.coverBytes.peek();

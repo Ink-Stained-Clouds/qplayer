@@ -8,9 +8,9 @@ import "."
 // messages and the debug log on top.
 Rectangle {
     id: app
-    // Transparent while the lyric page is up so the host-drawn fluid + lyrics (rendered
-    // underneath the QML scene) show through; opaque surface otherwise.
-    color: player.lyricsOpen ? "transparent" : Theme.color.surface
+    // Transparent while the lyric page is sliding/open so the host-drawn fluid + lyrics
+    // (rendered underneath the QML scene) show through; opaque surface otherwise.
+    color: player.lyricSlide > 0.001 ? "transparent" : Theme.color.surface
 
     property int page: 0
     property int nextPage: 0
@@ -87,7 +87,7 @@ Rectangle {
         // Hidden the instant the lyric page opens: the host lyric layer sits UNDER the
         // QML scene, so a fading main UI would render on top of (cover) it. Cut it out
         // so the lyric page (host fluid + QML LyricOverlay) is unobstructed.
-        visible: !player.lyricsOpen
+        visible: player.lyricSlide < 0.001
         title: app.titles[app.page]
         showNavigationIcon: false
 
@@ -122,7 +122,7 @@ Rectangle {
         anchors.right: parent.right
         anchors.bottom: mini.top
         clip: true
-        visible: !player.lyricsOpen
+        visible: player.lyricSlide < 0.001
 
         Item {
             id: pageBody
@@ -205,7 +205,7 @@ Rectangle {
         anchors.right: parent.right
         anchors.bottom: bottomNav.top
         height: 84
-        visible: !player.lyricsOpen
+        visible: player.lyricSlide < 0.001
         onLyricsRequested: player.setLyricsOpen(true)
     }
 
@@ -217,17 +217,22 @@ Rectangle {
         // Nav content sits in the top 76; the extra height is background that fills
         // behind the gesture/navigation bar (edge-to-edge).
         height: 76 + settings.bottomInset
-        visible: !player.lyricsOpen
+        visible: player.lyricSlide < 0.001
         currentIndex: app.page
         onNavigate: app.switchTo(bottomNav.pendingIndex)
     }
 
     // Lyric page chrome (title / wavy progress / transport), over the host-drawn
-    // fluid backdrop + lyrics. Fades in with the host layer via player.lyricSlide.
+    // fluid backdrop + lyrics. Slides up from the bottom in lockstep with the host
+    // layer -- same smoothstep(player.lyricSlide) offset the host applies.
     LyricOverlay {
-        anchors.fill: parent
+        width: parent.width
+        height: parent.height
         visible: player.lyricSlide > 0.001
-        opacity: player.lyricSlide
+        y: {
+            var s = player.lyricSlide;
+            return (1 - s * s * (3 - 2 * s)) * height;
+        }
     }
 
     LoginDialog {
