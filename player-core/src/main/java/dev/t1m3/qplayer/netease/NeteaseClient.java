@@ -683,6 +683,7 @@ public final class NeteaseClient {
         if (!Files.exists(cookieFile)) return;
         try {
             String txt = new String(Files.readAllBytes(cookieFile), StandardCharsets.UTF_8);
+            if (txt == null || txt.trim().isEmpty()) return;
             JsonElement el = new JsonParser().parse(txt);
             if (!el.isJsonObject()) return;
             for (Map.Entry<String, JsonElement> e : el.getAsJsonObject().entrySet()) {

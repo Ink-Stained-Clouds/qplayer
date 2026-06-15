@@ -206,6 +206,7 @@ public final class PlayerController {
 
     private void updateLyricIndex(long pos) {
         List<LyricLine> ly = lyrics.peek();
+        if (ly == null || ly.isEmpty()) return;
         int idx = -1;
         for (int i = 0; i < ly.size(); i++) {
             if (ly.get(i).startMs() <= pos) idx = i;
@@ -263,6 +264,7 @@ public final class PlayerController {
                 post(() -> applyLibrary(found));
             } catch (Throwable e) {
                 Logger.exception(e);
+                post(() -> toast.set("扫描失败：" + e.getMessage()));
             }
         });
     }
@@ -367,6 +369,7 @@ public final class PlayerController {
         currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
 
         if (t.source == Track.Source.LOCAL) {
+            if (t.filePath == null || t.filePath.isEmpty()) return;
             loadLocalLyrics(t);
             Logger.info("play local: {}", t.title);
             backend.play(t.filePath, 0L);
@@ -409,7 +412,11 @@ public final class PlayerController {
         // No cover yet (a netease track's art is still downloading): keep the previous
         // seed so the theme doesn't flash back to the default purple between songs. The
         // new cover's seed replaces it directly once extracted.
-        if (data == null) return;
+        if (data == null) {
+            // Explicitly cleared (e.g. track with no art at all): fall back to default.
+            post(() -> { coverSeed.set(""); reapplySeed(); });
+            return;
+        }
         worker.submit(() -> {
             // Cover bytes are untrusted (downloaded); a bad image must not kill the worker.
             String hex;
@@ -497,7 +504,8 @@ public final class PlayerController {
     // back-to-back unless the queue has a single entry).
     private int randomIndex() {
         int n = queue.size();
-        if (n <= 1) return 0;
+        if (n <= 0) return 0;
+        if (n == 1) return 0;
         int r;
         do {
             r = rng.nextInt(n);
@@ -603,6 +611,7 @@ public final class PlayerController {
                 });
             } catch (Throwable e) {
                 Logger.warn("netease resolve failed for {}: {}", songId, e.getMessage());
+                post(() -> toast.set("播放失败：" + e.getMessage()));
             }
         });
     }
