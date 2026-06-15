@@ -39,7 +39,7 @@
 |---|---|
 | `player-core/` | Platform-neutral core (Maven, `dev.t1m3.qplayer`): the QML-facing `PlayerController`, NetEase API, lyric parsers (LRC / YRC / TTML), audio + metadata abstractions. |
 | `android-shell/` | Android app (Gradle, `applicationId dev.t1m3.qplayer`, minSdk 26). QML UI in `app/src/main/assets/*.qml`; host integration + the Skija lyric page in `…/android/`. |
-| [qml4j](https://github.com/TIMER-err/qml4j) | The QML engine + `md3.Core` component library. A published dependency, **not** part of this repo. |
+| [qml4j](https://github.com/TIMER-err/qml4j) | The QML engine. A published dependency, **not** part of this repo. |
 
 `qml4j-core` is pulled from Maven Central; only the in-repo `player-core` module is built locally.
 
@@ -58,7 +58,9 @@ cd ../android-shell && ./gradlew :app:assembleDebug
 
 ## Credits
 
-- [qml4j](https://github.com/TIMER-err/qml4j) — the pure-Java QML engine and `md3.Core` component library.
+- [qml4j](https://github.com/TIMER-err/qml4j) — the pure-Java QML engine that runs the UI.
+- [Skija](https://github.com/HumbleUI/Skija) — Skia bindings for the JVM; the renderer and the host-drawn lyric page draw through it.
+- [material-components-qml](https://github.com/sudoevolve/material-components-qml) — the Material 3 QML component library (`md3.Core`) the UI is built from (vendored, engine-adapted).
 - [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) — syllable-level lyrics.
 - Lyric rendering adapted from the Haedus renderer; icons are Material Symbols Rounded.
 
