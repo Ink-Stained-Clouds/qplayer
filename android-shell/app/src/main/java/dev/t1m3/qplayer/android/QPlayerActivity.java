@@ -97,7 +97,12 @@ public final class QPlayerActivity extends Activity {
         } catch (IOException ignored) {
         }
 
-        QmlEngine engine = new QmlEngine(new DexClassLoaderBackend(getClass().getClassLoader()));
+        // Cache D8-dexed QML across launches (dexing is the slow part of startup);
+        // wipe it whenever the apk is (re)installed so stale dex never loads.
+        java.io.File dexCache = new java.io.File(getCacheDir(), "qml-dex");
+        invalidateDexCacheOnReinstall(dexCache);
+        QmlEngine engine = new QmlEngine(
+                new DexClassLoaderBackend(getClass().getClassLoader(), 26, dexCache));
         float density = getResources().getDisplayMetrics().density;
         glView = new QmlGLSurfaceView(this, engine, qml,
                 new AssetResourceLoader(getAssets()), density);
@@ -270,6 +275,32 @@ public final class QPlayerActivity extends Activity {
             }
             dv.setSystemUiVisibility(flags);
         }
+    }
+
+    /** Clear the QML dex cache when the apk's install timestamp changes (install,
+     *  reinstall, or update), so a new build never loads dex compiled from the old one. */
+    private void invalidateDexCacheOnReinstall(java.io.File dexCache) {
+        try {
+            long lastUpdate = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            android.content.SharedPreferences p =
+                    getSharedPreferences("qplayer.cache", MODE_PRIVATE);
+            if (p.getLong("apkStamp", -1L) != lastUpdate) {
+                deleteRecursively(dexCache);
+                p.edit().putLong("apkStamp", lastUpdate).apply();
+            }
+        } catch (Exception e) {
+            deleteRecursively(dexCache); // on any doubt, recompile from scratch
+        }
+    }
+
+    private static void deleteRecursively(java.io.File f) {
+        if (f == null || !f.exists()) return;
+        java.io.File[] kids = f.listFiles();
+        if (kids != null) {
+            for (java.io.File k : kids) deleteRecursively(k);
+        }
+        f.delete();
     }
 
     private void showError(String trace) {
