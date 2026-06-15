@@ -65,11 +65,10 @@ tasks.matching {
 
 android {
     sourceSets["main"].jniLibs.srcDir(skijaJniDir)
-    // Single source of truth for QML: md3/Core + showcases + fonts come from
-    // ../shared-qml (shared with the tests and the desktop host), not stale
-    // per-shell copies. The shell's own assets dir still supplies legacy demo
-    // pieces (apptheme/, theme/, widgets/, demo.qml, ...).
-    sourceSets["main"].assets.srcDir("${rootDir}/../qml4j/shared-qml")
+    // Vendored md3.Core component library + fonts (from the qml4j repo's shared-qml),
+    // bundled here so the app builds standalone -- qml4j-core (the engine classes) comes
+    // from Maven Central, but those QML/font assets are not published in the jar.
+    sourceSets["main"].assets.srcDir("${rootDir}/shared-qml")
 }
 
 dependencies {
