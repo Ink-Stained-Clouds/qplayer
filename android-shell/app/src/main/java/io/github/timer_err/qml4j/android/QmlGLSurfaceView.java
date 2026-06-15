@@ -79,6 +79,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             new dev.t1m3.qplayer.android.lyric.FluidBackground(System.nanoTime());
     private List<LyricLine> lastLyrics;
     private float lyricSlide;
+    // Wall-clock extrapolation of the coarse backend position, for a smooth progress bar.
+    private long lyRawLast = -1;
+    private boolean lyPlayingLast;
+    private long lyBaseMs;
+    private long lyBaseNanos;
     // The lyric edge-fade gradient (native Shader) + its mask Paint depend only on the
     // surface height, so cache them and rebuild only when the height changes (rebuilding
     // every frame was steady native churn -> GC stutter).
@@ -455,11 +460,23 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (Math.abs(target - lyricSlide) < 0.002f) lyricSlide = target;
         // Publish to QML so the LyricOverlay chrome fades in/out in lockstep.
         controller.lyricSlide.set((double) lyricSlide);
-        // Per-frame playback fraction for the QML wavy progress bar -- smooth, unlike
-        // the 5 Hz positionMs the QML would otherwise step through.
+        // Per-frame playback fraction for the QML wavy progress bar. backend.position()
+        // is coarse (steps ~5 Hz), so extrapolate from the last change with wall-clock
+        // time between updates for smooth motion; resync when the backend jumps (seek)
+        // or play/pause toggles.
         long durMs = controller.durationMs.peek();
-        controller.lyricProgress.set(durMs > 0
-                ? Math.min(1.0, controller.position() / (double) durMs) : 0.0);
+        long raw = controller.position();
+        boolean playing = Boolean.TRUE.equals(controller.playing.peek());
+        long nowN = System.nanoTime();
+        if (raw != lyRawLast || playing != lyPlayingLast) {
+            lyRawLast = raw;
+            lyPlayingLast = playing;
+            lyBaseMs = raw;
+            lyBaseNanos = nowN;
+        }
+        long predMs = playing ? lyBaseMs + (nowN - lyBaseNanos) / 1_000_000L : raw;
+        if (durMs > 0 && predMs > durMs) predMs = durMs;
+        controller.lyricProgress.set(durMs > 0 ? Math.min(1.0, predMs / (double) durMs) : 0.0);
         if (lyricSlide <= 0.001f && !open) return;
 
         // Re-feed the renderer when the track's lyric list changes (identity).
