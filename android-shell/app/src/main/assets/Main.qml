@@ -8,7 +8,9 @@ import "."
 // messages and the debug log on top.
 Rectangle {
     id: app
-    color: Theme.color.surface
+    // Transparent while the lyric page is up so the host-drawn fluid + lyrics (rendered
+    // underneath the QML scene) show through; opaque surface otherwise.
+    color: player.lyricSlide > 0.001 ? "transparent" : Theme.color.surface
 
     property int page: 0
     property int nextPage: 0
