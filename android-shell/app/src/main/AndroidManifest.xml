@@ -21,6 +21,7 @@
         <activity
             android:name="dev.t1m3.qplayer.android.QPlayerActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/AppTheme"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
             <intent-filter>

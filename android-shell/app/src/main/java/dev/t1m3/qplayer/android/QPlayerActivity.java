@@ -89,7 +89,10 @@ public final class QPlayerActivity extends Activity {
         PlayerController.PlaybackListener bootstrap = this::onPlaybackChanged;
         PlaybackService.bootstrapListener = bootstrap;
         controller.setPlaybackListener(bootstrap);
-        controller.setExitListener(() -> runOnUiThread(this::finish));
+        // Back on the home screen sends the app to the background (like Home) instead
+        // of finishing — playback keeps running and the QML scene survives, so
+        // re-entering doesn't recompile/reload the whole UI.
+        controller.setExitListener(() -> runOnUiThread(() -> moveTaskToBack(true)));
 
         settings = new AppSettings();
         settings.setDarkListener(dark -> runOnUiThread(() -> applySystemBars(dark)));
