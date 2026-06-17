@@ -56,15 +56,22 @@ jobs:
           chmod +x android-shell/gradlew
           cd android-shell && ./gradlew --no-daemon :app:assembleRelease
 
+      - name: Build debug APK (auto-signed, installable without keystore)
+        run: |
+          chmod +x android-shell/gradlew
+          cd android-shell && ./gradlew --no-daemon :app:assembleDebug
+
       # The signed output is app-release.apk; without signing Gradle emits
       # app-release-unsigned.apk. Pick whichever exists.
-      - name: Stage APK
+      - name: Stage APKs
         run: |
           mkdir -p out
           dir=android-shell/app/build/outputs/apk/release
           apk="$dir/app-release.apk"
           [ -f "$apk" ] || apk="$dir/app-release-unsigned.apk"
           cp "$apk" "out/qplayer-${{ github.ref_name }}.apk"
+          # Debug APK is always signed and installable
+          cp android-shell/app/build/outputs/apk/debug/app-debug.apk "out/qplayer-debug.apk"
 
       - name: Attach to release
         if: github.event_name == 'release'
