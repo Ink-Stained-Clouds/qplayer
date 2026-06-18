@@ -208,13 +208,6 @@ public class LyricRenderer {
     private static final double LIFT_ZETA = 0.935414;    // 7 / (2·√14)
     // Peak opacity of the white glow behind a fully-sung syllable.
     private static final float GLOW_ALPHA = 0.55f;
-    // Emphasis (depth-scale) lags the line's activation slightly: it holds off
-    // EMPHASIS_DELAY_MS past startMs, then ramps over EMPHASIS_RAMP_MS, so the line
-    // lights up first and grows a beat later. Purely time-based (same curve drives
-    // the layout reflow and the visual scale), so it can't feed back into the
-    // scroll spring the way the spring-progress version did.
-    private static final long EMPHASIS_DELAY_MS = 90L;
-    private static final long EMPHASIS_RAMP_MS = 240L;
     // Per-line scroll cascade (Apple Specs.lineDelay = 0.05). The active line and
     // everything ABOVE it move together (delay 0) — lockstep preserves their
     // spacing so the active line never rises into a still-stationary line above it
@@ -287,10 +280,6 @@ public class LyricRenderer {
     private float[][] cachedSylWidths;
     private float[] lineTopsBuf = new float[0];
     private float[] interludeBuf = new float[0];
-    // Per-frame effective line heights = cached height × the line's current depth
-    // scale, so an emphasized line reserves its grown size and the lines below
-    // glide down instead of being overlapped. Reused buffer.
-    private float[] effHeightBuf = new float[0];
     // Per-line scroll springs (cascade). lineCurTop/lineVelTop track each line's
     // drawn top + velocity; only the visible window is integrated, off-window lines
     // snap to target. Active only when spring physics is on.
@@ -620,7 +609,7 @@ public class LyricRenderer {
                     widths[s] = perCharWidth(line.syllables.get(s).text, font);
                 }
                 sylWidths[i] = widths;
-                rowStarts[i] = wrapStarts(widths, wrapW);
+                rowStarts[i] = wrapStarts(line.syllables, widths, wrapW);
                 int subRowCount = Math.max(1, rowStarts[i].length - 1);
 
                 float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
@@ -686,26 +675,17 @@ public class LyricRenderer {
             interludeBefore[gi] = computeInterludeSlot(positionMs, prevEnd, effectiveEnd);
         }
 
-        // Effective heights: main lines reserve their depth-scaled size (deselected
-        // 0.98× → active 1.14×) so an emphasized line — wrapped or not — pushes the
-        // lines below it down instead of overlapping them. BG lines keep their fixed
-        // pre-reserved slot (their pop scale is independent of layout).
-        if (effHeightBuf.length != n) effHeightBuf = new float[n];
-        float[] effHeights = effHeightBuf;
-        for (int i = 0; i < n; i++) {
-            if (!scaleOn || isBackground(lines.get(i).vocalChannel)) {
-                effHeights[i] = lineHeights[i];
-            } else {
-                float ek = computeEmphasisK(positionMs, groups.get(lineToGroup[i]));
-                effHeights[i] = lineHeights[i] * (DESELECTED_SCALE + (EMPHASIS_SCALE - DESELECTED_SCALE) * ek);
-            }
-        }
+        // Line positions are STATIC w.r.t. the zoom: the depth scale is a purely
+        // visual, centre-anchored transform that doesn't move the line's centre, so
+        // it never feeds back into the scroll target. (An earlier version reflowed
+        // line heights with the zoom, which made the target drift while the spring
+        // chased it — the "bounce back".) Lines stack at their natural heights.
 
-        // Cumulative tops = stacked effective heights + the per-frame interlude slots.
+        // Cumulative tops = stacked natural heights + the per-frame interlude slots.
         if (lineTopsBuf.length != n) lineTopsBuf = new float[n];
         float[] lineTops = lineTopsBuf;
         for (int i = 0; i < n; i++) {
-            float prevBottom = i == 0 ? 0f : lineTops[i - 1] + effHeights[i - 1];
+            float prevBottom = i == 0 ? 0f : lineTops[i - 1] + lineHeights[i - 1];
             // First line of a group with a preceding interlude gets the dot-row slot
             // inserted above it.
             int gi = lineToGroup[i];
@@ -766,7 +746,7 @@ public class LyricRenderer {
         if (activeGroup != null) {
             int mIdx = activeGroup.from;
             float mTop = lineTops[mIdx];
-            float mBottom = mTop + effHeights[mIdx];
+            float mBottom = mTop + lineHeights[mIdx];
             targetScroll = (mTop + mBottom) * 0.5f;
         }
 
@@ -810,7 +790,7 @@ public class LyricRenderer {
                 // monotonically upward toward it.
                 int nIdx = nextGroup.from;
                 float nTop = lineTops[nIdx];
-                float nBottom = nTop + effHeights[nIdx];
+                float nBottom = nTop + lineHeights[nIdx];
                 targetScroll = (nTop + nBottom) * 0.5f;
                 interludeNextGroup = -1;
             } else {
@@ -938,22 +918,41 @@ public class LyricRenderer {
             // slot itself is always there so neighbouring lines never
             // shift when the BG activates / collapses.
             // Every line gets a scale transform. BG lines keep their pop-in/out
-            // scale; main lines use depth scaling — deselected 0.98× growing to the
-            // active group's 1.14× emphasis, anchored at the line TOP (leading edge
-            // horizontally) so it grows downward into the reflow-reserved space.
+            // scale (anchored at their slot top). Main lines use depth scaling —
+            // deselected 0.98× growing to the active group's 1.14× emphasis — driven
+            // by the scroll spring's progress so the zoom lands exactly as the line
+            // settles, and anchored at the line's CENTRE so growing it never shifts
+            // its centre (that downward push at arrival was the "bounce").
             float anchorX = alignRight ? (leftX + columnWidth) : leftX;
             float scale;
+            float anchorY;
             if (isBg) {
                 float bgScaleK = computeBgScaleK(positionMs, myGroup);
                 if (bgScaleK < BG_VISIBLE_THRESHOLD) continue;
                 scale = BG_SCALE_IDLE + (1f - BG_SCALE_IDLE) * bgScaleK;
+                anchorY = lineYTop;
             } else if (scaleOn) {
-                float ek = computeEmphasisK(positionMs, myGroup);
-                scale = DESELECTED_SCALE + (EMPHASIS_SCALE - DESELECTED_SCALE) * ek;
+                float mainTextH = rowHeight + (subRowCount - 1) * rowHeightLyricWrap;
+                float lineCenter = lineYTop + mainTextH * 0.5f;
+                float emph;
+                if (spring) {
+                    // Proximity to the fixed centre line (where the active line
+                    // settles), NOT to the line's own target. The spring position is
+                    // continuous, so this never jumps when the target does — the
+                    // outgoing line shrinks smoothly as it springs away, the incoming
+                    // one grows as it springs in. No flash, no bounce.
+                    float ref = Math.max(40f, lineHeights[i]);
+                    float prog = 1f - Math.min(1f, Math.abs(lineCenter - centerY) / ref);
+                    emph = activeK * prog;
+                } else {
+                    emph = activeK;
+                }
+                scale = DESELECTED_SCALE + (EMPHASIS_SCALE - DESELECTED_SCALE) * emph;
+                anchorY = lineCenter;
             } else {
                 scale = 1f;
+                anchorY = lineYTop;
             }
-            float anchorY = lineYTop;
             canvas.save();
             canvas.translate(anchorX, anchorY);
             canvas.scale(scale, scale);
@@ -1209,35 +1208,58 @@ public class LyricRenderer {
     }
 
     /**
-     * Greedy syllable-boundary wrapper. Returns the starting syllable index
-     * of each sub-row plus a trailing sentinel (= syllables.size()) so callers
-     * can iterate {@code [starts[r], starts[r+1])} without bounds tricks.
+     * Word-aware greedy wrapper over syllables. Returns the starting syllable
+     * index of each sub-row plus a trailing sentinel (= syllables.size()).
      *
-     * <p>A single syllable wider than {@code maxW} still occupies its own
-     * sub-row (we don't split syllables — that would break the per-syllable
-     * sweep + lift timing model). Such a syllable visually clips at the
-     * column edge; the surrounding panel clipRect saves it from spilling
-     * over the cover or the controls.
+     * <p>Per-syllable (YRC) lyrics split a word into several timed syllables, so
+     * breaking at any syllable boundary would tear a word across two rows. A break
+     * is only taken at a WORD boundary (whitespace at the junction, or a CJK char
+     * on either side); on overflow mid-word we back up to the word's start and move
+     * the whole word down. A single word wider than the column is the one case that
+     * still breaks mid-word (otherwise it could never fit) — it clips at the edge.
      */
-    private static int[] wrapStarts(float[] sylWidths, float maxW) {
+    private static int[] wrapStarts(List<Syllable> syls, float[] sylWidths, float maxW) {
         int sz = sylWidths.length;
         if (sz == 0) return new int[]{0, 0};
 
         java.util.ArrayList<Integer> starts = new java.util.ArrayList<>();
         starts.add(0);
+        int rowStart = 0;
+        int wordStart = 0;   // start of the current word within the row (latest break point)
         float curW = 0f;
         for (int i = 0; i < sz; i++) {
-            float sw = sylWidths[i];
-            if (i > 0 && curW + sw > maxW) {
-                starts.add(i);
+            if (i > rowStart && canBreakBefore(syls, i)) wordStart = i;
+            if (i > rowStart && curW + sylWidths[i] > maxW) {
+                int breakAt = (wordStart > rowStart) ? wordStart : i;
+                starts.add(breakAt);
+                rowStart = breakAt;
+                wordStart = breakAt;
                 curW = 0f;
+                for (int j = rowStart; j <= i; j++) curW += sylWidths[j];
+                continue;
             }
-            curW += sw;
+            curW += sylWidths[i];
         }
         starts.add(sz);
         int[] arr = new int[starts.size()];
         for (int i = 0; i < arr.length; i++) arr[i] = starts.get(i);
         return arr;
+    }
+
+    /**
+     * Whether a row may break before syllable {@code i}: only at a real word
+     * boundary — whitespace at the junction, or a CJK character on either side
+     * (CJK breaks per character). Latin syllables of one word (no space between)
+     * return false so the word stays intact.
+     */
+    private static boolean canBreakBefore(List<Syllable> syls, int i) {
+        String prev = syls.get(i - 1).text;
+        String cur = syls.get(i).text;
+        if (prev == null || prev.isEmpty() || cur == null || cur.isEmpty()) return true;
+        char last = prev.charAt(prev.length() - 1);
+        char first = cur.charAt(0);
+        if (Character.isWhitespace(last) || Character.isWhitespace(first)) return true;
+        return isWrapCjk(last) || isWrapCjk(first);
     }
 
     /**
@@ -1669,23 +1691,6 @@ public class LyricRenderer {
      * after {@code endMs}. Used both at render time (alpha/lift/scale)
      * and at layout time (BG lineHeight collapse).
      */
-    /**
-     * Depth-scale emphasis curve: like {@link #computeActiveK} but its rise is held
-     * off {@code EMPHASIS_DELAY_MS} past startMs and ramps over
-     * {@code EMPHASIS_RAMP_MS}, so the active line lights up first and grows a beat
-     * later. Fades back out after endMs on the activeK window.
-     */
-    private static float computeEmphasisK(long positionMs, LineGroup g) {
-        long rampStart = g.startMs + EMPHASIS_DELAY_MS;
-        if (positionMs < rampStart) return 0f;
-        if (positionMs < g.endMs) {
-            return smoothstep(0f, 1f, (positionMs - rampStart) / (float) EMPHASIS_RAMP_MS);
-        }
-        float dt = (positionMs - g.endMs) / (float) ACTIVE_FADE_OUT_MS;
-        float rampedIn = smoothstep(0f, 1f, (g.endMs - rampStart) / (float) EMPHASIS_RAMP_MS);
-        return rampedIn * (1f - smoothstep(0f, 1f, dt));
-    }
-
     private static float computeActiveK(long positionMs, LineGroup g) {
         if (positionMs < g.startMs - ACTIVE_FADE_IN_MS) return 0f;
         if (positionMs < g.startMs) {
