@@ -28,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -365,6 +366,30 @@ public final class NeteaseClient {
         JsonArray arr = obj.getAsJsonArray("songs");
         if (arr.size() == 0 || !arr.get(0).isJsonObject()) return null;
         return parseSong(arr.get(0).getAsJsonObject());
+    }
+
+    /**
+     * Batch-fetch full metadata for multiple songs. Always includes
+     * {@code picUrl} even when the search API omits it.
+     */
+    public List<NeteaseSong> songDetails(List<Long> ids) throws IOException {
+        if (ids == null || ids.isEmpty()) return Collections.emptyList();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append("{\"id\":").append(ids.get(i)).append('}');
+        }
+        sb.append(']');
+        Map<String, Object> body = new HashMap<>();
+        body.put("c", sb.toString());
+        JsonObject obj = weapiJson("v3/song/detail", body);
+        List<NeteaseSong> out = new ArrayList<>();
+        if (!obj.has("songs") || !obj.get("songs").isJsonArray()) return out;
+        for (JsonElement el : obj.getAsJsonArray("songs")) {
+            if (!el.isJsonObject()) continue;
+            out.add(parseSong(el.getAsJsonObject()));
+        }
+        return out;
     }
 
     // ---- User account / library (N6) ----

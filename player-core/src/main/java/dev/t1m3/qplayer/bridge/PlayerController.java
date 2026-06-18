@@ -19,6 +19,7 @@ import io.github.timer_err.qml4j.runtime.color.StyleManager;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -237,6 +238,10 @@ public final class PlayerController {
             post(() -> playing.set(true));
             notifyPlayback();
         });
+        // On playback error: retry netease tracks whose cached streamUrl went stale
+        // (expired VIP link, region lock, etc.). Non-netease or already-retried
+        // tracks fall through to autoAdvance.
+        backend.setOnError(() -> onMain(this::onPlaybackError));
         if (netease.isLoggedIn()) {
             loggedIn.set(true);
             refreshLogin();
@@ -853,6 +858,18 @@ public final class PlayerController {
                     return;
                 }
                 List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
+                // Legacy /search/get omits album picUrl; batch-fetch details.
+                fillMissingCovers(r);
+                // Build thumbnail URLs from coverUrl (CDN image with size param).
+                // No local download needed — QML Image loads them directly.
+                for (NeteaseSong s : r) {
+                    if (s.coverUrl != null && !s.coverUrl.isEmpty()) {
+                        String thumb = s.coverUrl.contains("?")
+                                ? s.coverUrl + "&param=128y128"
+                                : s.coverUrl + "?param=128y128";
+                        s.coverThumbPath = thumb;
+                    }
+                }
                 searchCache.put(key, new CacheEntry(r));
                 post(() -> {
                     searchResults.set(r);
@@ -862,6 +879,47 @@ public final class PlayerController {
                 Logger.warn("search failed: {}", e.getMessage());
             }
         });
+    }
+
+    /** Batch-fill missing coverUrl fields from /v3/song/detail (the legacy
+     *  /search/get omits album picUrl). Runs on the worker thread. */
+    private void fillMissingCovers(List<NeteaseSong> songs) {
+        if (songs == null || songs.isEmpty()) return;
+        List<Long> missingIds = new ArrayList<>();
+        for (NeteaseSong s : songs) {
+            if (s.coverUrl == null || s.coverUrl.isEmpty()) missingIds.add(s.id);
+        }
+        if (missingIds.isEmpty()) return;
+        try {
+            List<NeteaseSong> details = netease.songDetails(missingIds);
+            Map<Long, NeteaseSong> detailMap = new HashMap<>();
+            for (NeteaseSong d : details) detailMap.put(d.id, d);
+            for (NeteaseSong s : songs) {
+                if ((s.coverUrl == null || s.coverUrl.isEmpty())) {
+                    NeteaseSong d = detailMap.get(s.id);
+                    if (d != null && d.coverUrl != null && !d.coverUrl.isEmpty()) {
+                        s.coverUrl = d.coverUrl;
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            Logger.warn("fillMissingCovers failed: {}", e.getMessage());
+        }
+    }
+
+    /** Handle a playback error from the audio backend. For netease tracks whose
+     *  cached streamUrl went stale (expired VIP link, region lock, etc.), clear
+     *  the cache and re-resolve. Everything else falls through to autoAdvance. */
+    private void onPlaybackError() {
+        Track t = currentTrack();
+        if (t != null && t.source == Track.Source.NETEASE && t.streamUrl != null) {
+            int idx = playIndex;
+            Logger.warn("playback error on netease track {}, clearing stale url and retrying", t.neteaseId);
+            t.streamUrl = null;
+            resolveAndPlayNetease(t, idx);
+            return;
+        }
+        autoAdvance();
     }
 
     /** Load the home content: recommended songs (login) + recommended playlists. */
