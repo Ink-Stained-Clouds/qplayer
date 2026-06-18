@@ -13,9 +13,8 @@ public class NeteaseSong {
     public String album;
     /** Album cover URL (CDN, jpg/png). Renderer fetches bytes lazily. */
     public String coverUrl;
-    /** Base64 data-URI (data:image/jpeg;base64,…) of a pre-cached 128px
-     *  thumbnail. Set by the thumbnail downloader after a search completes;
-     *  null until cached. QML Image.source consumes it directly. */
+    /** CDN thumbnail URL (coverUrl + ?param=128y128) for QML Image.source.
+     *  Set by the controller after a search completes; null until resolved. */
     public String coverThumbPath;
     /** Track length in milliseconds (field "dt" in the JSON). */
     public long durationMs;

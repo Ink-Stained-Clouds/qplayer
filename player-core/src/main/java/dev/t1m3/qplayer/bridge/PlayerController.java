@@ -20,7 +20,6 @@ import io.github.timer_err.qml4j.runtime.color.StyleManager;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,8 +33,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The single QML-facing object. Registered as a context global
@@ -68,12 +65,6 @@ public final class PlayerController {
     private static final String DEFAULT_SEED = "#6750A4";
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "qplayer-net");
-        t.setDaemon(true);
-        return t;
-    });
-
-    private final ExecutorService thumbnailPool = Executors.newFixedThreadPool(3, r -> {
-        Thread t = new Thread(r, "qplayer-thumb");
         t.setDaemon(true);
         return t;
     });
@@ -129,7 +120,6 @@ public final class PlayerController {
     /** TTL for cached search results: 5 minutes. */
     private static final long SEARCH_CACHE_TTL_MS = 5 * 60 * 1000L;
     private final Map<String, CacheEntry> searchCache = new ConcurrentHashMap<>();
-    private final Map<String, String> thumbCache = new ConcurrentHashMap<>();
 
     /** Holds a cached search result with its creation timestamp. */
     private static final class CacheEntry {
@@ -858,10 +848,18 @@ public final class PlayerController {
                     return;
                 }
                 List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
-                // Legacy /search/get omits album picUrl; batch-fetch details
-                // to fill missing covers before downloading thumbnails.
+                // Legacy /search/get omits album picUrl; batch-fetch details.
                 fillMissingCovers(r);
-                downloadThumbnails(r);
+                // Build thumbnail URLs from coverUrl (CDN image with size param).
+                // No local download needed — QML Image loads them directly.
+                for (NeteaseSong s : r) {
+                    if (s.coverUrl != null && !s.coverUrl.isEmpty()) {
+                        String thumb = s.coverUrl.contains("?")
+                                ? s.coverUrl + "&param=128y128"
+                                : s.coverUrl + "?param=128y128";
+                        s.coverThumbPath = thumb;
+                    }
+                }
                 searchCache.put(key, new CacheEntry(r));
                 post(() -> {
                     searchResults.set(r);
@@ -896,33 +894,6 @@ public final class PlayerController {
             }
         } catch (Throwable e) {
             Logger.warn("fillMissingCovers failed: {}", e.getMessage());
-        }
-    }
-
-    private void downloadThumbnails(List<NeteaseSong> songs) {
-        if (songs == null || songs.isEmpty()) return;
-        List<Future<?>> futures = new ArrayList<>();
-        for (NeteaseSong song : songs) {
-            String coverUrl = song.coverUrl;
-            if (coverUrl == null || coverUrl.isEmpty()) continue;
-            String cached = thumbCache.get(coverUrl);
-            if (cached != null) { song.coverThumbPath = cached; continue; }
-            futures.add(thumbnailPool.submit(() -> {
-                try {
-                    String u = coverUrl.contains("?") ? coverUrl + "&param=128y128" : coverUrl + "?param=128y128";
-                    byte[] data = downloadBytes(u);
-                    if (data != null && data.length > 0) {
-                        String dataUri = "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(data);
-                        song.coverThumbPath = dataUri;
-                        thumbCache.put(coverUrl, dataUri);
-                    }
-                } catch (Throwable e) {
-                    Logger.warn("thumb {}: {}", song.id, e.getMessage());
-                }
-            }));
-        }
-        for (Future<?> f : futures) {
-            try { f.get(5, TimeUnit.SECONDS); } catch (Throwable ignored) {}
         }
     }
 
@@ -1168,6 +1139,5 @@ public final class PlayerController {
     public void shutdown() {
         backend.release();
         worker.shutdownNow();
-        thumbnailPool.shutdownNow();
     }
 }
