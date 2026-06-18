@@ -33,13 +33,15 @@ Rectangle {
         color: ma.containsMouse ? Theme.color.surfaceContainerHigh : "transparent"
     }
 
-    Item {
+    Rectangle {
         id: leading
         anchors.left: parent.left
         anchors.leftMargin: 10
         anchors.verticalCenter: parent.verticalCenter
         width: 44
         height: 44
+        radius: 8
+        clip: true
 
         Image {
             anchors.fill: parent
