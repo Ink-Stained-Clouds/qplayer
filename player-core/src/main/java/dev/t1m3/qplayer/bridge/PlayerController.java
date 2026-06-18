@@ -13,12 +13,10 @@ import dev.t1m3.qplayer.unblock.SongUnblocker;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.netease.dto.NeteaseUser;
-import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.util.Logger;
 import io.github.timer_err.qml4j.engine.binding.Property;
 import io.github.timer_err.qml4j.runtime.color.StyleManager;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
