@@ -178,6 +178,8 @@ public final class PlayerController {
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
+    /** Hot search keywords shown when search input is empty. */
+    public final Property<List<String>> hotSearches = new Property<>(Collections.<String>emptyList());
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
@@ -819,6 +821,18 @@ public final class PlayerController {
     }
 
     // --- Netease discovery ------------------------------------------------
+
+    /** Load hot search keywords from Netease API. Called once on search page open. */
+    public void loadHotSearches() {
+        worker.submit(() -> {
+            try {
+                List<String> hot = netease.searchHot();
+                post(() -> hotSearches.set(hot));
+            } catch (Throwable e) {
+                Logger.warn("loadHotSearches failed: {}", e.getMessage());
+            }
+        });
+    }
 
     /** Search and publish to {@link #searchResults}. Results are cached for
      *  {@value #SEARCH_CACHE_TTL_MS} ms; a cache hit returns immediately without
