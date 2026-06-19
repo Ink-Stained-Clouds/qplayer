@@ -43,6 +43,13 @@ Rectangle {
                 font.pixelSize: Theme.typography.titleLarge.size
                 elide: Text.ElideRight
             }
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
+                icon: player.currentPlaylistSubscribed ? "bookmark" : "bookmark_border"
+                visible: player.loggedIn && !player.playlistLoading && !player.currentPlaylistIsOwn
+                onClicked: player.togglePlaylistSubscribe()
+            }
         }
 
         Item {

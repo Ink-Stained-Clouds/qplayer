@@ -211,6 +211,12 @@ public final class PlayerController {
     /** True while an opened playlist's tracks are loading, so the detail page shows a
      *  spinner instead of the previous playlist's content. */
     public final Property<Boolean> playlistLoading = new Property<>(false);
+    /** ID of the currently open playlist; 0 when none. */
+    private volatile long currentPlaylistId = 0;
+    /** Whether the signed-in user has already subscribed to the currently open playlist. */
+    public final Property<Boolean> currentPlaylistSubscribed = new Property<>(false);
+    /** True when the currently open playlist was created by the signed-in user (can't subscribe own). */
+    public final Property<Boolean> currentPlaylistIsOwn = new Property<>(false);
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
     public final Property<List<Track>> queueTracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Boolean> queueOpen = new Property<>(false);
@@ -1079,9 +1085,12 @@ public final class PlayerController {
     public void openPlaylist(long playlistId) {
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.
+        currentPlaylistId = playlistId;
         playlistLoading.set(true);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
         playlistTitle.set("");
+        currentPlaylistSubscribed.set(false);
+        currentPlaylistIsOwn.set(false);
         worker.submit(() -> {
             try {
                 NeteasePlaylist detail = netease.playlistDetail(playlistId);
@@ -1089,14 +1098,40 @@ public final class PlayerController {
                 fillMissingCovers(songs);
                 buildSongThumbs(songs, "128");
                 String name = detail != null ? detail.name : "";
+                boolean subscribed = detail != null && detail.subscribed;
+                boolean isOwn = detail != null && uid != 0 && detail.creatorUid == uid;
                 post(() -> {
+                    if (currentPlaylistId != playlistId) return;
                     playlistTitle.set(name == null ? "" : name);
                     playlistTracks.set(songs);
                     playlistLoading.set(false);
+                    currentPlaylistSubscribed.set(subscribed);
+                    currentPlaylistIsOwn.set(isOwn);
                 });
             } catch (Throwable e) {
                 Logger.warn("open playlist {} failed: {}", playlistId, e.getMessage());
                 post(() -> playlistLoading.set(false));
+            }
+        });
+    }
+
+    /** Toggle subscribe / unsubscribe for the currently open playlist. No-op on own playlists. */
+    public void togglePlaylistSubscribe() {
+        if (!loggedIn.get() || currentPlaylistId == 0 || currentPlaylistIsOwn.get()) return;
+        boolean target = !currentPlaylistSubscribed.get();
+        long id = currentPlaylistId;
+        worker.submit(() -> {
+            try {
+                boolean ok = netease.playlistSubscribe(id, target);
+                if (ok) {
+                    post(() -> {
+                        currentPlaylistSubscribed.set(target);
+                        toast.set(target ? "收藏成功" : "已取消收藏");
+                        loadMyPlaylists();
+                    });
+                }
+            } catch (Throwable e) {
+                Logger.warn("playlist subscribe toggle failed: {}", e.getMessage());
             }
         });
     }
