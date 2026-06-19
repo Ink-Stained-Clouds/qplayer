@@ -2,18 +2,21 @@ import QtQuick
 import md3.Core
 import "."
 
-// Full-list song view. Every row exists with a constant y (index * rowH) and
-// binds to its modelData once, so scrolling changes ONLY contentY — which the
-// Flickable applies as a paint-only translate (no changeVersion bump, hence no
-// relayout). The renderer quick-rejects rows outside the viewport at paint time,
-// so the hundreds of off-screen rows cost ~nothing to draw.
+// Virtualized song list. Only the rows near the viewport are instantiated: the
+// Repeater windows the model to [first, first+window), giving each delegate its
+// GLOBAL index so a row positioned by `y: index*rowH` still lands at its absolute
+// content offset. Scrolling changes contentY (a paint-only translate); only when
+// it crosses a row boundary does `first` change, and because `window` is constant
+// the Repeater slides its existing delegates in place (rewriting each one's index
+// + modelData) rather than rebuilding. So a list of any length — a several-
+// thousand-track local library or playlist — costs ~`window` live delegates, not
+// one SongRow per track (which used to OOM the heap on large libraries).
 //
-// This replaced a windowed/recycling pool: recycling rewrote each delegate's
-// index/title/artist whenever the window shifted (every ~rowH px of scroll),
-// and every one of those writes bumped the engine's global change version,
-// which forced a full-tree relayout (incl. the MiniPlayer/BottomNav Layouts)
-// on that frame. That per-shift relayout was the playlist-scroll stutter —
-// HomePage stayed smooth precisely because its rows never change on scroll.
+// This replaces the earlier "build every row, paint-cull off-screen" approach: that
+// kept the whole list's delegates alive at once, which was smooth to scroll (no
+// per-shift relayout) but did not bound memory. Windowing bounds memory; the
+// per-boundary relayout it reintroduces is absorbed by cachedLayout on the content
+// item (only the ~window moved rows re-measure; the rest of the tree is cached).
 Flickable {
     id: view
 
@@ -28,6 +31,21 @@ Flickable {
 
     property int count: list ? list.length : 0
 
+    // Live-delegate window: viewport height in rows plus a buffer above and below.
+    // Constant once `height` settles (it does not depend on contentY), so a scroll
+    // that only slides the window keeps the Repeater's in-place update fast path.
+    property int buffer: 6
+    property int window: Math.min(count, Math.ceil(height / rowH) + 2 * buffer + 1)
+    // Global index of the topmost live row, clamped so the window never runs past
+    // either end (and stays full at the tail, pinned to count-window).
+    property int first: {
+        var f = Math.floor(contentY / rowH) - buffer;
+        var maxFirst = count - window;
+        if (f > maxFirst) f = maxFirst;
+        if (f < 0) f = 0;
+        return f;
+    }
+
     clip: true
     contentWidth: width
     contentHeight: count * rowH
@@ -35,15 +53,17 @@ Flickable {
     Item {
         width: view.width
         height: view.contentHeight
-        // Rows sit at fixed y = index*rowH and never reflow, so the layout pass can
-        // skip re-measuring them while this item's box and row count are unchanged.
-        // Without it, the 5 Hz play clock's version bump re-measured every row of a
-        // long list each tick (a stutter that scaled with list length).
+        // The windowed rows sit at fixed y = index*rowH; only the ~window rows that
+        // slide on a boundary cross re-measure, so cache the rest (incl. the 5 Hz
+        // play clock's version bump) instead of re-measuring the content each frame.
         cachedLayout: true
 
         Repeater {
             model: view.list
+            windowStart: view.first
+            windowCount: view.window
             SongRow {
+                // `index` is the GLOBAL row index (the Repeater windows internally).
                 width: view.width
                 y: index * view.rowH
                 rowTitle: view.isLocal ? modelData.title : modelData.name
