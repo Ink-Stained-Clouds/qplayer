@@ -389,8 +389,9 @@ public final class PlayerController {
     // release, compare its tag against the running version, and (if newer) expose
     // the version + release notes + download url so QML pops an update dialog.
 
-    /** Latest GitHub release endpoint for the qplayer repo. (Not mirrored: gh-proxy
-     *  only proxies release/raw downloads, not api.github.com — which is reachable.) */
+    /** Latest GitHub release endpoint for the qplayer repo. gh-proxy.com proxies
+     *  api.github.com too, so with the mirror on the whole flow (check + download)
+     *  works on mainland networks where api.github.com is unreliable. */
     private static final String RELEASE_API =
             "https://api.github.com/repos/TIMER-err/qplayer/releases/latest";
     /** gh-proxy (hunshcn/gh-proxy) prefix for github.com release downloads. */
@@ -475,7 +476,7 @@ public final class PlayerController {
     public void checkForUpdate() {
         worker.submit(() -> {
             try {
-                String json = httpGet(RELEASE_API);
+                String json = fetchReleaseJson();
                 JsonElement root = new JsonParser().parse(json);
                 if (!root.isJsonObject()) return;
                 JsonObject obj = root.getAsJsonObject();
@@ -520,6 +521,20 @@ public final class PlayerController {
                 Logger.warn("update check failed: {}", e.toString());
             }
         });
+    }
+
+    /** Fetch the latest-release JSON, preferring the mirror when enabled (so the
+     *  version check works on mainland networks where api.github.com is unreliable),
+     *  and falling back to the other endpoint if the first fails. */
+    private String fetchReleaseJson() throws java.io.IOException {
+        String mirrored = MIRROR_PREFIX + RELEASE_API;
+        String primary = updateMirror ? mirrored : RELEASE_API;
+        String secondary = updateMirror ? RELEASE_API : mirrored;
+        try {
+            return httpGet(primary);
+        } catch (java.io.IOException e) {
+            return httpGet(secondary);
+        }
     }
 
     /** Open the stored download url via the host (invoked from the QML dialog). */
