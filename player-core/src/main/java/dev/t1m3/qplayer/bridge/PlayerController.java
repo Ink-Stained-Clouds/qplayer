@@ -15,6 +15,7 @@ import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.netease.dto.NeteaseUser;
 import dev.t1m3.qplayer.util.Logger;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -1009,18 +1010,42 @@ public final class PlayerController {
         worker.submit(() -> {
             List<LyricLine> lines = tryAmllTtml(songId);
             if (lines.isEmpty()) {
-                try {
-                    NeteaseLyric nl = netease.lyric(songId);
-                    if (nl != null) {
-                        lines = LyricParser.fromNeteaseStrings(nl.yrc, nl.lrc, nl.tlyric, nl.romalrc);
-                    }
-                } catch (Throwable e) {
-                    Logger.warn("lyric load failed for {}: {}", songId, e.getMessage());
-                }
+                lines = neteaseLyricCacheFirst(songId);
             }
             final List<LyricLine> ly = lines;
             post(() -> { if (playIndex == expectedIndex) lyrics.set(ly); });
         });
+    }
+
+    private static final Gson LYRIC_GSON = new Gson();
+
+    /** Netease's own lyric payload (YRC/LRC/translation/romaji), disk-cache-first so a
+     *  previously-played song shows lyrics offline even when it has no AMLL TTML. The
+     *  payload is serialized to JSON next to the TTML cache (a .nlrc file). */
+    private List<LyricLine> neteaseLyricCacheFirst(long songId) {
+        String cached = diskCache.getNeteaseLyric(songId);
+        if (cached != null) {
+            try {
+                byte[] data = readBytesFromFile(cached);
+                if (data != null && data.length > 0) {
+                    NeteaseLyric nl = LYRIC_GSON.fromJson(
+                            new String(data, java.nio.charset.StandardCharsets.UTF_8), NeteaseLyric.class);
+                    if (nl != null && !nl.isEmpty()) {
+                        return LyricParser.fromNeteaseStrings(nl.yrc, nl.lrc, nl.tlyric, nl.romalrc);
+                    }
+                }
+            } catch (Throwable ignored) { }
+        }
+        try {
+            NeteaseLyric nl = netease.lyric(songId);
+            if (nl == null || nl.isEmpty()) return Collections.emptyList();
+            byte[] data = LYRIC_GSON.toJson(nl).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            diskCache.cacheNeteaseLyric(data, songId);
+            return LyricParser.fromNeteaseStrings(nl.yrc, nl.lrc, nl.tlyric, nl.romalrc);
+        } catch (Throwable e) {
+            Logger.warn("lyric load failed for {}: {}", songId, e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     /** Cache a netease track's audio to disk (off-thread) for local replay. Skips

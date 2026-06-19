@@ -55,10 +55,16 @@ public final class DiskCache {
         return BASE_DIR + "/" + AUDIO + "/" + neteaseId + ".cache";
     }
 
-    /** Resolve cache file for lyrics keyed by song id. */
+    /** Resolve cache file for AMLL TTML lyrics keyed by song id. */
     public static String lyricPath(long songId) {
         if (songId <= 0) return null;
         return BASE_DIR + "/" + LYRIC + "/" + songId + ".ttml";
+    }
+
+    /** Resolve cache file for Netease's own lyric payload (serialized YRC/LRC). */
+    public static String neteaseLyricPath(long songId) {
+        if (songId <= 0) return null;
+        return BASE_DIR + "/" + LYRIC + "/" + songId + ".nlrc";
     }
 
     /** Resolve cache file for a cover image keyed by url hash. */
@@ -95,9 +101,15 @@ public final class DiskCache {
         return touch(p);
     }
 
-    /** Return the cached lyric file path, or null. */
+    /** Return the cached AMLL TTML lyric file path, or null. */
     public String getLyric(long songId) {
         String p = lyricPath(songId);
+        return touch(p);
+    }
+
+    /** Return the cached Netease lyric payload file path, or null. */
+    public String getNeteaseLyric(long songId) {
+        String p = neteaseLyricPath(songId);
         return touch(p);
     }
 
@@ -118,9 +130,15 @@ public final class DiskCache {
         downloadToFile(url, path);
     }
 
-    /** Write raw bytes to the lyric cache file. */
+    /** Write raw bytes to the AMLL TTML lyric cache file. */
     public void cacheLyric(byte[] data, long songId) {
         String path = lyricPath(songId);
+        writeBytes(data, path);
+    }
+
+    /** Write the serialized Netease lyric payload to its cache file. */
+    public void cacheNeteaseLyric(byte[] data, long songId) {
+        String path = neteaseLyricPath(songId);
         writeBytes(data, path);
     }
 
