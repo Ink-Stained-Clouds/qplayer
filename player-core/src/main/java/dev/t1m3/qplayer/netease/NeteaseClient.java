@@ -54,6 +54,8 @@ public final class NeteaseClient {
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
           + " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    /** A stable mainland-China client IP sent as X-Real-IP to relax risk control. */
+    private static final String REAL_IP = randomChinaIp();
 
     private final Gson gson = new Gson();
     private final Map<String, String> cookies = new ConcurrentHashMap<>();
@@ -97,6 +99,10 @@ public final class NeteaseClient {
             conn.setRequestProperty("User-Agent", UA);
             conn.setRequestProperty("Referer", BASE);
             conn.setRequestProperty("Origin", BASE);
+            // A mainland-China client IP relaxes Netease's risk control (the "当前环境
+            // 异常" / 524 rejection on sensitive ops like favoriting).
+            conn.setRequestProperty("X-Real-IP", REAL_IP);
+            conn.setRequestProperty("X-Forwarded-For", REAL_IP);
             String cookieHeader = cookieHeader();
             if (!cookieHeader.isEmpty()) conn.setRequestProperty("Cookie", cookieHeader);
 
@@ -546,8 +552,41 @@ public final class NeteaseClient {
         body.put("like", isLike);
         body.put("alg", "itembased");
         body.put("time", "3");
-        JsonObject obj = weapiJson("song/like", body);
-        return obj.has("code") && obj.get("code").getAsInt() == 200;
+        JsonObject obj = weapiJson("radio/like", body);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code != 200) {
+            Logger.warn("netease radio/like failed for {} (like={}): {}",
+                    songId, isLike, truncate(obj.toString(), 300));
+        }
+        return code == 200;
+    }
+
+    /** The user's "我喜欢的音乐" playlist id (their first owned playlist), or 0. */
+    public long favoritePlaylistId(long uid) throws IOException {
+        if (uid == 0L) return 0L;
+        for (NeteasePlaylist p : userPlaylists(uid, 1000)) {
+            if (p.creatorUid == uid) return p.id;
+        }
+        return 0L;
+    }
+
+    /** Add/remove a track to the "我喜欢的音乐" playlist. The reliable favorite path
+     *  when {@link #like} hits risk control (code 524, "当前环境异常"). */
+    public boolean setFavorite(long uid, long songId, boolean add) throws IOException {
+        long pid = favoritePlaylistId(uid);
+        if (pid == 0L) return false;
+        Map<String, Object> body = new HashMap<>();
+        body.put("op", add ? "add" : "del");
+        body.put("pid", pid);
+        body.put("trackIds", "[" + songId + "]");
+        body.put("imme", "true");
+        JsonObject obj = weapiJson("playlist/manipulate/tracks", body);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code != 200) {
+            Logger.warn("playlist/manipulate/tracks failed for {} (add={}): {}",
+                    songId, add, truncate(obj.toString(), 300));
+        }
+        return code == 200;
     }
 
     /**
@@ -729,16 +768,61 @@ public final class NeteaseClient {
     }
 
     private String cookieHeader() {
-        if (cookies.isEmpty()) return "os=pc; appver=8.10.05";
+        ensureDeviceCookies();
+        Map<String, String> all = new LinkedHashMap<>(cookies);
+        // Device-identity flags a real client sends. Without them Netease's risk
+        // control rejects sensitive ops (favoriting) with code 524 "当前环境异常".
+        all.put("__remember_me", "true");
+        all.put("ntes_kaola_ad", "1");
+        all.put("_ntes_nnid", all.getOrDefault("_ntes_nuid", "") + "," + System.currentTimeMillis());
+        all.put("WNMCID", wnmcid());
+        all.put("WEVNSM", "1.0.0");
+        all.put("NMTID", randomHex(16));
+        all.put("os", "pc");
+        all.put("osver", "Microsoft-Windows-10-Professional-build-19045-64bit");
+        all.put("appver", "3.1.17.204416");
+        all.put("channel", "netease");
         StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, String> e : cookies.entrySet()) {
+        for (Map.Entry<String, String> e : all.entrySet()) {
             if (sb.length() > 0) sb.append("; ");
             sb.append(e.getKey()).append('=').append(e.getValue());
         }
-        // Always advertise PC client flags so endpoints return the
-        // higher-quality / fuller response variants.
-        sb.append("; os=pc; appver=8.10.05");
         return sb.toString();
+    }
+
+    /** Persist a stable deviceId + _ntes_nuid so the client fingerprint doesn't change
+     *  between requests (a moving fingerprint itself trips risk control). */
+    private void ensureDeviceCookies() {
+        boolean changed = false;
+        if (!cookies.containsKey("_ntes_nuid")) { cookies.put("_ntes_nuid", randomHex(32)); changed = true; }
+        if (!cookies.containsKey("deviceId")) { cookies.put("deviceId", randomHex(16)); changed = true; }
+        if (changed) saveCookies();
+    }
+
+    private static String randomHex(int bytes) {
+        byte[] b = new byte[bytes];
+        java.util.concurrent.ThreadLocalRandom.current().nextBytes(b);
+        StringBuilder s = new StringBuilder(bytes * 2);
+        for (byte x : b) {
+            s.append(Character.forDigit((x >> 4) & 0xf, 16));
+            s.append(Character.forDigit(x & 0xf, 16));
+        }
+        return s.toString();
+    }
+
+    private static String wnmcid() {
+        StringBuilder s = new StringBuilder();
+        java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
+        for (int i = 0; i < 6; i++) s.append((char) ('a' + r.nextInt(26)));
+        return s.append('.').append(System.currentTimeMillis()).append(".01.0").toString();
+    }
+
+    /** A random IP in a mainland-China allocation (first octets from CN ranges). */
+    private static String randomChinaIp() {
+        int[] firsts = {36, 39, 42, 58, 59, 60, 101, 106, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 175, 180, 182, 183, 202, 203, 210, 211, 218, 219, 220, 221, 222, 223};
+        java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
+        int a = firsts[r.nextInt(firsts.length)];
+        return a + "." + r.nextInt(256) + "." + r.nextInt(256) + "." + (1 + r.nextInt(254));
     }
 
     private void captureSetCookies(List<String> setCookies) {

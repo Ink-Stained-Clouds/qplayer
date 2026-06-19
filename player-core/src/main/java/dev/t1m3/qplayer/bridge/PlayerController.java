@@ -1474,6 +1474,11 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 boolean ok = netease.like(id, target);
+                if (!ok) {
+                    // song/like hit risk control (code 524 "当前环境异常") for this track;
+                    // fall back to adding/removing it via the "我喜欢的音乐" playlist.
+                    ok = netease.setFavorite(uid, id, target);
+                }
                 if (ok) {
                     post(() -> {
                         if (target) likedSet.add(id);
@@ -1482,9 +1487,13 @@ public final class PlayerController {
                         Track c = currentTrack();
                         if (c != null && c.neteaseId == id) currentLiked.set(target);
                     });
+                } else {
+                    post(() -> toast.set(netease.isLoggedIn()
+                            ? (target ? "收藏失败" : "取消收藏失败") : "请先登录"));
                 }
             } catch (Throwable e) {
                 Logger.warn("like toggle failed: {}", e.getMessage());
+                post(() -> toast.set("收藏失败：" + e.getMessage()));
             }
         });
     }
