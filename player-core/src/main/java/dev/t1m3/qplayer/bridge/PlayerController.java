@@ -524,15 +524,30 @@ public final class PlayerController {
             playingIntent = true;
             post(() -> playing.set(true));
             notifyPlayback();
-        } else if (t.streamUrl != null) {
-            Logger.info("play netease (cached url): {}", t.title);
-            backend.play(t.playable(), 0L);
-            playingIntent = true;
-            post(() -> playing.set(true));
-            notifyPlayback();
-        } else {
-            resolveAndPlayNetease(t, i);
-        }
+        } else if (t.source == Track.Source.NETEASE) {
+            // Single-loop mode: prefer cached local file to avoid re-streaming.
+            String cachePath = audioCachePath(t.neteaseId);
+            boolean repeatOne = playMode.peek() == 2;
+            if (repeatOne && cachePath != null && new java.io.File(cachePath).exists()) {
+                Logger.info("play netease (audio cache): {}", t.title);
+                backend.play(cachePath, 0L);
+                playingIntent = true;
+                post(() -> playing.set(true));
+                notifyPlayback();
+            } else if (t.streamUrl != null) {
+                Logger.info("play netease (cached url): {}", t.title);
+                backend.play(t.playable(), 0L);
+                playingIntent = true;
+                post(() -> playing.set(true));
+                notifyPlayback();
+                // Kick off background download for single-loop caching.
+                if (repeatOne && t.streamUrl != null) {
+                    final String url = t.streamUrl;
+                    worker.submit(() -> downloadAudioToCache(url, cachePath));
+                }
+            } else {
+                resolveAndPlayNetease(t, i);
+            }
     }
 
     /** Feed coverBytes for the fluid backdrop: local tracks carry embedded
@@ -629,6 +644,46 @@ public final class PlayerController {
         } catch (Throwable e) {
             Logger.warn("cover fetch failed: {}", e.getMessage());
             return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** Cache directory for single-loop audio files. */
+    private static final String AUDIO_CACHE_DIR = AppDirs.base() + "/audio_cache";
+
+    /** Resolve the cache file path for a netease song, or null if id is invalid. */
+    private static String audioCachePath(long neteaseId) {
+        if (neteaseId <= 0) return null;
+        return AUDIO_CACHE_DIR + "/" + neteaseId + ".cache";
+    }
+
+    /** Download an audio URL to a file on disk. Called on the worker thread.
+     *  Errors are logged but non-fatal — playback continues from the stream URL. */
+    private void downloadAudioToCache(String url, String cachePath) {
+        if (url == null || cachePath == null) return;
+        java.net.HttpURLConnection c = null;
+        try {
+            java.io.File dir = new java.io.File(AUDIO_CACHE_DIR);
+            if (!dir.exists()) dir.mkdirs();
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(30000);
+            c.setRequestProperty("User-Agent", "qplayer/1.0");
+            try (java.io.InputStream in = c.getInputStream();
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(cachePath)) {
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            Logger.info("audio cached: {} ({})",
+                    cachePath.substring(cachePath.lastIndexOf('/') + 1),
+                    new java.io.File(cachePath).length());
+        } catch (Throwable e) {
+            Logger.warn("audio cache download failed: {}", e.getMessage());
+            // Clean up partial file so we don't serve a truncated file later.
+            java.io.File f = new java.io.File(cachePath);
+            if (f.exists()) f.delete();
         } finally {
             if (c != null) c.disconnect();
         }
@@ -811,6 +866,11 @@ public final class PlayerController {
                     playingIntent = true;
                     post(() -> playing.set(true));
                     notifyPlayback();
+                    // Single-loop: cache audio so next loop iteration plays from disk.
+                    if (playMode.peek() == 2 && playUrl != null) {
+                        final String url = playUrl;
+                        worker.submit(() -> downloadAudioToCache(url, audioCachePath(t.neteaseId)));
+                    }
                 });
             } catch (Throwable e) {
                 Logger.warn("netease resolve failed for {}: {}", songId, e.getMessage());
