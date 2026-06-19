@@ -889,9 +889,8 @@ public final class PlayerController {
                     notifyPlayback();
                     // Single-loop: cache audio so next loop iteration plays from disk.
                     if (playMode.peek() == 2 && playUrl != null) {
-                        final String url = playUrl;
                         final long nid = t.neteaseId;
-                        worker.submit(() -> diskCache.cacheAudio(url, nid));
+                        worker.submit(() -> diskCache.cacheAudio(playUrl, nid));
                     }
                 });
             } catch (Throwable e) {
