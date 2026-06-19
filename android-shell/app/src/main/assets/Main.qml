@@ -264,6 +264,8 @@ Rectangle {
         onClosed: app.loginOpen = false
     }
 
+    DynamicIsland {}
+
     Snackbar { id: snack }
 
     // --- debug log overlay ---------------------------------------------
