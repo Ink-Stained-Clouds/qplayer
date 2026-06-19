@@ -710,9 +710,9 @@ public final class PlayerController {
             post(() -> playing.set(true));
             notifyPlayback();
         } else if (t.source == Track.Source.NETEASE) {
-            // Single-loop mode: prefer cached local file to avoid re-streaming.
-            boolean repeatOne = playMode.peek() == 2;
-            String cached = repeatOne ? diskCache.getAudio(t.neteaseId) : null;
+            // Always prefer a cached local file over (re-)streaming, regardless of
+            // play mode — a song played once is served from disk on every later play.
+            String cached = t.neteaseId != 0 ? diskCache.getAudio(t.neteaseId) : null;
             if (cached != null) {
                 Logger.info("play netease (audio cache): {}", t.title);
                 backend.play(cached, 0L);
@@ -725,12 +725,8 @@ public final class PlayerController {
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
-                // Cache audio in background for single-loop and general use.
-                if (repeatOne && t.streamUrl != null) {
-                    final String url = t.streamUrl;
-                    final long nid = t.neteaseId;
-                    worker.submit(() -> diskCache.cacheAudio(url, nid));
-                }
+                // Populate the disk cache so the next play is local (skip trial clips).
+                cacheAudioAsync(t);
             } else {
                 resolveAndPlayNetease(t, i);
             }
@@ -990,6 +986,15 @@ public final class PlayerController {
         this.unblockEnabled = enabled;
     }
 
+    /** Cache a netease track's audio to disk (off-thread) for local replay. Skips
+     *  trial/preview clips and tracks lacking an id or resolved url. */
+    private void cacheAudioAsync(Track t) {
+        if (t == null || t.trial || t.neteaseId == 0 || t.streamUrl == null) return;
+        final String url = t.streamUrl;
+        final long nid = t.neteaseId;
+        worker.submit(() -> diskCache.cacheAudio(url, nid));
+    }
+
     private void resolveAndPlayNetease(Track t, int expectedIndex) {
         long songId = t.neteaseId;
         worker.submit(() -> {
@@ -1050,6 +1055,7 @@ public final class PlayerController {
                         return;
                     }
                     t.streamUrl = playUrl;
+                    t.trial = isTrialOnly;
                     post(() -> {
                         if (isUnblocked) toast.set("已为该歌曲自动换源");
                         else if (isTrialOnly) toast.set("当前歌曲仅可试听");
@@ -1066,11 +1072,8 @@ public final class PlayerController {
                     playingIntent = true;
                     post(() -> playing.set(true));
                     notifyPlayback();
-                    // Single-loop: cache audio so next loop iteration plays from disk.
-                    if (playMode.peek() == 2 && playUrl != null) {
-                        final long nid = t.neteaseId;
-                        worker.submit(() -> diskCache.cacheAudio(playUrl, nid));
-                    }
+                    // Populate the disk cache so later plays are served locally.
+                    cacheAudioAsync(t);
                 });
             } catch (Throwable e) {
                 Logger.warn("netease resolve failed for {}: {}", songId, e.getMessage());

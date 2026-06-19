@@ -18,6 +18,9 @@ public class Track {
     public String contentUri;
     /** Direct HTTP CDN url (NETEASE source) — fetched lazily, may be null. */
     public String streamUrl;
+    /** True when {@link #streamUrl} is only a trial/preview clip (not the full
+     *  track) — such a clip must never be written to the audio disk cache. */
+    public boolean trial;
     /** Netease song id (NETEASE source); 0 for LOCAL. Lets the controller
      *  refetch {@link #streamUrl} when the previous one expires. */
     public long neteaseId;
