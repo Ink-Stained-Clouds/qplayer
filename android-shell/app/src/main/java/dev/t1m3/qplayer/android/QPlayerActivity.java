@@ -8,7 +8,6 @@ import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 
-import io.github.timer_err.qml4j.android.AssetResourceLoader;
 import io.github.timer_err.qml4j.android.DexClassLoaderBackend;
 import io.github.timer_err.qml4j.android.QmlGLSurfaceView;
 import io.github.timer_err.qml4j.engine.QmlEngine;
@@ -162,7 +161,7 @@ public final class QPlayerActivity extends Activity {
                 new DexClassLoaderBackend(getClass().getClassLoader(), 26, dexCache));
         float density = getResources().getDisplayMetrics().density;
         glView = new QmlGLSurfaceView(this, engine, qml,
-                new AssetResourceLoader(getAssets()), density);
+                new FileResourceLoader(getAssets()), density);
         glView.setController(controller);
         glView.setSettings(settings);
         glView.setErrorListener(trace -> runOnUiThread(() -> showError(trace)));

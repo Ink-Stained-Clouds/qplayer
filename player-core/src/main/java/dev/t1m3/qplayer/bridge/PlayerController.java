@@ -168,6 +168,10 @@ public final class PlayerController {
     public final Property<String> artist = new Property<>("");
     public final Property<String> album = new Property<>("");
     public final Property<String> coverUrl = new Property<>("");
+    /** Absolute path to the current track's cover in the disk cache, or "" when not
+     *  cached. QML prefers it over {@link #coverUrl} so the now-playing art shows with
+     *  no network (the asset loader is file-aware via FileResourceLoader). */
+    public final Property<String> coverPath = new Property<>("");
     /** Cover image bytes of the current track (local embedded or downloaded),
      *  for the host-drawn fluid lyric backdrop. Null until available. */
     public final Property<byte[]> coverBytes = new Property<>(null);
@@ -719,12 +723,16 @@ public final class PlayerController {
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
+                // The audio fast-path skips resolveAndPlayNetease, so load the lyrics
+                // (cache-first inside) here too — else a cached song plays wordless.
+                loadNeteaseLyrics(t, i);
             } else if (t.streamUrl != null) {
                 Logger.info("play netease (cached url): {}", t.title);
                 backend.play(t.playable(), 0L);
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
+                loadNeteaseLyrics(t, i);
                 // Populate the disk cache so the next play is local (skip trial clips).
                 cacheAudioAsync(t);
             } else {
@@ -739,11 +747,11 @@ public final class PlayerController {
     private void updateCover(Track t, int expectedIndex) {
         if (t.coverBytes != null) {
             final byte[] cb = t.coverBytes;
-            post(() -> applyCover(cb));
+            post(() -> { applyCover(cb); coverPath.set(""); });
             notifyPlayback();
             return;
         }
-        post(() -> applyCover(null));
+        post(() -> { applyCover(null); coverPath.set(""); });
         final String url = t.coverUrl;
         if (url == null || url.isEmpty()) return;
 
@@ -753,7 +761,8 @@ public final class PlayerController {
             byte[] data = readBytesFromFile(cachedImg);
             if (data != null && data.length > 0) {
                 t.coverBytes = data;
-                post(() -> { if (playIndex == expectedIndex) applyCover(data); });
+                final String path = cachedImg;
+                post(() -> { if (playIndex == expectedIndex) { applyCover(data); coverPath.set(path); } });
                 notifyPlayback();
                 return;
             }
@@ -766,8 +775,12 @@ public final class PlayerController {
             // Cache cover image to disk (write already-downloaded bytes, no re-fetch).
             String imgPath = diskCache.imagePath(url);
             if (imgPath != null) writeBytesToFile(data, imgPath);
+            final String path = imgPath;
             post(() -> {
-                if (playIndex == expectedIndex) applyCover(data);
+                if (playIndex == expectedIndex) {
+                    applyCover(data);
+                    if (path != null) coverPath.set(path);
+                }
             });
             notifyPlayback(); // refresh the media-notification artwork
         });
@@ -986,6 +999,30 @@ public final class PlayerController {
         this.unblockEnabled = enabled;
     }
 
+    /** Load a netease track's lyrics off-thread (AMLL TTML mirror, else Netease's
+     *  own). tryAmllTtml hits the disk cache first, so a previously-played song shows
+     *  its lyrics with no network. Called on every netease play — including the
+     *  audio-cache fast path, which bypasses the URL resolve that used to fetch them. */
+    private void loadNeteaseLyrics(Track t, int expectedIndex) {
+        final long songId = t.neteaseId;
+        if (songId == 0) return;
+        worker.submit(() -> {
+            List<LyricLine> lines = tryAmllTtml(songId);
+            if (lines.isEmpty()) {
+                try {
+                    NeteaseLyric nl = netease.lyric(songId);
+                    if (nl != null) {
+                        lines = LyricParser.fromNeteaseStrings(nl.yrc, nl.lrc, nl.tlyric, nl.romalrc);
+                    }
+                } catch (Throwable e) {
+                    Logger.warn("lyric load failed for {}: {}", songId, e.getMessage());
+                }
+            }
+            final List<LyricLine> ly = lines;
+            post(() -> { if (playIndex == expectedIndex) lyrics.set(ly); });
+        });
+    }
+
     /** Cache a netease track's audio to disk (off-thread) for local replay. Skips
      *  trial/preview clips and tracks lacking an id or resolved url. */
     private void cacheAudioAsync(Track t) {
@@ -1034,15 +1071,6 @@ public final class PlayerController {
                 final boolean isTrialOnly = !unblocked && info != null && info.trial
                         && url != null && url.equals(info.url);
                 Logger.info("netease: url={} (unblocked={}, trial={})", url, unblocked, isTrialOnly);
-                // Prefer the AMLL TTML mirror (full syllable + bg/duet metadata);
-                // fall back to Netease's own lyric (YRC if present, else LRC).
-                List<LyricLine> ttml = tryAmllTtml(songId);
-                if (ttml.isEmpty()) {
-                    NeteaseLyric nl = netease.lyric(songId);
-                    ttml = nl == null ? Collections.<LyricLine>emptyList()
-                            : LyricParser.fromNeteaseStrings(nl.yrc, nl.lrc, nl.tlyric, nl.romalrc);
-                }
-                final List<LyricLine> ly = ttml;
                 final String playUrl = url;
                 // Hop to the main thread for the backend control (works backgrounded);
                 // UI Property writes still marshal to the render thread via post().
@@ -1064,9 +1092,9 @@ public final class PlayerController {
                         album.set(orEmpty(t.album));
                         coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
                         durationMs.set(t.durationMs);
-                        lyrics.set(ly);
                     });
                     updateCover(t, expectedIndex);
+                    loadNeteaseLyrics(t, expectedIndex);
                     Logger.info("play netease: {} — {}", t.title, playUrl);
                     backend.play(playUrl, 0L);
                     playingIntent = true;

@@ -103,7 +103,8 @@ Rectangle {
         anchors.verticalCenterOffset: 1
         width: 52; height: 52
         radius: 8
-        source: player.coverUrl
+        // Prefer the on-disk cached cover (shows offline) over the network url.
+        source: player.coverPath !== "" ? player.coverPath : player.coverUrl
     }
 
     // Cover + title/artist: tap anywhere here to open the lyric page.
