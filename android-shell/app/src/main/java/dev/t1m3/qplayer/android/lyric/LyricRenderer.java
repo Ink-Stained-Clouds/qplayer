@@ -181,6 +181,10 @@ public class LyricRenderer {
      * would centre exactly; 0.35 matches the reference player layout.
      */
     private static final float ALIGN_POSITION = 0.35f;
+    // Breathing room (fraction of the column) left beyond the first / last line at the
+    // scroll extremes: a touch over half the column so the ends have a generous run-out
+    // (and the auto-follow keeps centring lines naturally rather than pinning at edges).
+    private static final float SCROLL_EDGE_PAD = 0.7f;
 
     // ---- Depth scaling (Apple Specs) -------------------------------------
     // Inactive lines render at deselectedTransform (0.98×); the active group
@@ -305,6 +309,35 @@ public class LyricRenderer {
     private boolean bigSeekEasing = false;
     private long springAnchorChangeNs = 0L;
     private long springLastNs = 0L;
+
+    // --- Manual scroll (drag / fling) ------------------------------------------
+    // While the user drags the lyric column its position is hand-controlled; the
+    // karaoke highlight keeps following the play head. Releasing flings with engine-
+    // style inertia (windowed release velocity + constant deceleration). After an idle
+    // period, the next line change eases the column back to the follow position using
+    // scrollAnim -- the very spring the seek ("调整进度") adjustment rides.
+    private static final float SCROLL_DECEL = 2400f;     // px/s^2 (fling deceleration)
+    private static final float SCROLL_MIN_FLING = 60f;   // px/s below which fling stops
+    private static final long SCROLL_IDLE_RETURN_NS = 4_000_000_000L; // 4s idle before auto-return
+    private static final int SCROLL_VEL_SAMPLES = 8;
+    private static final float SCROLL_VEL_WINDOW = 0.09f; // s of history for release velocity
+    private boolean userScrollActive;   // drag, fling, idle-hold, or returning
+    private boolean userDragging;       // finger currently down
+    private boolean userFling;          // coasting after release
+    private boolean userReturning;      // easing back to follow via scrollAnim
+    private float userScroll;           // content-space offset (same space as scrollY)
+    private float userFlingVel;         // px/s
+    private long userScrollLastNs;      // fling integration clock
+    private long userLastInteractNs;    // last drag/fling activity (idle timer)
+    private int userHoldAnchor = Integer.MIN_VALUE; // active line when interaction stopped
+    private int userScrollPrevAnchor = Integer.MIN_VALUE; // detect a seek jump to cancel scroll
+    private float lastScrollY;          // last rendered scrollY (seeds a fresh drag)
+    private float lastCenterY;          // last centerY (maps a tapped screen y to a line)
+    private float scrollMin, scrollMax; // content-space clamp bounds (set each frame)
+    private final long[] dragSampleNs = new long[SCROLL_VEL_SAMPLES];
+    private final float[] dragSampleY = new float[SCROLL_VEL_SAMPLES];
+    private int dragSampleCount;
+
     // Reused per active line each frame (syllable left edges); was new float[n+1].
     private float[] sylLeftBuf = new float[0];
     // Reused saveLayer paint for the active row's composite alpha; was a native
@@ -431,6 +464,13 @@ public class LyricRenderer {
         this.lineSpringInit = false;
         this.bigSeekEasing = false;
         this.springAnchorPrev = Integer.MIN_VALUE;
+        // Drop any manual scroll from the previous track.
+        this.userScrollActive = false;
+        this.userDragging = false;
+        this.userFling = false;
+        this.userReturning = false;
+        this.userScrollPrevAnchor = Integer.MIN_VALUE;
+        this.userHoldAnchor = Integer.MIN_VALUE;
     }
 
     // Break a whole-line syllable into wrap-friendly tokens that keep its
@@ -814,11 +854,36 @@ public class LyricRenderer {
                 interludeNextGroup = -1;
             }
         }
+
+        // Scroll bounds shared by the auto-follow AND manual scroll, so neither can run
+        // a line past an edge into blank. When the lyrics are taller than the column,
+        // pin the first line's top to the column top and the last line's bottom to the
+        // column bottom; the active line still centres (ALIGN_POSITION) once there is
+        // enough lyric above/below it. Shorter-than-column lyrics don't scroll.
+        if (n > 0) {
+            float contentEnd = lineTops[n - 1] + lineHeights[n - 1];
+            if (contentEnd > columnHeight) {
+                float pad = columnHeight * SCROLL_EDGE_PAD;
+                scrollMin = columnHeight * ALIGN_POSITION - pad;
+                scrollMax = contentEnd - columnHeight * (1f - ALIGN_POSITION) + pad;
+            } else {
+                scrollMin = scrollMax = targetScroll;
+            }
+            if (targetScroll < scrollMin) targetScroll = scrollMin;
+            else if (targetScroll > scrollMax) targetScroll = scrollMax;
+        }
+
         float centerY = topY + columnHeight * ALIGN_POSITION;
+        lastCenterY = centerY;
 
         int anchorIdx = activeGroup != null ? activeGroup.from : 0;
-        int start = Math.max(0, anchorIdx - VISIBLE_RADIUS);
-        int end = Math.min(n, anchorIdx + VISIBLE_RADIUS + 1);
+        // The draw window normally tracks the active line, but a manual scroll can pull
+        // the view far from it — center the window on the on-screen scroll position then,
+        // or the lines you scrolled to (being outside anchorIdx ± VISIBLE_RADIUS) are
+        // never drawn and the page goes blank. lastScrollY is the previous frame's offset.
+        int windowCenter = userScrollActive ? lineIndexAt(lineTops, n, lastScrollY) : anchorIdx;
+        int start = Math.max(0, windowCenter - VISIBLE_RADIUS);
+        int end = Math.min(n, windowCenter + VISIBLE_RADIUS + 1);
 
         // Per-line scroll springs (spring mode only). Each visible line chases its
         // resting top `centerY + lineTops[i] - targetScroll`; the global scrollAnim
@@ -866,10 +931,32 @@ public class LyricRenderer {
         // big seek is easing, the column rides it until it settles, then the per-line
         // spring takes back over from the synced positions.
         boolean rigidMode = !spring || bigSeekEasing;
-        float scrollY = (float) scrollAnim.animate(targetScroll);
-        if (bigSeekEasing && Math.abs(scrollY - (float) targetScroll) < 0.5f) {
-            bigSeekEasing = false;
+
+        // A big position jump (progress-bar seek) cancels manual scroll so the column
+        // snaps back to following the play head via the normal ease.
+        if (userScrollActive && userScrollPrevAnchor != Integer.MIN_VALUE
+                && Math.abs(anchorIdx - userScrollPrevAnchor) > SNAP_JUMP_LINES) {
+            userScrollActive = false;
+            userDragging = false;
+            userFling = false;
+            userReturning = false;
+            scrollAnim.setValue(lastScrollY);
         }
+        userScrollPrevAnchor = anchorIdx;
+
+        float scrollY;
+        if (userScrollActive) {
+            // Hand-controlled: move the whole column rigidly to the user's offset (or
+            // the scrollAnim ease while returning); the highlight keeps tracking pos.
+            rigidMode = true;
+            scrollY = stepUserScroll(targetScroll, nowNs, anchorIdx);
+        } else {
+            scrollY = (float) scrollAnim.animate(targetScroll);
+            if (bigSeekEasing && Math.abs(scrollY - (float) targetScroll) < 0.5f) {
+                bigSeekEasing = false;
+            }
+        }
+        lastScrollY = scrollY;
 
         // Dynamic scroll-spring tuning (AMLL): steady during an interlude, else
         // stiffer the faster lines are arriving (shorter gap to the previous line).
@@ -901,13 +988,13 @@ public class LyricRenderer {
         double cascDelay = 0.0;
         double cascStep = LINE_DELAY_S;
         if (cascadeDir >= 0) {
-            for (int i = anchorIdx + 1; i < end; i++) {
+            for (int i = Math.max(start, anchorIdx + 1); i < end; i++) {
                 cascDelay += cascStep;
                 cascStep /= LINE_DELAY_DECAY;
                 cascadeDelayBuf[i] = cascDelay;
             }
         } else {
-            for (int i = anchorIdx - 1; i >= start; i--) {
+            for (int i = Math.min(end - 1, anchorIdx - 1); i >= start; i--) {
                 cascDelay += cascStep;
                 cascStep /= LINE_DELAY_DECAY;
                 cascadeDelayBuf[i] = cascDelay;
@@ -1108,7 +1195,7 @@ public class LyricRenderer {
                 int nf = interludeNext.from;
                 float nextTop = (spring && nf >= start && nf < end)
                         ? lineCurTop[nf]
-                        : centerY + lineTops[nf] - (spring ? targetScroll : scrollY);
+                        : centerY + lineTops[nf] - (spring && !userScrollActive ? targetScroll : scrollY);
                 // Centre the dots between the two LINES OF TEXT, not the slot edges.
                 // The slot top (nextTop - slotH) sits at the previous line's bottom,
                 // but the next line's text starts nextTextOffset below its slot top
@@ -1403,6 +1490,159 @@ public class LyricRenderer {
         if (!needsKorean(text)) return base;
         Font ko = Fonts.korean(base.getSize());
         return ko != null ? ko : base;
+    }
+
+    // ---- Manual scroll touch API (called on the render/GL thread) -------------
+
+    /** Finger down on the lyric column: take over scrolling from the current position. */
+    public void scrollDown(float y) {
+        userScrollActive = true;
+        userDragging = true;
+        userFling = false;
+        userReturning = false;
+        // Start from the column's current position, but inside the scroll bounds so a
+        // grab at the song's very end (where the follow centres the last line, past the
+        // bottom bound) doesn't jump mid-drag.
+        userScroll = clampScroll(lastScrollY);
+        userFlingVel = 0f;
+        dragSampleCount = 0;
+        addDragSample(y);
+        userLastInteractNs = System.nanoTime();
+    }
+
+    /** Drag: the column follows the finger 1:1 (content moves opposite finger). */
+    public void scrollMove(float y) {
+        if (!userDragging || dragSampleCount == 0) return;
+        float prevY = dragSampleY[dragSampleCount - 1];
+        userScroll = clampScroll(userScroll - (y - prevY));
+        addDragSample(y);
+        userLastInteractNs = System.nanoTime();
+    }
+
+    /** Release: coast with the windowed release velocity (engine-style inertia). */
+    public void scrollUp() {
+        if (!userDragging) return;
+        userDragging = false;
+        userFlingVel = computeFlingVel();
+        userFling = Math.abs(userFlingVel) > SCROLL_MIN_FLING;
+        userScrollLastNs = System.nanoTime();
+        userLastInteractNs = userScrollLastNs;
+    }
+
+    public void scrollCancel() {
+        scrollUp();
+    }
+
+    /** Start time (ms) of the lyric line under a tapped screen y, or -1 if the tap landed
+     *  in the blank run-out beyond the first/last line. Uses the last frame's geometry. */
+    public long timeAtScreenY(float screenY) {
+        int n = lines.size();
+        if (n == 0 || lineTopsBuf.length < n
+                || cachedLineHeights == null || cachedLineHeights.length < n) {
+            return -1L;
+        }
+        float contentY = screenY - lastCenterY + lastScrollY;
+        if (contentY < lineTopsBuf[0]
+                || contentY >= lineTopsBuf[n - 1] + cachedLineHeights[n - 1]) {
+            return -1L;
+        }
+        int i = lineIndexAt(lineTopsBuf, n, contentY);
+        LyricLine line = lines.get(i);
+        if (line.syllables == null || line.syllables.isEmpty()) return -1L;
+        return line.syllables.get(0).startMs;
+    }
+
+    private void addDragSample(float y) {
+        if (dragSampleCount == SCROLL_VEL_SAMPLES) {
+            System.arraycopy(dragSampleNs, 1, dragSampleNs, 0, SCROLL_VEL_SAMPLES - 1);
+            System.arraycopy(dragSampleY, 1, dragSampleY, 0, SCROLL_VEL_SAMPLES - 1);
+            dragSampleCount--;
+        }
+        dragSampleNs[dragSampleCount] = System.nanoTime();
+        dragSampleY[dragSampleCount] = y;
+        dragSampleCount++;
+    }
+
+    // Content velocity (px/s) = -(finger displacement)/(elapsed) across the newest
+    // sample back to the oldest within SCROLL_VEL_WINDOW. Same windowed estimate the
+    // engine's Flickable uses, so a jittery final sample can't reverse the fling.
+    private float computeFlingVel() {
+        if (dragSampleCount < 2) return 0f;
+        long newest = dragSampleNs[dragSampleCount - 1];
+        int oldest = dragSampleCount - 1;
+        for (int i = dragSampleCount - 1; i >= 0; i--) {
+            if ((newest - dragSampleNs[i]) / 1_000_000_000f > SCROLL_VEL_WINDOW) break;
+            oldest = i;
+        }
+        float dt = (newest - dragSampleNs[oldest]) / 1_000_000_000f;
+        if (dt < 0.001f) return 0f;
+        return -(dragSampleY[dragSampleCount - 1] - dragSampleY[oldest]) / dt;
+    }
+
+    private float clampScroll(float v) {
+        if (v < scrollMin) return scrollMin;
+        if (v > scrollMax) return scrollMax;
+        return v;
+    }
+
+    // The line whose top is at/above a content-space scroll offset (the line sitting at
+    // the centre line for that offset) — binary search since lineTops is increasing.
+    private static int lineIndexAt(float[] lineTops, int n, float scroll) {
+        if (n <= 1) return 0;
+        int lo = 0, hi = n - 1, res = 0;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (lineTops[mid] <= scroll) { res = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return res;
+    }
+
+    // Advance the user-controlled scroll for this frame and return the column offset.
+    // Drag holds; fling coasts under SCROLL_DECEL; once idle past SCROLL_IDLE_RETURN_NS
+    // the next line change arms the return, eased back through scrollAnim (the seek
+    // spring) so the snap-back matches the progress-adjust motion exactly.
+    private float stepUserScroll(float targetScroll, long nowNs, int anchorIdx) {
+        if (userDragging) {
+            userHoldAnchor = anchorIdx;
+            userScrollLastNs = nowNs;
+            return userScroll;
+        }
+        if (userFling) {
+            userHoldAnchor = anchorIdx;
+            float dt = (nowNs - userScrollLastNs) / 1_000_000_000f;
+            userScrollLastNs = nowNs;
+            if (dt > 0.05f) dt = 0.05f;
+            if (dt > 0f) {
+                float next = userScroll + userFlingVel * dt;
+                userScroll = clampScroll(next);
+                if (userScroll != next) userFlingVel = 0f;   // hit an edge
+                else userFlingVel = decayVel(userFlingVel, dt);
+                if (Math.abs(userFlingVel) < SCROLL_MIN_FLING) userFling = false;
+            }
+            return userScroll;
+        }
+        if (userReturning) {
+            float scrollY = (float) scrollAnim.animate(targetScroll);
+            if (Math.abs(scrollY - targetScroll) < 0.5f) {
+                userReturning = false;
+                userScrollActive = false;
+            }
+            return scrollY;
+        }
+        // Idle hold: wait until the song moves to a new line, then ease back.
+        if ((nowNs - userLastInteractNs) > SCROLL_IDLE_RETURN_NS && anchorIdx != userHoldAnchor) {
+            userReturning = true;
+            scrollAnim.setValue(userScroll);
+            return (float) scrollAnim.animate(targetScroll);
+        }
+        return userScroll;
+    }
+
+    private static float decayVel(float v, float dt) {
+        float d = SCROLL_DECEL * dt;
+        if (v > 0f) return Math.max(0f, v - d);
+        return Math.min(0f, v + d);
     }
 
     /** Sum cached per-syllable widths over {@code [from, to)} — no measuring, no alloc. */

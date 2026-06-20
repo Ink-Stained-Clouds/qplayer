@@ -80,6 +80,13 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             new dev.t1m3.qplayer.android.lyric.FluidBackground(System.nanoTime());
     private List<LyricLine> lastLyrics;
     private float lyricSlide;
+    // Lyric-body gesture state (GL-thread only). lyGrab: the touch is ours (vs the QML
+    // scene). lyMoved: it has passed the slop, so it's a scroll, not a tap-to-seek.
+    private boolean lyGrab;
+    private boolean lyMoved;
+    private float lyDownY;
+    // Movement (logical px) past which a lyric-body touch is a scroll rather than a tap.
+    private static final float LYRIC_TAP_SLOP = 12f;
     // The QML lyric-chrome subtree (tagged objectName "lyricChrome"), rendered in its own
     // pass on top of the host fluid; looked up once after the scene loads.
     private Item lyricChrome;
@@ -151,6 +158,17 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 queueEvent(new Runnable() {
                     @Override public void run() {
                         if (view == null) return;
+                        // The lyric body (between the QML title and transport bands) is
+                        // host-drawn with no QML controls under it, so a touch there is
+                        // ours: a drag scrolls the column, a tap seeks to that line. Don't
+                        // engage the scroll yet -- wait for movement so a tap stays a tap.
+                        if (lyricsScrollable(y)) {
+                            lyGrab = true;
+                            lyDownY = y;
+                            lyMoved = false;
+                            return;
+                        }
+                        lyGrab = false;
                         boolean hitTextEditable = view.pickTextEditable(x, y) != null;
                         view.dispatchPointerDown(x, y);
                         if (hitTextEditable) showImeOnUiThread();
@@ -160,6 +178,18 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             case MotionEvent.ACTION_MOVE:
                 queueEvent(new Runnable() {
                     @Override public void run() {
+                        if (lyGrab) {
+                            if (!lyMoved) {
+                                if (Math.abs(y - lyDownY) > LYRIC_TAP_SLOP) {
+                                    lyMoved = true;
+                                    lyricRenderer.scrollDown(lyDownY);
+                                    lyricRenderer.scrollMove(y);
+                                }
+                            } else {
+                                lyricRenderer.scrollMove(y);
+                            }
+                            return;
+                        }
                         if (view != null) view.dispatchPointerMove(x, y);
                     }
                 });
@@ -168,6 +198,16 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             case MotionEvent.ACTION_CANCEL:
                 queueEvent(new Runnable() {
                     @Override public void run() {
+                        if (lyGrab) {
+                            lyGrab = false;
+                            if (lyMoved) {
+                                lyricRenderer.scrollUp();
+                            } else if (action == MotionEvent.ACTION_UP) {
+                                long t = lyricRenderer.timeAtScreenY(lyDownY);
+                                if (t >= 0L && controller != null) controller.seek(t);
+                            }
+                            return;
+                        }
                         if (view != null) view.dispatchPointerUp(x, y);
                     }
                 });
@@ -175,6 +215,16 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             default:
                 return false;
         }
+    }
+
+    // Whether a touch at logical y should scroll the host-drawn lyric column: the page
+    // must be fully open and the point inside the lyric band (below the title, above
+    // the transport). Runs on the GL thread (same as the lyric render state it reads).
+    private boolean lyricsScrollable(float y) {
+        if (lyricSlide < 0.99f || !lyricRenderer.hasLines()) return false;
+        float topY = lyricTopY();
+        float bottomY = surface.height() / uiScale - L_TRANSPORT_H;
+        return y >= topY && y <= bottomY;
     }
 
     @Override

@@ -92,7 +92,7 @@ public final class AndroidAudioBackend implements AudioBackend {
         Logger.info("MediaPlayer: prepared, duration={}ms", player.getDuration());
         applyVolume();
         if (pendingSeekMs > 0L) {
-            player.seekTo((int) pendingSeekMs);
+            player.seekTo(pendingSeekMs, MediaPlayer.SEEK_CLOSEST);
         }
         if (wantPlay) {
             player.start();
@@ -127,7 +127,11 @@ public final class AndroidAudioBackend implements AudioBackend {
     public synchronized void seek(long ms) {
         long target = Math.max(0L, ms);
         if (player != null && prepared) {
-            player.seekTo((int) target);
+            // SEEK_CLOSEST lands on the exact frame instead of the previous sync frame:
+            // a basic seekTo undershoots by up to a keyframe interval, which made a
+            // lyric tap (and the progress bar) land just before the target so the
+            // PREVIOUS line highlighted.
+            player.seekTo(target, MediaPlayer.SEEK_CLOSEST);
         } else {
             pendingSeekMs = target;
         }
