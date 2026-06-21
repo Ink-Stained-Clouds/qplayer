@@ -19,4 +19,7 @@ public class NeteasePlaylist {
     public String creatorNickname;
     /** uid of the playlist creator — used to split owned vs subscribed in /user/playlist. */
     public long creatorUid;
+    /** Whether the signed-in user has collected (subscribed to) this playlist. Populated
+     *  by playlist/detail; meaningless for the user's own playlists. */
+    public boolean subscribed;
 }

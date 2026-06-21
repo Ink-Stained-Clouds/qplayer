@@ -442,8 +442,23 @@ public final class NeteaseClient {
             JsonObject c = p.getAsJsonObject("creator");
             if (c.has("nickname") && !c.get("nickname").isJsonNull())
                 out.creatorNickname = c.get("nickname").getAsString();
+            if (c.has("userId") && !c.get("userId").isJsonNull())
+                out.creatorUid = c.get("userId").getAsLong();
         }
+        if (p.has("subscribed") && !p.get("subscribed").isJsonNull())
+            out.subscribed = p.get("subscribed").getAsBoolean();
         return out;
+    }
+
+    /**
+     * Collect (subscribe) or un-collect (unsubscribe) a playlist for the signed-in user.
+     * Maps to {@code /weapi/playlist/subscribe|unsubscribe}; true when code == 200.
+     */
+    public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("id", playlistId);
+        JsonObject obj = weapiJson("playlist/" + (subscribe ? "subscribe" : "unsubscribe"), body);
+        return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 
     /**

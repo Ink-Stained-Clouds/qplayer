@@ -43,6 +43,17 @@ Rectangle {
                 font.pixelSize: Theme.typography.titleLarge.size
                 elide: Text.ElideRight
             }
+            // Collect (subscribe) this playlist. Shown only once loaded and only for
+            // playlists that aren't the user's own; filled when already collected. The
+            // initial state comes from playlist/detail, so it's correct on open.
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
+                visible: player.loggedIn && !player.playlistLoading && !player.playlistOwned
+                icon: player.playlistSubscribed ? "bookmark" : "bookmark_border"
+                contentColor: player.playlistSubscribed ? Theme.color.primary : Theme.color.onSurfaceColor
+                onClicked: player.togglePlaylistSubscribe()
+            }
         }
 
         Item {

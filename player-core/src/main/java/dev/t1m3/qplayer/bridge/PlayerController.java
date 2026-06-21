@@ -220,6 +220,14 @@ public final class PlayerController {
     /** True while an opened playlist's tracks are loading, so the detail page shows a
      *  spinner instead of the previous playlist's content. */
     public final Property<Boolean> playlistLoading = new Property<>(false);
+    /** Id of the currently open playlist (0 = none); guards stale async results. */
+    private volatile long currentPlaylistId;
+    /** Whether the signed-in user has collected the open playlist — drives the detail
+     *  page's collect icon. Resolved from playlist/detail, so it reflects the real state
+     *  on open (no guessing). */
+    public final Property<Boolean> playlistSubscribed = new Property<>(false);
+    /** Whether the open playlist is the user's own (can't collect your own). */
+    public final Property<Boolean> playlistOwned = new Property<>(false);
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
     public final Property<List<Track>> queueTracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Boolean> queueOpen = new Property<>(false);
@@ -1400,9 +1408,14 @@ public final class PlayerController {
     public void openPlaylist(long playlistId) {
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.
+        currentPlaylistId = playlistId;
         playlistLoading.set(true);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
         playlistTitle.set("");
+        // Reset the collect state; the real values land once playlist/detail resolves, so
+        // the icon stays hidden (loading) until then rather than flashing a wrong state.
+        playlistSubscribed.set(false);
+        playlistOwned.set(false);
         worker.submit(() -> {
             try {
                 NeteasePlaylist detail = netease.playlistDetail(playlistId);
@@ -1410,15 +1423,48 @@ public final class PlayerController {
                 fillMissingCovers(songs);
                 buildSongThumbs(songs, "128");
                 String name = detail != null ? detail.name : "";
+                boolean subscribed = detail != null && detail.subscribed;
+                boolean owned = detail != null && uid != 0 && detail.creatorUid == uid;
                 post(() -> {
+                    if (currentPlaylistId != playlistId) return;   // a newer open won
                     playlistTitle.set(name == null ? "" : name);
                     playlistTracks.set(songs);
+                    playlistSubscribed.set(subscribed);
+                    playlistOwned.set(owned);
                     playlistLoading.set(false);
                 });
             } catch (Throwable e) {
                 Logger.warn("open playlist {} failed: {}", playlistId, e.getMessage());
                 post(() -> playlistLoading.set(false));
             }
+        });
+    }
+
+    /** Collect / un-collect the currently open playlist. No-op on your own playlist or
+     *  when signed out. Optimistically flips the icon, reverting if the server refuses. */
+    public void togglePlaylistSubscribe() {
+        if (!loggedIn.get() || playlistOwned.get()) return;
+        final long id = currentPlaylistId;
+        if (id == 0) return;
+        final boolean target = !playlistSubscribed.get();
+        playlistSubscribed.set(target);
+        worker.submit(() -> {
+            boolean ok = false;
+            try {
+                ok = netease.playlistSubscribe(id, target);
+            } catch (Throwable e) {
+                Logger.warn("playlist subscribe {} -> {} failed: {}", id, target, e.getMessage());
+            }
+            final boolean done = ok;
+            post(() -> {
+                if (currentPlaylistId != id) return;
+                if (done) {
+                    toast.set(target ? "已收藏歌单" : "已取消收藏");
+                    loadMyPlaylists();   // reflect the change in 我的
+                } else {
+                    playlistSubscribed.set(!target);   // revert the optimistic flip
+                }
+            });
         });
     }
 
