@@ -1,0 +1,93 @@
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="QPlayer icon">
+</p>
+
+<h1 align="center">QPlayer</h1>
+
+<p align="center">
+  <a href="README.md">简体中文</a> · <b>English</b>
+</p>
+
+<p align="center">
+  <b>A NetEase Cloud Music player for Android, rendered entirely in QML.</b><br>
+  Runs on <a href="https://github.com/TIMER-err/qml4j">qml4j</a> — a QML runtime implemented in pure Java, without Qt or C++.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Android%2026%2B-A4C639" alt="Android 26+">
+  <img src="https://img.shields.io/badge/UI-QML%20%2F%20Material%203-7C6CF0" alt="QML / Material 3">
+  <img src="https://img.shields.io/badge/engine-qml4j-465BA6" alt="qml4j">
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
+</p>
+
+---
+
+<p align="center">
+  <img src="docs/screenshots/1.jpg" width="24%" alt="Home (light, Monet)">
+  <img src="docs/screenshots/2.jpg" width="24%" alt="Home (dark)">
+  <img src="docs/screenshots/3.jpg" width="24%" alt="Lyrics (romaji + translation)">
+  <img src="docs/screenshots/4.jpg" width="24%" alt="Lyrics (wavy progress)">
+</p>
+<p align="center">
+  <sub>Home · light (Monet) &nbsp;|&nbsp; Home · dark &nbsp;|&nbsp; Lyrics · per-syllable + romaji/translation &nbsp;|&nbsp; Lyrics · fluid backdrop + wavy progress</sub>
+</p>
+
+The UI uses no native Views. Every control, including the lyrics, is described in QML and rendered by qml4j, which is itself a QML runtime written in pure Java.
+
+## Features
+
+- End-to-end playback over the NetEase Cloud Music API: recommendations, search, user playlists, recent, and local files.
+- QR login; like and unlike; play queue; three play modes (list-loop, shuffle, repeat-one).
+- Source switching: greyed-out, VIP, and trial-only tracks are matched by title and artist against GD音乐台 / 波点 / 酷我 and replaced before playback (toggleable).
+- Playlist collecting: collect another user's playlist; on open, the button reflects the real collected state from the playlist/detail response. It is not shown on your own playlists.
+- Lyric page: drawn directly through Skija by the host. Per-syllable scrolling (AMLL TTML first, NetEase as a fallback), a cover-tinted SkSL fluid backdrop, wrapping romaji and translation, interlude dots, fading backing vocals, and a Material wavy progress bar. It can be dragged to scroll, flung with inertia, and tapped on a line to seek to that time.
+- Material 3 UI: the whole interface is QML (`md3.Core`) running on the qml4j engine.
+- Dynamic color (Monet): the theme is reseeded from the current cover (toggleable); dark, light, and follow-system modes.
+- System media controls and background playback: a foreground `MediaSession` service drives the lockscreen, notification, and bluetooth transport, with auto-advance, position sync, pause-on-call, and ducking on transient focus loss.
+- Bundled PingFang font covers the entire UI and lyric page (Latin and CJK); the lyric font size, weight, and line spacing are adjustable in settings, and glyphs PingFang lacks (such as Hangul) fall back to a system face.
+- In-app back navigation: back and gesture close the topmost layer (lyrics, queue, settings, playlist, tab) instead of exiting the app.
+- Edge-to-edge fullscreen with themed system bars, and a splash while the QML tree compiles; dex output is cached across launches and invalidated on reinstall.
+- List virtualization: the song list only instantiates the rows near the viewport, so several thousand local tracks use about one screenful of memory.
+- In-app updates: detect, download, and install a new build, with mirror acceleration for mainland China networks.
+
+## Layout
+
+| Module | Description |
+|---|---|
+| `player-core/` | Platform-neutral core (Maven, `dev.t1m3.qplayer`): the QML-facing `PlayerController`, NetEase API, lyric parsers (LRC / YRC / TTML), audio and metadata abstractions. |
+| `android-shell/` | Android app (Gradle, `applicationId dev.t1m3.qplayer`, minSdk 26). QML UI in `app/src/main/assets/*.qml`; host integration and the Skija lyric page in `…/android/`. |
+| `shared-qml/` | Vendored `md3.Core` component library and bundled fonts (PingFang / Material Symbols), at the repo root so the Android shell and a future desktop host can share it. |
+| [qml4j](https://github.com/TIMER-err/qml4j) | The QML engine. A published dependency, **not** part of this repo. |
+
+`qml4j-core` is resolved from Maven Central; only the in-repo `player-core` module is built locally.
+
+## Build
+
+Requires JDK 21 and the Android SDK.
+
+```sh
+# install player core to Maven Local
+cd player-core && mvn -q -DskipTests install
+
+# build the APK (qml4j-core resolves from Maven Central)
+cd ../android-shell && ./gradlew :app:assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
+```
+
+## On AI
+
+Most of this project (QPlayer and the [qml4j](https://github.com/TIMER-err/qml4j) engine it depends on) was generated by **Claude (Opus 4.8)** through Claude Code. It is an efficiency trade-off: the project is built in my spare time, that time is limited, and vibe coding lets me do more within it. All code was reviewed by me line by line before being merged, and tested on a real device before release; the result is my responsibility. Most commits carry `Co-Authored-By: Claude`, and a "Claude" entry therefore appears in the contributors list; this is intentional, to record the extent of the AI's involvement in the project.
+
+## Credits
+
+- [qml4j](https://github.com/TIMER-err/qml4j) — the pure-Java QML engine that runs the UI.
+- [Skija](https://github.com/HumbleUI/Skija) — Skia bindings for the JVM; the renderer and the host-drawn lyric page draw through it.
+- [material-components-qml](https://github.com/sudoevolve/material-components-qml) — the Material 3 QML component library (`md3.Core`) the UI is built from (vendored, engine-adapted).
+- [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) — syllable-level lyrics.
+- Lyric rendering adapted from the Haedus renderer; icons are Material Symbols Rounded.
+
+> Personal/educational project. NetEase Cloud Music is a trademark of its respective owner; this app is an unofficial client and is not affiliated with NetEase.
+
+## License
+
+[Apache License 2.0](LICENSE.md).

@@ -5,8 +5,12 @@
 <h1 align="center">QPlayer</h1>
 
 <p align="center">
-  <b>A NetEase Cloud Music player for Android, rendered entirely with QML.</b><br>
-  Built on <a href="https://github.com/TIMER-err/qml4j">qml4j</a> — a pure-Java QML engine (no Qt, no C++).
+  <b>简体中文</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <b>一个全程用 QML 渲染的安卓网易云音乐播放器。</b><br>
+  运行在 <a href="https://github.com/TIMER-err/qml4j">qml4j</a> 上——一个用纯 Java 实现的 QML 引擎,不依赖 Qt 和 C++。
 </p>
 
 <p align="center">
@@ -19,66 +23,71 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/1.jpg" width="24%" alt="Home (light, Monet)">
-  <img src="docs/screenshots/2.jpg" width="24%" alt="Home (dark)">
-  <img src="docs/screenshots/3.jpg" width="24%" alt="Lyrics (romaji + translation)">
-  <img src="docs/screenshots/4.jpg" width="24%" alt="Lyrics (wavy progress)">
+  <img src="docs/screenshots/1.jpg" width="24%" alt="首页(浅色,莫奈取色)">
+  <img src="docs/screenshots/2.jpg" width="24%" alt="首页(深色)">
+  <img src="docs/screenshots/3.jpg" width="24%" alt="歌词(罗马音 + 翻译)">
+  <img src="docs/screenshots/4.jpg" width="24%" alt="歌词(波浪进度条)">
 </p>
 <p align="center">
-  <sub>Home · light (Monet) &nbsp;|&nbsp; Home · dark &nbsp;|&nbsp; Lyrics · per-syllable + romaji/translation &nbsp;|&nbsp; Lyrics · fluid backdrop + wavy progress</sub>
+  <sub>首页 · 浅色莫奈 &nbsp;|&nbsp; 首页 · 深色 &nbsp;|&nbsp; 歌词 · 逐字 + 罗马音/翻译 &nbsp;|&nbsp; 歌词 · 流体背景 + 波浪进度</sub>
 </p>
 
-## Features
+界面不使用任何原生 View。所有控件,包括歌词,都由 QML 描述并由 qml4j 渲染;qml4j 本身是用纯 Java 实现的 QML 运行时。
 
-- **End-to-end playback** over the NetEase Cloud Music API — recommendations, search, your playlists, recent, and local files.
-- **QR login** to NetEase; like/unlike, play queue, play modes (list-loop / shuffle / repeat-one).
-- **Source switching** — grey/VIP/trial tracks fall back automatically to alternate audio sources (GD音乐台 / 波点 / 酷我), matched by title + artist before playing (toggleable).
-- **Material 3 UI** — the whole interface is QML (`md3.Core`), running on the qml4j engine.
-- **Dynamic color (Monet)** — the theme reseeds from the current cover art (toggleable); full **dark / light / follow-system** modes.
-- **System media controls & background playback** — a foreground `MediaSession` service drives the lockscreen / notification / bluetooth transport, with auto-advance, position sync and audio-focus handling (pause on calls, duck on transient loss) while the app is backgrounded.
-- **Lyric page** — host-drawn with Skija: per-syllable scrolling (AMLL TTML mirror, NetEase fallback), an Apple-Music-style SkSL fluid backdrop tinted from the cover, romaji + translation with wrapping, alignment-aware interlude dots, animated background vocals, a Material wavy progress bar and an icon-button transport.
-- **Bundled PingFang font** drives the whole UI and lyric page (Latin + CJK); the lyric page's **font size, weight and line spacing** are configurable in settings.
-- **In-app back navigation** — back/gesture pops the open overlay (lyrics → queue → settings → playlist → tab) instead of exiting.
-- **Edge-to-edge** fullscreen, themed system bars, and a startup splash while the QML tree compiles (dexing is cached across launches, invalidated on reinstall).
+## 特性
 
-## Project layout
+- 端到端播放:基于网易云音乐 API,覆盖推荐、搜索、用户歌单、最近播放与本地文件。
+- 扫码登录;喜欢与取消喜欢;播放队列;三种播放模式(列表循环、随机、单曲循环)。
+- 自动换源:灰色、VIP、仅试听的曲目按歌名与歌手匹配 GD音乐台 / 波点 / 酷我 的替代音源,在播放前完成切换(可关闭)。
+- 收藏歌单:可收藏他人歌单,打开时依据 playlist/detail 返回的收藏字段显示真实状态;用户自己的歌单不显示该按钮。
+- 歌词页:由宿主直接通过 Skija 绘制。逐字滚动(优先 AMLL TTML,网易云作为回退),基于封面取色的 SkSL 流体背景,罗马音与翻译折行,间奏圆点,和声渐隐,Material 波浪进度条。支持手动拖动滚动、释放后惯性滑动、点击某一行跳转到对应时间。
+- Material 3 界面:整套 UI 为 QML(`md3.Core`),运行在 qml4j 引擎上。
+- 莫奈动态取色:主题色从当前封面提取(可关闭);支持深色、浅色与跟随系统。
+- 系统媒体控件与后台播放:前台 `MediaSession` 服务接管锁屏、通知栏与蓝牙控制,处理自动续播、进度同步、来电暂停与瞬时失焦时降低音量。
+- 内置 PingFang 字体覆盖整个界面与歌词(拉丁字符与中日文);歌词的字号、字重与行距可在设置中调整;PingFang 不包含的字形(如谚文)回退到系统字体。
+- 应用内返回:返回键与手势优先关闭最上层(歌词、队列、设置、歌单、标签页),而非直接退出应用。
+- 边到边全屏,系统栏随主题着色;QML 编译期间显示启动页,dex 编译结果跨启动缓存,重装后失效。
+- 列表虚拟化:歌曲列表只实例化视口附近的行,数千首本地曲目的内存占用与一屏相当。
+- 应用内更新:检测、下载并安装新版本,中国大陆网络使用镜像加速。
 
-| Module | What |
+## 仓库结构
+
+| 模块 | 说明 |
 |---|---|
-| `player-core/` | Platform-neutral core (Maven, `dev.t1m3.qplayer`): the QML-facing `PlayerController`, NetEase API, lyric parsers (LRC / YRC / TTML), audio + metadata abstractions. |
-| `android-shell/` | Android app (Gradle, `applicationId dev.t1m3.qplayer`, minSdk 26). QML UI in `app/src/main/assets/*.qml`; host integration + the Skija lyric page in `…/android/`. |
-| `shared-qml/` | Vendored `md3.Core` component library + bundled fonts (PingFang / Material Symbols), at the repo root so the Android shell and a future desktop host can share it. |
-| [qml4j](https://github.com/TIMER-err/qml4j) | The QML engine. A published dependency, **not** part of this repo. |
+| `player-core/` | 跨平台核心(Maven,`dev.t1m3.qplayer`):面向 QML 的 `PlayerController`、网易云 API、歌词解析(LRC / YRC / TTML)、音频与元数据抽象。 |
+| `android-shell/` | 安卓应用(Gradle,`applicationId dev.t1m3.qplayer`,minSdk 26)。QML 界面位于 `app/src/main/assets/*.qml`;宿主集成与 Skija 歌词页位于 `…/android/`。 |
+| `shared-qml/` | vendored 的 `md3.Core` 组件库与内置字体(PingFang / Material Symbols),位于仓库根目录,供安卓壳与未来的桌面端共用。 |
+| [qml4j](https://github.com/TIMER-err/qml4j) | QML 引擎。一个已发布的依赖,**不在**本仓库内。 |
 
-`qml4j-core` is pulled from Maven Central; only the in-repo `player-core` module is built locally.
+`qml4j-core` 从 Maven Central 解析;本地只构建仓库内的 `player-core` 模块。
 
-## Build
+## 构建
 
-Requires JDK 21 and the Android SDK.
+需要 JDK 21 与 Android SDK。
 
 ```sh
-# player core → Maven Local
+# 将 player core 安装到 Maven Local
 cd player-core && mvn -q -DskipTests install
 
-# the APK (qml4j-core resolves from Maven Central)
+# 构建 APK(qml4j-core 从 Maven Central 解析)
 cd ../android-shell && ./gradlew :app:assembleDebug
 # → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## AI assistance
+## AI 说明
 
-The majority of this project — QPlayer and its [qml4j](https://github.com/TIMER-err/qml4j) engine — was generated by **Claude (Opus 4.8)** via Claude Code. **Every line is reviewed manually by me before it ships**, and changes are tested on a real device. The `Co-Authored-By: Claude` trailer on most commits (and the resulting "Claude" entry in the Contributors list) is there on purpose — the AI's involvement is on the record, not hidden.
+本项目(QPlayer 及其依赖的 [qml4j](https://github.com/TIMER-err/qml4j) 引擎)的大部分代码由 **Claude(Opus 4.8)** 通过 Claude Code 生成。这是一个效率上的取舍:本项目在业余时间开发,可投入的时间有限,vibe coding 让我在有限的时间里做出更多。所有代码在合入前都经过我本人逐行审查,并在发布前于真机测试;最终结果由我负责。多数提交带有 `Co-Authored-By: Claude`,贡献者列表中也因此出现 "Claude";这是有意保留的,用于标注 AI 在本项目中的参与程度。
 
-## Credits
+## 致谢
 
-- [qml4j](https://github.com/TIMER-err/qml4j) — the pure-Java QML engine that runs the UI.
-- [Skija](https://github.com/HumbleUI/Skija) — Skia bindings for the JVM; the renderer and the host-drawn lyric page draw through it.
-- [material-components-qml](https://github.com/sudoevolve/material-components-qml) — the Material 3 QML component library (`md3.Core`) the UI is built from (vendored, engine-adapted).
-- [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) — syllable-level lyrics.
-- Lyric rendering adapted from the Haedus renderer; icons are Material Symbols Rounded.
+- [qml4j](https://github.com/TIMER-err/qml4j) —— 运行整个界面的纯 Java QML 引擎。
+- [Skija](https://github.com/HumbleUI/Skija) —— JVM 上的 Skia 绑定;渲染器与宿主绘制的歌词页都通过它输出。
+- [material-components-qml](https://github.com/sudoevolve/material-components-qml) —— UI 所用的 Material 3 QML 组件库(`md3.Core`,vendored 后适配引擎)。
+- [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) —— 逐字歌词。
+- 歌词渲染改编自 Haedus renderer;图标使用 Material Symbols Rounded。
 
-> Personal/educational project. NetEase Cloud Music is a trademark of its respective owner; this app is an unofficial client and is not affiliated with NetEase.
+> 个人与学习项目。网易云音乐是其各自所有者的商标;本应用为非官方客户端,与网易云无关联。
 
-## License
+## 许可证
 
-[Apache License 2.0](LICENSE.md).
+[Apache License 2.0](LICENSE.md)。
