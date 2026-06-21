@@ -51,9 +51,19 @@ public final class NeteaseClient {
     public static final NeteaseClient INSTANCE = new NeteaseClient();
 
     private static final String BASE = "https://music.163.com";
+    /** Mobile API host the official apps hit for eapi-encrypted endpoints. */
+    private static final String EAPI_BASE = "https://interface.music.163.com";
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
           + " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    /** User-Agent for the mobile (eapi) endpoints — matches osMap.iphone in the reference. */
+    private static final String EAPI_UA = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)";
+    /** APP_CONF.checkToken from NeteaseCloudMusicApi — the anti-cheat token the subscribe
+     *  endpoint requires (sent both in the body and as the X-antiCheatToken header). */
+    private static final String CHECK_TOKEN =
+            "9ca17ae2e6ffcda170e2e6ee8af14fbabdb988f225b3868eb2c15a879b9a83d274a790ac8ff54a"
+          + "97b889d5d42af0feaec3b92af58cff99c470a7eafd88f75e839a9ea7c14e909da883e83fb692a3"
+          + "abdb6b92adee9e";
     /** A stable mainland-China client IP sent as X-Real-IP to relax risk control. */
     private static final String REAL_IP = randomChinaIp();
 
@@ -188,6 +198,123 @@ public final class NeteaseClient {
             reportError(neteaseMessage(obj));
         }
         return obj;
+    }
+
+    /**
+     * POST to the mobile {@code /eapi/<path>} host. {@code apiPath} is the
+     * {@code /api/...} signing path the body is signed against (the request goes
+     * to {@code /eapi/...} with the leading {@code /api} stripped). A device
+     * {@code header} object is injected into the body and mirrored into the
+     * Cookie header, exactly like the official apps. When {@code checkToken} is
+     * set the anti-cheat token rides along in the header — required by
+     * {@code playlist/subscribe}. Returns the raw response body as UTF-8.
+     */
+    public synchronized String eapiCall(String apiPath, Map<String, Object> json, boolean checkToken)
+            throws IOException {
+        ensureDeviceCookies();
+        String csrf = cookies.getOrDefault("__csrf", "");
+        String musicU = cookies.getOrDefault("MUSIC_U", "");
+
+        // Mobile-client header: signed into the body AND sent as the Cookie. The
+        // device fields mimic the iPhone client (matching EAPI_UA).
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("osver", "16.2");
+        header.put("deviceId", cookies.getOrDefault("deviceId", ""));
+        header.put("os", "iPhone OS");
+        header.put("appver", "9.0.90");
+        header.put("versioncode", "140");
+        header.put("mobilename", "");
+        header.put("buildver", Long.toString(System.currentTimeMillis() / 1000L));
+        header.put("resolution", "1920x1080");
+        header.put("__csrf", csrf);
+        header.put("channel", "distribution");
+        header.put("requestId", System.currentTimeMillis() + "_" + String.format(java.util.Locale.ROOT,
+                "%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000)));
+        if (checkToken) header.put("X-antiCheatToken", CHECK_TOKEN);
+        if (!musicU.isEmpty()) header.put("MUSIC_U", musicU);
+
+        Map<String, Object> body = json == null
+                ? new HashMap<String, Object>() : new HashMap<String, Object>(json);
+        body.put("header", header);
+
+        String bodyJson = gson.toJson(body);
+        Map<String, String> encrypted;
+        try {
+            encrypted = NeteaseCrypto.eapi(apiPath, bodyJson);
+        } catch (Exception e) {
+            throw new IOException("eapi crypto failed: " + e.getMessage(), e);
+        }
+
+        String tail = apiPath.startsWith("/api/") ? apiPath.substring(5) : apiPath;
+        String urlStr = EAPI_BASE + "/eapi/" + tail;
+        String form = formEncode(encrypted);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        try {
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(15_000);
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            conn.setRequestProperty("User-Agent", EAPI_UA);
+            conn.setRequestProperty("Referer", BASE);
+            conn.setRequestProperty("X-Real-IP", REAL_IP);
+            conn.setRequestProperty("X-Forwarded-For", REAL_IP);
+            conn.setRequestProperty("Cookie", headerCookie(header));
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(form.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            InputStream is = (code >= 400) ? conn.getErrorStream() : conn.getInputStream();
+            String resp;
+            try {
+                resp = readAll(is);
+            } finally {
+                if (is != null) { try { is.close(); } catch (IOException ignored) {} }
+            }
+            captureSetCookies(conn.getHeaderFields().get("Set-Cookie"));
+
+            if (code >= 400) {
+                Logger.warn("Netease HTTP {} on /eapi/{}: {}", code, tail, truncate(resp, 200));
+                throw new IOException("HTTP " + code + ": " + truncate(resp, 200));
+            }
+            return resp;
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /** {@link #eapiCall} + parse + the same toast/expiry handling as {@link #weapiJson}. */
+    public JsonObject eapiJson(String apiPath, Map<String, Object> json, boolean checkToken)
+            throws IOException {
+        String resp = eapiCall(apiPath, json, checkToken);
+        JsonElement el = new JsonParser().parse(resp);
+        if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
+        JsonObject obj = el.getAsJsonObject();
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : 200;
+        if (code == 301 && isLoggedIn()) {
+            Logger.warn("Netease: session expired (code 301) on /eapi/{} — clearing cookies", apiPath);
+            clearCookies();
+        } else if (code != 200) {
+            reportError(neteaseMessage(obj));
+        }
+        return obj;
+    }
+
+    /** Cookie header built from the eapi {@code header} object. Values are written
+     *  verbatim (like {@link #cookieHeader()} — MUSIC_U arrives pre-encoded from
+     *  Set-Cookie and must not be re-encoded), with only bare spaces escaped so
+     *  HttpURLConnection accepts the header (e.g. os "iPhone OS"). */
+    private static String headerCookie(Map<String, Object> header) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Object> e : header.entrySet()) {
+            if (sb.length() > 0) sb.append("; ");
+            String val = String.valueOf(e.getValue()).replace(" ", "%20");
+            sb.append(e.getKey()).append('=').append(val);
+        }
+        return sb.toString();
     }
 
     // ---- Endpoint wrappers (Step 1 verification only — full set in Step 3) ----
@@ -452,12 +579,22 @@ public final class NeteaseClient {
 
     /**
      * Collect (subscribe) or un-collect (unsubscribe) a playlist for the signed-in user.
-     * Maps to {@code /weapi/playlist/subscribe|unsubscribe}; true when code == 200.
+     * Maps to {@code /eapi/playlist/subscribe|unsubscribe}; true when code == 200.
+     *
+     * <p>This deliberately uses the mobile eapi path rather than weapi: the web
+     * subscribe endpoint trips risk control ("操作频繁,请稍后再试" / 524).
+     *
+     * <p>Note: NeteaseCloudMusicApi attaches a hard-coded anti-cheat {@code checkToken}
+     * to the subscribe call, but that constant is now stale server-side — sending it
+     * (in the body and/or the X-antiCheatToken header) makes the server reject with
+     * code 405 "操作过于频繁" / 501. Plain eapi with no token succeeds (verified against
+     * the live endpoint), so we send neither.
      */
     public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
-        Map<String, Object> body = new HashMap<>();
+        Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", playlistId);
-        JsonObject obj = weapiJson("playlist/" + (subscribe ? "subscribe" : "unsubscribe"), body);
+        String apiPath = "/api/playlist/" + (subscribe ? "subscribe" : "unsubscribe");
+        JsonObject obj = eapiJson(apiPath, body, false);
         return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 

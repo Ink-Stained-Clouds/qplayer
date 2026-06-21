@@ -5,9 +5,11 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -32,6 +34,7 @@ import java.util.Map;
 public final class NeteaseCrypto {
 
     private static final String PRESET_KEY = "0CoJUm6Qyw8W8jud";
+    private static final String EAPI_KEY = "e82ckenh8dichen8";
     private static final String IV = "0102030405060708";
     private static final String RSA_PUB_KEY = "010001";
     private static final String RSA_MODULUS =
@@ -59,6 +62,45 @@ public final class NeteaseCrypto {
         out.put("params", params);
         out.put("encSecKey", encSecKey);
         return out;
+    }
+
+    /**
+     * Mobile-client "eapi" encryption (the one the official Android/iOS apps use).
+     * The signed plaintext is
+     * {@code <url>-36cd479b6b5-<json>-36cd479b6b5-md5("nobody"+url+"use"+json+"md5forencrypt")},
+     * AES-ECB-encrypted with {@link #EAPI_KEY} and hex-encoded upper-case into a
+     * single {@code params} form field. {@code url} is the {@code /api/...} signing
+     * path — the request itself is POSTed to {@code /eapi/...}. Risk control is far
+     * laxer on this path than on weapi, so sensitive ops (favoriting, subscribing)
+     * succeed here where weapi trips "操作频繁" / 524.
+     */
+    public static Map<String, String> eapi(String url, String jsonText) throws Exception {
+        String digest = md5Hex("nobody" + url + "use" + jsonText + "md5forencrypt");
+        String data = url + "-36cd479b6b5-" + jsonText + "-36cd479b6b5-" + digest;
+        Map<String, String> out = new HashMap<>();
+        out.put("params", aesEcbHex(data, EAPI_KEY));
+        return out;
+    }
+
+    private static String aesEcbHex(String data, String key) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES"));
+        byte[] encrypted = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
+        return toHex(encrypted).toUpperCase(Locale.ROOT);
+    }
+
+    private static String md5Hex(String s) throws Exception {
+        byte[] digest = MessageDigest.getInstance("MD5").digest(s.getBytes(StandardCharsets.UTF_8));
+        return toHex(digest);
+    }
+
+    private static String toHex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) {
+            sb.append(Character.forDigit((x >> 4) & 0xf, 16));
+            sb.append(Character.forDigit(x & 0xf, 16));
+        }
+        return sb.toString();
     }
 
     private static String aesEncrypt(String data, String key) throws Exception {
