@@ -20,11 +20,14 @@ Flickable {
     property var list
     property bool isLocal: false
     property bool removable: false
+    property bool addable: false
     property int rowH: 64
     property int activatedIndex: -1
     property int removeIndex: -1
+    property int addIndex: -1
     signal activated()
     signal removeRequested()
+    signal addRequested()
 
     property int count: list ? list.length : 0
 
@@ -54,8 +57,10 @@ Flickable {
                 flickHeight: view.height
                 highlighted: view.isLocal && index === player.index
                 removable: view.removable
+                addable: view.addable
                 onActivated: { view.activatedIndex = index; view.activated() }
                 onRemoveRequested: { view.removeIndex = index; view.removeRequested() }
+                onAddRequested: { view.addIndex = index; view.addRequested() }
             }
         }
     }

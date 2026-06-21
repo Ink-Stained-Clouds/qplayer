@@ -13,7 +13,9 @@ Item {
         visible: player.libraryCount > 0
         list: player.tracks
         isLocal: true
+        addable: true
         onActivated: player.play(local.activatedIndex)
+        onAddRequested: player.addLocalTrackToQueue(local.addIndex)
     }
 
     Text {
