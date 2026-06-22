@@ -411,6 +411,17 @@ public final class NeteaseClient {
         return obj;
     }
 
+    /** {@link #xeapiCall} returning just the response {@code code}, without the
+     *  toast/expiry side effects of {@link #xeapiJson}. For callers that fall back
+     *  to another transport on failure and don't want a premature error toast. */
+    private int xeapiCode(String apiPath, String formBody) throws IOException {
+        String resp = xeapiCall(apiPath, formBody);
+        JsonElement el = new JsonParser().parse(resp);
+        if (!el.isJsonObject()) return -1;
+        JsonObject obj = el.getAsJsonObject();
+        return obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+    }
+
     /**
      * Register a fresh xeapi anti-crawler session key (X25519 public key + sk +
      * version) via {@code /api/gorilla/anti/crawler/security/key/get}. Anonymous —
@@ -993,6 +1004,19 @@ public final class NeteaseClient {
      * usually only care about the success flag.
      */
     public boolean like(long songId, boolean isLike) throws IOException {
+        // Tier 1: xeapi /radio/like — the official app's encrypted mobile path.
+        // Single-song favoriting hits the same risk control that pushed playlist
+        // subscribe onto xeapi, so try it here first. Quiet (no toast / no
+        // exception): a non-200 or a transport error just falls through to weapi.
+        try {
+            int xc = xeapiCode("/api/radio/like",
+                    "trackId=" + songId + "&like=" + isLike + "&alg=itembased&time=3");
+            if (xc == 200) return true;
+            Logger.warn("xeapi radio/like non-200 for {} (like={}): code {}", songId, isLike, xc);
+        } catch (IOException e) {
+            Logger.warn("xeapi radio/like failed for {} (like={}): {}", songId, isLike, e.getMessage());
+        }
+        // Tier 2: legacy weapi /radio/like.
         Map<String, Object> body = new HashMap<>();
         body.put("trackId", songId);
         body.put("like", isLike);
