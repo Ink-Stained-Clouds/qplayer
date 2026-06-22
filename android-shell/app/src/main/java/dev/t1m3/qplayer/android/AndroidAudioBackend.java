@@ -5,6 +5,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.net.Uri;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.util.Logger;
@@ -37,14 +38,15 @@ public final class AndroidAudioBackend implements AudioBackend {
     // Audio focus: pause on loss (call / other player), duck on transient-can-duck,
     // resume on regain when the loss was transient.
     private final AudioManager audioManager;
+    private final Context appContext;
     private AudioFocusRequest focusRequest;
     private boolean hasFocus;
     private boolean resumeOnGain;
     private boolean ducked;
 
     public AndroidAudioBackend(Context ctx) {
-        audioManager = (AudioManager) ctx.getApplicationContext()
-                .getSystemService(Context.AUDIO_SERVICE);
+        appContext = ctx.getApplicationContext();
+        audioManager = (AudioManager) appContext.getSystemService(Context.AUDIO_SERVICE);
     }
 
     @Override
@@ -79,11 +81,23 @@ public final class AndroidAudioBackend implements AudioBackend {
         player = mp;
         try {
             Logger.info("MediaPlayer: setDataSource + prepareAsync");
-            mp.setDataSource(src);
+            setDataSource(mp, src);
             mp.prepareAsync();
         } catch (IOException | IllegalStateException e) {
             Logger.error("MediaPlayer setDataSource failed: {}", e.getMessage());
             releasePlayer();
+        }
+    }
+
+    /** A {@code content://} URI must be opened via the {@code (Context, Uri)}
+     *  overload — the {@code String} overload has no calling context to resolve it
+     *  and prepareAsync then fails async with extra=MEDIA_ERROR_SYSTEM (0x80000000).
+     *  http(s) urls and plain file paths take the string overload. */
+    private void setDataSource(MediaPlayer mp, String src) throws IOException {
+        if (src.startsWith("content://")) {
+            mp.setDataSource(appContext, Uri.parse(src));
+        } else {
+            mp.setDataSource(src);
         }
     }
 
