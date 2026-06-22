@@ -144,6 +144,7 @@ Item {
             }
             IconButton {
                 type: "standard"
+                enabled: player.currentLikeable
                 icon: player.currentLiked ? "favorite" : "favorite_border"
                 contentColor: player.currentLiked ? "#FFFF5277" : "#99FFFFFF"
                 onClicked: player.toggleLike()

@@ -76,7 +76,7 @@ public final class QPlayerActivity extends Activity {
         AppDirs.setBase(getFilesDir().getAbsolutePath());
 
         AudioBackend backend = new AndroidAudioBackend(this);
-        reader = new AndroidMetadataReader();
+        reader = new AndroidMetadataReader(this);
 
         // Reuse the existing controller across Activity recreations (PiP, config
         // changes). Without this, each recreation builds a fresh controller with

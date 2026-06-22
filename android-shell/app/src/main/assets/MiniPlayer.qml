@@ -80,6 +80,8 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: 1
         type: "standard"
+        // Local tracks have no server-side favorite list — disable, don't toggle.
+        enabled: player.currentLikeable
         icon: player.currentLiked ? "favorite" : "favorite_border"
         contentColor: player.currentLiked ? "#FF5277" : Theme.color.onSurfaceVariantColor
         onClicked: player.toggleLike()

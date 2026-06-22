@@ -150,7 +150,13 @@ public final class PlaybackService extends Service {
             mb.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, nz(t.artist));
             mb.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, nz(t.album));
             if (dur > 0) mb.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, dur);
-            art = decode(t.coverBytes);
+            // Prefer the controller's loaded cover bytes (set for both netease
+            // downloads and local file-backed covers); local Tracks no longer carry
+            // coverBytes inline, so falling back to t.coverBytes alone left system
+            // media controls art-less.
+            byte[] coverData = c.coverBytes.peek();
+            if (coverData == null) coverData = t.coverBytes;
+            art = decode(coverData);
             if (art != null) mb.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art);
         }
         session.setMetadata(mb.build());

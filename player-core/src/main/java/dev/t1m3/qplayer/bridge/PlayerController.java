@@ -184,6 +184,9 @@ public final class PlayerController {
     public final Property<Integer> index = new Property<>(-1);
     public final Property<Float> volume = new Property<>(0.8f);
     public final Property<Boolean> currentLiked = new Property<>(false);
+    /** Whether the current track can be liked — netease only; local files have no
+     *  server-side "我喜欢的音乐", so the player's like button binds enabled to this. */
+    public final Property<Boolean> currentLikeable = new Property<>(false);
     // 0 = list loop (default, current behaviour), 1 = shuffle, 2 = repeat one.
     public final Property<Integer> playMode = new Property<>(0);
     public final Property<List<LyricLine>> lyrics = new Property<>(Collections.<LyricLine>emptyList());
@@ -796,6 +799,7 @@ public final class PlayerController {
             durationMs.set(t.durationMs);
             positionMs.set(0L);
             currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
+            currentLikeable.set(t.neteaseId != 0);
         });
         updateCover(t, i);
 
@@ -845,6 +849,17 @@ public final class PlayerController {
             post(() -> { applyCover(cb); coverPath.set(""); });
             notifyPlayback();
             return;
+        }
+        // Local track: cover lives in a cache file (coverThumbPath is an absolute
+        // path, not an http url). Read it for the fluid backdrop + Monet seed.
+        if (t.coverThumbPath != null && t.coverThumbPath.startsWith("/")) {
+            byte[] data = readBytesFromFile(t.coverThumbPath);
+            if (data != null && data.length > 0) {
+                final String path = t.coverThumbPath;
+                post(() -> { applyCover(data); coverPath.set(path); });
+                notifyPlayback();
+                return;
+            }
         }
         post(() -> { applyCover(null); coverPath.set(""); });
         final String url = t.coverUrl;

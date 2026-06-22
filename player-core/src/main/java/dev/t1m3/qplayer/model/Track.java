@@ -42,6 +42,11 @@ public class Track {
     public String translationFilePath;
     public String romajiFilePath;
 
+    /** File size / last-modified (LOCAL source) — the library cache's invalidation
+     *  key, so an unchanged file skips the expensive tag/cover/lyric re-read. */
+    public long fileSize;
+    public long fileMtime;
+
     /** The source string the audio backend should open: content URI, file path, or stream url. */
     public String playable() {
         if (source == Source.NETEASE) return streamUrl;
