@@ -1,4 +1,4 @@
-package dev.t1m3.qplayer.android.lyric;
+package dev.t1m3.qplayer.lyric.skia;
 
 import io.github.humbleui.skija.Data;
 import io.github.humbleui.skija.Font;

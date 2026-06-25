@@ -108,6 +108,11 @@ dependencies {
     // QML bridge). Pulls gson + zxing-core transitively; all Android-dexable.
     implementation("dev.t1m3.qplayer:player-core:0.1.0-SNAPSHOT")
 
+    // Host-drawn lyric page (fluid SkSL backdrop + per-syllable renderer + the
+    // QML/Skija frame compositor), shared with the desktop host so both draw
+    // identical lyrics. Pure Skija; Android-dexable.
+    implementation("dev.t1m3.qplayer:shared-lyric:0.1.0-SNAPSHOT")
+
     implementation("io.github.humbleui:skija-shared:0.143.16")
     implementation("io.github.humbleui:skija-android-arm64:0.143.16")
 

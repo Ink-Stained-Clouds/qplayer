@@ -16,12 +16,17 @@ Flickable {
     signal openPlaylist()
 
     property int count: list ? list.length : 0
-    property real tile: (width - 2 * pad - gap) / 2
+    // Responsive column count: keep each card at least ~200dp wide, so a phone shows
+    // 2, a tablet/medium window 3, and a wide desktop window 4+. Width-driven, so it
+    // adapts on both desktop and Android (landscape / large screens).
+    property real minTile: 200
+    property int cols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minTile + gap)))
+    property real tile: (width - 2 * pad - (cols - 1) * gap) / cols
     property real cardH: tile + 52
 
     clip: true
     contentWidth: width
-    contentHeight: Math.ceil(count / 2) * (cardH + gap) + 2 * pad
+    contentHeight: Math.ceil(count / cols) * (cardH + gap) + 2 * pad
 
     Item {
         width: grid.width
@@ -34,8 +39,8 @@ Flickable {
             model: grid.list
             PlaylistCard {
                 tile: grid.tile
-                x: grid.pad + (index % 2) * (grid.tile + grid.gap)
-                y: grid.pad + Math.floor(index / 2) * (grid.cardH + grid.gap)
+                x: grid.pad + (index % grid.cols) * (grid.tile + grid.gap)
+                y: grid.pad + Math.floor(index / grid.cols) * (grid.cardH + grid.gap)
                 name: modelData.name
                 count: modelData.trackCount
                 coverUrl: modelData.coverUrl

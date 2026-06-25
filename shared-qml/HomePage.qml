@@ -13,12 +13,16 @@ Item {
     property real gap: 12
     property real greetH: 64
     property real rowH: 64
-    property real tile: (width - 2 * pad - gap) / 2
+    // Responsive grid: ~200dp min card width → 2 cols on a phone, 3–4 on a wide
+    // window. Width-driven, so it adapts on desktop and on Android large screens.
+    property real minTile: 200
+    property int cols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minTile + gap)))
+    property real tile: (width - 2 * pad - (cols - 1) * gap) / cols
     property real cardH: tile + 52
 
     property int recCount: player.recommendPlaylists ? player.recommendPlaylists.length : 0
     property int dailyCount: player.recommendations ? player.recommendations.length : 0
-    property real gridH: Math.ceil(recCount / 2) * (cardH + gap)
+    property real gridH: Math.ceil(recCount / cols) * (cardH + gap)
     property real dailyHdrY: greetH + gridH + 4
     property real dailyTop: dailyHdrY + (dailyCount > 0 ? 40 : 0)
 
@@ -56,8 +60,8 @@ Item {
                 model: player.recommendPlaylists
                 PlaylistCard {
                     tile: page.tile
-                    x: page.pad + (index % 2) * (page.tile + page.gap)
-                    y: page.greetH + Math.floor(index / 2) * (page.cardH + page.gap)
+                    x: page.pad + (index % page.cols) * (page.tile + page.gap)
+                    y: page.greetH + Math.floor(index / page.cols) * (page.cardH + page.gap)
                     name: modelData.name
                     count: modelData.trackCount
                     coverUrl: modelData.coverUrl

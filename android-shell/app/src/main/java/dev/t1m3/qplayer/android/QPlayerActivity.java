@@ -142,14 +142,14 @@ public final class QPlayerActivity extends Activity {
         // Lyric renderer fonts: the bundled PingFang SC weights from shared-qml
         // (the lyric face must itself cover CJK + Latin — no automatic fallback).
         try {
-            dev.t1m3.qplayer.android.lyric.Fonts.init(
+            dev.t1m3.qplayer.lyric.skia.Fonts.init(
                     readAssetBytes("fonts/PingFangSC-Thin.otf"),
                     readAssetBytes("fonts/PingFangSC-Light.otf"),
                     readAssetBytes("fonts/PingFangSC-Regular.otf"),
                     readAssetBytes("fonts/PingFangSC-Medium.otf"));
             // Material Symbols for the host-drawn lyric transport icons (drawn by
             // shaped ligature name, same as the QML scene's icons).
-            dev.t1m3.qplayer.android.lyric.Fonts.initIcon(
+            dev.t1m3.qplayer.lyric.skia.Fonts.initIcon(
                     readAssetBytes("fonts/MaterialSymbolsRounded.ttf"));
         } catch (IOException ignored) {
         }

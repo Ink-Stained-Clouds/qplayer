@@ -178,7 +178,7 @@ public final class DesktopAudioBackend implements AudioBackend {
                     baseFmt.getChannels() * 2,
                     baseFmt.getSampleRate(),
                     false);
-            try (AudioInputStream pcmStream = AudioSystem.getAudioInputStream(pcm, raw)) {
+            try (AudioInputStream pcmStream = openPcm16(raw, baseFmt, pcm)) {
                 long bytesPerSec = (long) pcm.getSampleRate() * pcm.getChannels() * 2L;
                 // Seek by read-and-discard. We never call skip(): mp3spi/jlafc
                 // either return 0 or corrupt the decoder's sub-band state, so
@@ -214,6 +214,88 @@ public final class DesktopAudioBackend implements AudioBackend {
                 closeLineLocked();
             }
         }
+    }
+
+    /**
+     * Open a 16-bit signed PCM stream from any supported source. mp3 / ogg / 16-bit
+     * FLAC convert directly via the SPIs. High-resolution sources (24- or 32-bit
+     * FLAC) have no direct decoder→16-bit converter in javax.sound, so decode them
+     * at their native bit depth (which the FLAC SPI does support) and downconvert to
+     * 16-bit here — otherwise they fail with "Unsupported conversion".
+     */
+    private static AudioInputStream openPcm16(AudioInputStream raw, AudioFormat baseFmt,
+                                              AudioFormat pcm16) {
+        try {
+            return AudioSystem.getAudioInputStream(pcm16, raw);
+        } catch (IllegalArgumentException directFailed) {
+            int srcBits = baseFmt.getSampleSizeInBits();
+            if (srcBits != 24 && srcBits != 32) throw directFailed;
+            AudioFormat nativePcm = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    baseFmt.getSampleRate(),
+                    srcBits,
+                    baseFmt.getChannels(),
+                    baseFmt.getChannels() * (srcBits / 8),
+                    baseFmt.getSampleRate(),
+                    false);
+            AudioInputStream nativeStream = AudioSystem.getAudioInputStream(nativePcm, raw);
+            return downconvertTo16(nativeStream, pcm16);
+        }
+    }
+
+    // Wrap a 24-/32-bit signed PCM stream as 16-bit by keeping each sample's top two
+    // bytes (the SourceDataLine is opened at 16-bit, which every platform supports).
+    private static AudioInputStream downconvertTo16(AudioInputStream src, AudioFormat out16) {
+        AudioFormat sf = src.getFormat();
+        final int srcBytes = sf.getSampleSizeInBits() / 8;     // 3 or 4
+        final boolean be = sf.isBigEndian();
+        final int channels = sf.getChannels();
+        final int srcFrame = srcBytes * channels;
+        final int dstFrame = 2 * channels;
+        java.io.InputStream conv = new java.io.InputStream() {
+            private final byte[] frame = new byte[srcFrame];
+
+            @Override
+            public int read() throws IOException {
+                byte[] b = new byte[1];
+                int n = read(b, 0, 1);
+                return n < 0 ? -1 : (b[0] & 0xFF);
+            }
+
+            @Override
+            public int read(byte[] dst, int off, int len) throws IOException {
+                int produced = 0;
+                while (produced + dstFrame <= len) {
+                    if (!readFully(frame)) break;
+                    for (int c = 0; c < channels; c++) {
+                        int base = c * srcBytes;
+                        // High two bytes of the sample (little-endian output).
+                        byte hi = be ? frame[base] : frame[base + srcBytes - 1];
+                        byte lo = be ? frame[base + 1] : frame[base + srcBytes - 2];
+                        dst[off + produced]     = lo;
+                        dst[off + produced + 1] = hi;
+                        produced += 2;
+                    }
+                }
+                return produced == 0 ? -1 : produced;
+            }
+
+            private boolean readFully(byte[] buf) throws IOException {
+                int got = 0;
+                while (got < buf.length) {
+                    int n = src.read(buf, got, buf.length - got);
+                    if (n < 0) return false;
+                    got += n;
+                }
+                return true;
+            }
+
+            @Override
+            public void close() throws IOException {
+                src.close();
+            }
+        };
+        return new AudioInputStream(conv, out16, AudioSystem.NOT_SPECIFIED);
     }
 
     private static long alignToFrame(long bytes, int frameSize) {

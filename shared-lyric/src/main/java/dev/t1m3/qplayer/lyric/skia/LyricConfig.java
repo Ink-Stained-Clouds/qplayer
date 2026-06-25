@@ -1,4 +1,4 @@
-package dev.t1m3.qplayer.android.lyric;
+package dev.t1m3.qplayer.lyric.skia;
 
 // Lyric rendering config (subset of Haedus's MusicPlayerConfig the renderer
 // reads). Values are mutable and wrapped so the renderer's `cfg.x.getValue()`

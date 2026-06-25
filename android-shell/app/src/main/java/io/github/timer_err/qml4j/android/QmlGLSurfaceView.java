@@ -31,11 +31,7 @@ import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.android.AppSettings;
-import dev.t1m3.qplayer.android.lyric.LyricRenderer;
-import dev.t1m3.qplayer.android.lyric.LyricSkia;
-import dev.t1m3.qplayer.lyric.LyricLine;
-
-import java.util.List;
+import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -56,9 +52,6 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private ErrorListener errorListener;
     private SplashListener splashListener;
     private boolean readyFired;
-    // Mirror QmlView.renderFrame's idle fast-path: skip the layout pass when no
-    // property changed since the last frame, so a static screen costs only paint.
-    private long renderedVersion = -1;
 
     /** Drives a host splash while the QML tree compiles: per-component progress
      *  (on the GL thread) and a one-shot ready signal at the first painted frame. */
@@ -71,15 +64,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         this.splashListener = l;
     }
 
-    // Host-drawn lyric page: a full-screen Skija overlay rendered on top of the
-    // QML scene when controller.lyricsOpen. Drawn directly (no QML type) using
-    // Haedus's LyricRenderer. lyricSlide eases 0->1 as it opens/closes; lastLyrics
-    // detects a track change so we re-feed the renderer.
-    private final LyricRenderer lyricRenderer = new LyricRenderer();
-    private final dev.t1m3.qplayer.android.lyric.FluidBackground fluidBg =
-            new dev.t1m3.qplayer.android.lyric.FluidBackground(System.nanoTime());
-    private List<LyricLine> lastLyrics;
-    private float lyricSlide;
+    // Host-drawn lyric page (shared verbatim with the desktop host): the fluid
+    // backdrop, per-syllable column, the three-layer scene composite and all its
+    // cached shaders/state live in LyricCompositor. This view only owns the
+    // platform-specific touch gestures that drive it.
+    private final LyricCompositor compositor = new LyricCompositor();
     // Lyric-body gesture state (GL-thread only). lyGrab: the touch is ours (vs the QML
     // scene). lyMoved: it has passed the slop, so it's a scroll, not a tap-to-seek.
     private boolean lyGrab;
@@ -87,28 +76,6 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private float lyDownY;
     // Movement (logical px) past which a lyric-body touch is a scroll rather than a tap.
     private static final float LYRIC_TAP_SLOP = 12f;
-    // The QML lyric-chrome subtree (tagged objectName "lyricChrome"), rendered in its own
-    // pass on top of the host fluid; looked up once after the scene loads.
-    private Item lyricChrome;
-    // Wall-clock extrapolation of the coarse backend position, for a smooth progress bar.
-    private long lyRawLast = -1;
-    private boolean lyPlayingLast;
-    private long lyBaseMs;
-    private long lyBaseNanos;
-    // The lyric edge-fade gradient (native Shader) + its mask Paint depend only on the
-    // surface height, so cache them and rebuild only when the height changes (rebuilding
-    // every frame was steady native churn -> GC stutter).
-    private float lyShaderH = -1f;
-    private float lyShaderTopY = -1f;
-    private io.github.humbleui.skija.Shader lyFadeShader;
-    private final Paint lyMaskPaint = new Paint();
-    // Cached lyric-column rect (rebuilt on size change) + cover key string. Both
-    // were rebuilt every frame -- the key via string concat -- adding steady
-    // garbage to the per-frame lyric path.
-    private io.github.humbleui.types.Rect lyColRect;
-    private float lyColW = -1f, lyColH = -1f;
-    private Object lyKeyTitle, lyKeyUrl;
-    private String lyCoverKey;
 
     /** Notified (with a full stack trace) when QML load/render throws, so the
      *  host can surface the error instead of the GL thread crashing the app. */
@@ -162,7 +129,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         // host-drawn with no QML controls under it, so a touch there is
                         // ours: a drag scrolls the column, a tap seeks to that line. Don't
                         // engage the scroll yet -- wait for movement so a tap stays a tap.
-                        if (lyricsScrollable(y)) {
+                        if (compositor.lyricsScrollable(y, surface.height() / uiScale, insetTop())) {
                             lyGrab = true;
                             lyDownY = y;
                             lyMoved = false;
@@ -182,11 +149,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                             if (!lyMoved) {
                                 if (Math.abs(y - lyDownY) > LYRIC_TAP_SLOP) {
                                     lyMoved = true;
-                                    lyricRenderer.scrollDown(lyDownY);
-                                    lyricRenderer.scrollMove(y);
+                                    compositor.lyricRenderer().scrollDown(lyDownY);
+                                    compositor.lyricRenderer().scrollMove(y);
                                 }
                             } else {
-                                lyricRenderer.scrollMove(y);
+                                compositor.lyricRenderer().scrollMove(y);
                             }
                             return;
                         }
@@ -201,9 +168,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         if (lyGrab) {
                             lyGrab = false;
                             if (lyMoved) {
-                                lyricRenderer.scrollUp();
+                                compositor.lyricRenderer().scrollUp();
                             } else if (action == MotionEvent.ACTION_UP) {
-                                long t = lyricRenderer.timeAtScreenY(lyDownY);
+                                long t = compositor.lyricRenderer().timeAtScreenY(lyDownY);
                                 if (t >= 0L && controller != null) controller.seek(t);
                             }
                             return;
@@ -217,14 +184,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         }
     }
 
-    // Whether a touch at logical y should scroll the host-drawn lyric column: the page
-    // must be fully open and the point inside the lyric band (below the title, above
-    // the transport). Runs on the GL thread (same as the lyric render state it reads).
-    private boolean lyricsScrollable(float y) {
-        if (lyricSlide < 0.99f || !lyricRenderer.hasLines()) return false;
-        float topY = lyricTopY();
-        float bottomY = surface.height() / uiScale - L_TRANSPORT_H;
-        return y >= topY && y <= bottomY;
+    // Status-bar inset in logical px, fed to the lyric compositor for column gating.
+    private float insetTop() {
+        return settings != null ? settings.topInset() : 0f;
     }
 
     @Override
@@ -467,48 +429,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 Canvas canvas = surface.acquireCanvas();
                 io.github.timer_err.qml4j.render.Renderer renderer = view.renderer();
                 renderer.setGpuContext(surface.recordingContext());
-                float lw = surface.width() / uiScale, lh = surface.height() / uiScale;
-                if (lyricChrome == null) lyricChrome = view.findByObjectName("lyricChrome");
-
-                // Three layers so the lyric page slides up OVER the main UI while its md3
-                // chrome still sits above the host fluid:
-                //  1) the QML main scene (skipped once the lyric page fully covers it),
-                //  2) the host fluid backdrop + per-syllable lyrics (slides up),
-                //  3) the lyric chrome subtree (title / wavy progress / transport), drawn
-                //     again on top of the fluid.
-                double slidePrev = controller != null ? controller.lyricSlide.peek() : 0.0;
-                boolean fullyCovered = slidePrev >= 0.999;
-                if (!fullyCovered) {
-                    int sc = canvas.save();
-                    canvas.scale(uiScale, uiScale);
-                    boolean skipLayout = Property.changeVersion() == renderedVersion;
-                    if (skipLayout) profSkips++;
-                    long vBeforeRender = Property.changeVersion();
-                    renderer.render(canvas, view.root(), skipLayout);
-                    renderedVersion = Property.changeVersion();
-                    profBumpRender += renderedVersion - vBeforeRender;
-                    canvas.restoreToCount(sc);
-                } else if (Property.changeVersion() != renderedVersion) {
-                    // Lyric page fully covers the main scene so we skip drawing it —
-                    // but the chrome subtree (renderSubtree doesn't settle layout)
-                    // relies on the main render's layout pass. When something changed
-                    // (e.g. the new song's title now wraps to two lines), settle once
-                    // so the chrome's anchors reflow; the draw is painted over by the
-                    // fluid backdrop, so it stays invisible. Steady state still skips.
-                    int sc = canvas.save();
-                    canvas.scale(uiScale, uiScale);
-                    renderer.render(canvas, view.root(), false);
-                    renderedVersion = Property.changeVersion();
-                    canvas.restoreToCount(sc);
-                }
-                drawLyricOverlay(canvas);
-                double slideNow = controller != null ? controller.lyricSlide.peek() : 0.0;
-                if (slideNow > 0.001 && lyricChrome != null) {
-                    int scC = canvas.save();
-                    canvas.scale(uiScale, uiScale);
-                    renderer.renderSubtree(canvas, lyricChrome, lw, lh);
-                    canvas.restoreToCount(scC);
-                }
+                // The QML main scene, the host lyric overlay (fluid backdrop + per-syllable
+                // column) and the QML lyric chrome subtree are composited by the shared
+                // LyricCompositor — the same code path the desktop LWJGL host runs.
+                compositor.composite(canvas, renderer, view, controller, settings,
+                        surface.recordingContext(), uiScale, surface.width(), surface.height());
                 long t1b = System.nanoTime();
                 surface.present();
                 profileFrame(t0, t1, t1b, System.nanoTime());
@@ -524,133 +449,6 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             }
         }
     }
-
-    // Host-drawn lyric page: a fluid (SkSL, cover-keyed) backdrop with the
-    // Haedus LyricRenderer on top, sliding up over the QML scene. Runs every
-    // frame (RENDERMODE_CONTINUOUSLY) so the slide + scroll springs animate.
-    @SuppressWarnings("unchecked")
-    private void drawLyricOverlay(Canvas canvas) {
-        if (controller == null) return;
-        boolean open = Boolean.TRUE.equals(controller.lyricsOpen.peek());
-        float target = open ? 1f : 0f;
-        // critically-damped-ish ease toward the target; cheap and frame-stable.
-        lyricSlide += (target - lyricSlide) * 0.22f;
-        if (Math.abs(target - lyricSlide) < 0.002f) lyricSlide = target;
-        // Publish to QML so the LyricOverlay chrome fades in/out in lockstep.
-        // set() no-ops on an unchanged value, so once settled-closed (slide==0) this
-        // stops bumping the change version.
-        controller.lyricSlide.set((double) lyricSlide);
-        // Closed and settled: nothing more to draw. Crucially, RETURN BEFORE touching
-        // lyricProgress — that value changes every frame while playing, and setting it
-        // would bump the change version every frame, defeating the renderer's
-        // idle layout-skip (skip stayed 0/150 → the whole tree re-laid-out 60×/s).
-        if (lyricSlide <= 0.001f && !open) return;
-
-        // Per-frame playback fraction for the QML wavy progress bar. backend.position()
-        // is coarse (steps ~5 Hz), so extrapolate from the last change with wall-clock
-        // time between updates for smooth motion; resync when the backend jumps (seek)
-        // or play/pause toggles.
-        long durMs = controller.durationMs.peek();
-        long raw = controller.position();
-        boolean playing = Boolean.TRUE.equals(controller.playing.peek());
-        long nowN = System.nanoTime();
-        if (raw != lyRawLast || playing != lyPlayingLast) {
-            lyRawLast = raw;
-            lyPlayingLast = playing;
-            lyBaseMs = raw;
-            lyBaseNanos = nowN;
-        }
-        long predMs = playing ? lyBaseMs + (nowN - lyBaseNanos) / 1_000_000L : raw;
-        if (durMs > 0 && predMs > durMs) predMs = durMs;
-        controller.lyricProgress.set(durMs > 0 ? Math.min(1.0, predMs / (double) durMs) : 0.0);
-
-        // Re-feed the renderer when the track's lyric list changes (identity).
-        Object lyObj = controller.lyrics.peek();
-        if (lyObj != lastLyrics) {
-            lastLyrics = (List<LyricLine>) lyObj;
-            lyricRenderer.setLyrics(lastLyrics);
-        }
-
-        float w = surface.width() / uiScale;
-        float h = surface.height() / uiScale;
-        float topY = lyricTopY();
-        ensureLyricShaders(h, topY);
-        int sc = canvas.save();
-        canvas.scale(uiScale, uiScale);
-
-        // The page slides up from the bottom over the QML main scene (drawn in the prior
-        // pass). The LyricOverlay chrome slides with the same smoothstep offset.
-        float ease = lyricSlide * lyricSlide * (3f - 2f * lyricSlide); // smoothstep
-        canvas.translate(0f, (1f - ease) * h);
-
-        // 1) fluid backdrop, keyed by the current track. The key only changes on a
-        // track switch, so rebuild the concatenated string only when an input does.
-        byte[] cover = (byte[]) controller.coverBytes.peek();
-        Object title = controller.title.peek();
-        Object coverUrl = controller.coverUrl.peek();
-        if (lyCoverKey == null || title != lyKeyTitle || coverUrl != lyKeyUrl) {
-            lyKeyTitle = title;
-            lyKeyUrl = coverUrl;
-            lyCoverKey = title + "|" + coverUrl;
-        }
-        boolean bgStatic = settings != null && Boolean.TRUE.equals(settings.lyricBgStatic.peek());
-        fluidBg.render(canvas, surface.recordingContext(), uiScale, w, h, cover, lyCoverKey,
-                System.nanoTime(), bgStatic);
-
-        // 2) fluid backdrop already drawn. The title (top band) and transport
-        // (bottom band) are drawn by the QML LyricOverlay on top of this; only the
-        // lyrics column is host-drawn. Render into a layer, then multiply a vertical
-        // alpha gradient (DST_IN) so lines fade toward the top/bottom edges.
-        float pad = 28f;
-        float colH = h - topY - L_TRANSPORT_H;
-        if (lyColRect == null || lyColW != w || lyColH != colH) {
-            lyColRect = io.github.humbleui.types.Rect.makeXYWH(0f, topY, w, colH);
-            lyColW = w;
-            lyColH = colH;
-        }
-        io.github.humbleui.types.Rect colRect = lyColRect;
-        int lc = canvas.saveLayer(colRect, null);
-        LyricSkia.setCanvas(canvas);
-        lyricRenderer.render(canvas, pad, topY, w - 2f * pad, colH, controller.position());
-        lyMaskPaint.setShader(lyFadeShader);
-        lyMaskPaint.setBlendMode(io.github.humbleui.skija.BlendMode.DST_IN);
-        canvas.drawRect(colRect, lyMaskPaint);
-        lyMaskPaint.setShader(null);
-        canvas.restoreToCount(lc);
-
-        canvas.restoreToCount(sc);
-    }
-
-    // Reserved height (logical px) for the lyric-page transport bar at the bottom.
-    private static final float L_TRANSPORT_H = 136f;
-
-    // Lyric column top, in logical px. Clears the QML chrome's title band: the
-    // status-bar inset, plus room for a two-line (clamped) title + artist. The
-    // title Text caps at maximumLineCount 2, so this is a fixed worst case.
-    private float lyricTopY() {
-        float inset = 0f;
-        if (settings != null) {
-            Double t = settings.topInset.peek();
-            if (t != null) inset = t.floatValue();
-        }
-        return inset + 144f;
-    }
-
-    // Rebuild the cached lyric gradients only when the surface height or column
-    // top changes (top tracks the status-bar inset, which can settle late).
-    private void ensureLyricShaders(float h, float topY) {
-        if (h == lyShaderH && topY == lyShaderTopY && lyFadeShader != null) return;
-        lyShaderH = h;
-        lyShaderTopY = topY;
-        if (lyFadeShader != null) lyFadeShader.close();
-        float colH = h - topY - L_TRANSPORT_H;
-        float f = Math.min(0.4f, 40f / colH);
-        lyFadeShader = io.github.humbleui.skija.Shader.makeLinearGradient(
-                0f, topY, 0f, topY + colH,
-                new int[]{0x00FFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00FFFFFF},
-                new float[]{0f, f, 1f - f, 1f});
-    }
-
 
     // Lightweight frame profiler: accumulates layout (tick+flush) vs paint
     // (render) time and the wall-clock gap between frames, logging a summary

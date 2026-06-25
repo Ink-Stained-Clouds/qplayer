@@ -20,6 +20,22 @@ Rectangle {
 
     property var titles: ["推荐", "搜索", "我的", "最近", "本地"]
 
+    // Responsive breakpoints (MD3): compact < 600, medium 600–839, expanded ≥ 840.
+    // The wide layout (a NavigationRail on the left instead of the bottom bar) is
+    // driven purely by the available width, so a tablet, a desktop window, or even
+    // a phone in landscape adopts it automatically once the width threshold is met.
+    property bool wide: app.width >= 600
+    property bool expanded: app.width >= 840
+
+    // Shared nav model for both the bottom bar and the rail.
+    property var navItems: [
+        { icon: "recommend",     text: "推荐" },
+        { icon: "search",        text: "搜索" },
+        { icon: "library_music", text: "我的" },
+        { icon: "history",       text: "最近" },
+        { icon: "folder",        text: "本地" }
+    ]
+
     // Rebuild the debug log string only while it's actually shown (its set() forces a
     // full relayout, which periodically stuttered the scene when always rebuilt).
     onShowLogChanged: player.setLogVisible(app.showLog)
@@ -96,11 +112,28 @@ Rectangle {
     // forces a whole-tree settleLayout that frame (and on coinciding scroll
     // frames). Layout containers in the always-visible chrome re-ran their
     // measure/fill passes every one of those ticks; anchors keep it cheap.
+    // Wide-screen navigation rail (left), shown in place of the bottom bar once the
+    // window is wide enough; collapses to width 0 (and hides) on compact widths so
+    // the content reclaims the full width. Expands to a labelled rail at ≥ 840.
+    NavigationRail {
+        id: rail
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        visible: app.wide
+        extended: app.expanded
+        width: app.wide ? implicitWidth : 0
+        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+        currentIndex: app.page
+        model: app.navItems
+        onItemClicked: app.switchTo(index)
+    }
+
     TopAppBar {
         id: topBar
         anchors.top: parent.top
         anchors.topMargin: settings.topInset   // clear the status bar (edge-to-edge)
-        anchors.left: parent.left
+        anchors.left: rail.right
         anchors.right: parent.right
         height: 64
         title: app.titles[app.page]
@@ -133,7 +166,7 @@ Rectangle {
     Item {
         id: pageWrap
         anchors.top: topBar.bottom
-        anchors.left: parent.left
+        anchors.left: rail.right
         anchors.right: parent.right
         anchors.bottom: mini.top
         clip: true
@@ -226,21 +259,25 @@ Rectangle {
 
     MiniPlayer {
         id: mini
-        anchors.left: parent.left
+        anchors.left: rail.right
         anchors.right: parent.right
         anchors.bottom: bottomNav.top
         height: 84
         onLyricsRequested: player.setLyricsOpen(true)
     }
 
+    // Bottom navigation (compact). On wide layouts the rail replaces it, so collapse
+    // it to height 0 + hidden; the mini player (anchored to bottomNav.top) then sits
+    // flush at the bottom without a conditional anchor.
     BottomNav {
         id: bottomNav
-        anchors.left: parent.left
+        anchors.left: rail.right
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        visible: !app.wide
         // Nav content sits in the top 76; the extra height is background that fills
         // behind the gesture/navigation bar (edge-to-edge).
-        height: 76 + settings.bottomInset
+        height: app.wide ? 0 : (76 + settings.bottomInset)
         currentIndex: app.page
         onNavigate: app.switchTo(bottomNav.pendingIndex)
     }

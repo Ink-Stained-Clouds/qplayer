@@ -7,7 +7,7 @@ import android.content.res.Configuration;
 import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
-import dev.t1m3.qplayer.android.lyric.LyricConfig;
+import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
 /**
  * QML-facing app settings ({@code settings} context global): dark-mode policy and
@@ -19,7 +19,8 @@ import dev.t1m3.qplayer.android.lyric.LyricConfig;
  * before the GL thread starts; QML writes run on the render thread; system config
  * changes are funnelled back through the render thread by the caller.
  */
-public final class AppSettings extends QObject {
+public final class AppSettings extends QObject
+        implements dev.t1m3.qplayer.lyric.skia.LyricCompositor.SettingsBridge {
 
     public static final int MODE_SYSTEM = 0;
     public static final int MODE_LIGHT = 1;
@@ -66,6 +67,19 @@ public final class AppSettings extends QObject {
     public void setInsets(double top, double bottom) {
         topInset.set(top);
         bottomInset.set(bottom);
+    }
+
+    // --- LyricCompositor.SettingsBridge: the two values the lyric page reads ---
+
+    @Override
+    public float topInset() {
+        Double t = topInset.peek();
+        return t == null ? 0f : t.floatValue();
+    }
+
+    @Override
+    public boolean lyricBgStatic() {
+        return Boolean.TRUE.equals(lyricBgStatic.peek());
     }
 
     /** Notified (on the thread that mutates the policy) when the resolved dark

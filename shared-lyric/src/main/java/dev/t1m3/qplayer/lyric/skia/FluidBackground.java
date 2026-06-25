@@ -1,8 +1,6 @@
-package dev.t1m3.qplayer.android.lyric;
+package dev.t1m3.qplayer.lyric.skia;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-
+import io.github.humbleui.skija.Bitmap;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.ColorAlphaType;
 import io.github.humbleui.skija.ColorType;
@@ -25,7 +23,9 @@ import java.util.Objects;
  * Apple Music-style fluid backdrop (ported from Haedus FluidBackground for
  * Android). The cover is downscaled to 32x32 and AMLL-adjusted CPU-side, then a
  * SkSL shader warps + rotates the UV before sampling — all motion comes from
- * the shader. Android port replaces java.awt decode with android.graphics.Bitmap.
+ * the shader. The cover decode is done with Skija itself (Image.makeFromEncoded
+ * + a 32x32 raster Bitmap), so this class is fully platform-neutral and shared
+ * verbatim by the Android shell and the desktop host.
  */
 public final class FluidBackground {
 
@@ -238,15 +238,33 @@ public final class FluidBackground {
     private static Image buildTexture(byte[] coverBytes) {
         if (coverBytes == null || coverBytes.length == 0) return null;
         try {
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            Bitmap src = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.length, opts);
+            // Decode + downscale to TEX_SIZE with Skija (no platform image lib):
+            // raster the encoded cover into a 32x32 RGBA bitmap, then read back the
+            // pixels as ARGB ints for the AMLL CPU adjust.
+            Image src = Image.makeFromEncoded(coverBytes);
             if (src == null) return null;
-            Bitmap thumb = Bitmap.createScaledBitmap(src, TEX_SIZE, TEX_SIZE, true);
+            ImageInfo thumbInfo = new ImageInfo(TEX_SIZE, TEX_SIZE,
+                    ColorType.RGBA_8888, ColorAlphaType.UNPREMUL);
+            Bitmap thumb = new Bitmap();
+            thumb.allocPixels(thumbInfo);
+            Canvas tc = new Canvas(thumb);
+            tc.drawImageRect(src,
+                    Rect.makeWH(src.getWidth(), src.getHeight()),
+                    Rect.makeWH(TEX_SIZE, TEX_SIZE),
+                    SamplingMode.LINEAR, null, true);
+            src.close();
+            byte[] raw = thumb.readPixels();
+            thumb.close();
+            if (raw == null) return null;
+
             int[] argb = new int[TEX_SIZE * TEX_SIZE];
-            thumb.getPixels(argb, 0, TEX_SIZE, 0, 0, TEX_SIZE, TEX_SIZE);
-            if (thumb != src) thumb.recycle();
-            src.recycle();
+            for (int i = 0; i < argb.length; i++) {
+                int r = raw[i * 4] & 0xFF;
+                int g = raw[i * 4 + 1] & 0xFF;
+                int b = raw[i * 4 + 2] & 0xFF;
+                int a = raw[i * 4 + 3] & 0xFF;
+                argb[i] = (a << 24) | (r << 16) | (g << 8) | b;
+            }
 
             float[] rgb = amllAdjust(argb);
             boxBlur(rgb, TEX_SIZE, TEX_SIZE, 2, 4);

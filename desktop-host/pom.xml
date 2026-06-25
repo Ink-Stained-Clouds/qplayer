@@ -14,10 +14,78 @@
     <name>Desktop Host</name>
     <description>LWJGL/GLFW host + desktop audio backend (javax.sound + SPI decoders + jaudiotagger). Dev/run target.</description>
 
+    <properties>
+        <lwjgl.version>3.3.3</lwjgl.version>
+        <!-- The native classifier for THIS build host. skija-linux-x64 + LWJGL
+             natives-linux are the dev target; a windows/macos build flips this. -->
+        <lwjgl.natives>natives-linux</lwjgl.natives>
+        <dorkbox.systemtray.version>4.4</dorkbox.systemtray.version>
+        <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
+        <gfx>gl</gfx>
+        <win.w>1100</win.w>
+        <win.h>720</win.h>
+    </properties>
+
+    <build>
+        <resources>
+            <!-- Mount the shared QML tree (Main.qml + app pages + md3/Core + fonts)
+                 onto the classpath so ClasspathResourceLoader serves it exactly like
+                 the Android shell's merged assets. -->
+            <resource>
+                <directory>${project.basedir}/../shared-qml</directory>
+            </resource>
+        </resources>
+
+        <plugins>
+            <!-- Run the desktop app in a fresh JVM (real main thread, which GLFW needs)
+                 with the full runtime classpath incl. Skija + LWJGL natives:
+                   mvn -pl desktop-host -am install        # build once
+                   mvn -pl desktop-host exec:exec          # run (OpenGL, default)
+                   mvn -pl desktop-host exec:exec -Dgfx=vulkan
+                 -Dgfx / -Dwin.w / -Dwin.h forward to the app. On macOS add
+                 -XstartOnFirstThread to <argument>s. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>-Dqplayer.gfx=${gfx}</argument>
+                        <argument>-Dqplayer.width=${win.w}</argument>
+                        <argument>-Dqplayer.height=${win.h}</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>dev.t1m3.qplayer.desktop.Main</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.lwjgl</groupId>
+                <artifactId>lwjgl-bom</artifactId>
+                <version>${lwjgl.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>dev.t1m3.qplayer</groupId>
             <artifactId>player-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Shared host-drawn lyric page + frame compositor (pure Skija). -->
+        <dependency>
+            <groupId>dev.t1m3.qplayer</groupId>
+            <artifactId>shared-lyric</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -31,6 +99,53 @@
             <artifactId>skija-linux-x64</artifactId>
             <version>${skija.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- LWJGL3: GLFW window/input + OpenGL + Vulkan loaders. The switchable
+             graphics backend uses GL by default and Vulkan behind -Dqplayer.gfx=vulkan. -->
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-glfw</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-opengl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-vulkan</artifactId>
+        </dependency>
+        <!-- LWJGL native libraries for this host. lwjgl-vulkan ships no natives jar
+             (it binds the system Vulkan loader / MoltenVK). -->
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl</artifactId>
+            <classifier>${lwjgl.natives}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-glfw</artifactId>
+            <classifier>${lwjgl.natives}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-opengl</artifactId>
+            <classifier>${lwjgl.natives}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Cross-platform system tray (GtkStatusIcon / AppIndicator / Windows / macOS).
+             GLFW has no tray support; this drives the minimize-to-tray menu. -->
+        <dependency>
+            <groupId>com.dorkbox</groupId>
+            <artifactId>SystemTray</artifactId>
+            <version>${dorkbox.systemtray.version}</version>
         </dependency>
 
         <!-- Desktop audio: tag reading + javax.sound SPI decoders (mp3/flac/ogg) -->

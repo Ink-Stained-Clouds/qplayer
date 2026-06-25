@@ -1,4 +1,4 @@
-package dev.t1m3.qplayer.android.lyric;
+package dev.t1m3.qplayer.lyric.skia;
 
 import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.Syllable;

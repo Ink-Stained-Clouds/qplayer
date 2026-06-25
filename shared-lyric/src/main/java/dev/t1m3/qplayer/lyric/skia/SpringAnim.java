@@ -1,4 +1,4 @@
-package dev.t1m3.qplayer.android.lyric;
+package dev.t1m3.qplayer.lyric.skia;
 
 /**
  * Damped harmonic-oscillator animation. Unlike {@link Animation}, which
