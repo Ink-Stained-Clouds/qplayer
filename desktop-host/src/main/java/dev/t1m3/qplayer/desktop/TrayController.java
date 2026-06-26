@@ -94,6 +94,8 @@ final class TrayController implements PlayerController.PlaybackListener {
             Object artist = controller.artist.peek();
             String tip = title == null ? "QPlayer"
                     : (artist != null ? artist + " — " + title : String.valueOf(title));
+            // dorkbox caps tooltips at 64 chars and throws past it.
+            if (tip.length() > 64) tip = tip.substring(0, 63) + "…";
             tray.setTooltip(tip);
         } catch (Throwable t) {
             Logger.warn("tray refresh failed: {}", t);
