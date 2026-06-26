@@ -95,8 +95,13 @@ final class DesktopWindow {
 
     /** Post a task to run on the render thread (input events). */
     void postRenderTask(Runnable r) { renderTasks.add(r); }
-    /** Post a task to run on the main event loop (playback control, tray). */
-    void postMainTask(Runnable r) { mainTasks.add(r); }
+    /** Post a task to run on the main event loop (playback control, tray).
+     *  Wakes glfwWaitEventsTimeout so the task executes immediately instead of
+     *  waiting up to 50 ms — critical for tray menu actions while hidden. */
+    void postMainTask(Runnable r) {
+        mainTasks.add(r);
+        GLFW.glfwPostEmptyEvent();
+    }
 
     void drainRenderTasks() {
         Runnable r;
@@ -360,6 +365,7 @@ final class DesktopWindow {
     void shutdown() {
         stopRenderThread();
         if (view != null) { try { view.dispose(); } catch (Throwable ignored) {} }
+        try { compositor.dispose(); } catch (Throwable ignored) {}
         org.lwjgl.glfw.Callbacks.glfwFreeCallbacks(window);
         GLFW.glfwDestroyWindow(window);
         GLFW.glfwTerminate();

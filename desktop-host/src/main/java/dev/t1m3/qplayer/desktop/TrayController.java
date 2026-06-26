@@ -1,29 +1,24 @@
 package dev.t1m3.qplayer.desktop;
 
-import dorkbox.systemTray.MenuItem;
-import dorkbox.systemTray.Separator;
-import dorkbox.systemTray.SystemTray;
-
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.util.Logger;
 
 import javax.imageio.ImageIO;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
+import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
+import java.io.ByteArrayInputStream;
 
 /**
- * System-tray integration (the desktop analogue of the Android PlaybackService):
- * a dorkbox tray icon whose menu mirrors the transport — Previous / Play-Pause /
- * Next / Show-Hide / Quit — and a tooltip showing the current track.
+ * System-tray integration using java.awt.TrayIcon directly.
  *
- * <p>Threading: dorkbox dispatches menu callbacks on its own thread and
- * {@link PlayerController.PlaybackListener#onPlaybackChanged} may fire from the
- * audio/worker threads, so every read/write funnels through the window's main-task
- * queue — the same queue playback control runs on — so neither the audio thread
- * nor dorkbox's thread touches controller/tray state directly.
+ * <p>We previously used dorkbox SystemTray but on Windows 11 its
+ * _WindowsNativeTray (Win32 + Swing JPopupMenu) silently drops all click
+ * events, making the tray icon unresponsive. java.awt.TrayIcon + PopupMenu
+ * is the lowest-level supported path on every platform and has no such issues.
+ *
+ * <p>Threading: AWT delivers PopupMenu action events on the AWT EDT. Every
+ * callback funnels through win.postMainTask so GLFW + QML state is only
+ * ever touched on the main event loop.
  */
 final class TrayController implements PlayerController.PlaybackListener {
 
@@ -31,8 +26,8 @@ final class TrayController implements PlayerController.PlaybackListener {
     private final DesktopWindow win;
     private final byte[] iconPng;
 
-    private SystemTray tray;
-    private MenuItem playPause;
+    private TrayIcon trayIcon;
+    private MenuItem playPauseItem;
 
     TrayController(PlayerController controller, DesktopWindow win, byte[] iconPng) {
         this.controller = controller;
@@ -43,39 +38,52 @@ final class TrayController implements PlayerController.PlaybackListener {
     /** Build the tray. Returns false (and logs) if no tray is available, in which
      *  case the app still runs windowed. */
     boolean install() {
-        // Hand the icon to GTK as-is. dorkbox's AUTO_SIZE resize path loads the
-        // PNG through java.awt (MediaTracker → Component.initIDs), which under
-        // native-image dies with NoSuchFieldError: java.awt.Component.x (AWT JNI
-        // field IDs aren't registered). With AUTO_SIZE off, the file goes straight
-        // to the GTK tray, which scales it to the panel itself — no AWT involved.
-        SystemTray.AUTO_SIZE = false;
-        try {
-            tray = SystemTray.get("QPlayer");
-        } catch (Throwable t) {
-            java.io.StringWriter sw = new java.io.StringWriter();
-            t.printStackTrace(new java.io.PrintWriter(sw));
-            Logger.warn("system tray init failed:\n{}", sw);
-            tray = null;
-        }
-        if (tray == null) {
-            Logger.warn("no system tray available; tray menu disabled");
+        if (!SystemTray.isSupported()) {
+            Logger.warn("java.awt.SystemTray not supported; tray menu disabled");
             return false;
         }
-        Logger.info("system tray initialized: {}", tray.getClass().getName());
-        tray.setTooltip("QPlayer");
-        tray.setImage(iconFile());
+        try {
+            Image icon = loadIcon();
 
-        tray.getMenu().add(new MenuItem("上一首", e -> win.postMainTask(controller::prev)));
-        playPause = new MenuItem("播放 / 暂停", e -> win.postMainTask(controller::toggle));
-        tray.getMenu().add(playPause);
-        tray.getMenu().add(new MenuItem("下一首", e -> win.postMainTask(controller::next)));
-        tray.getMenu().add(new Separator());
-        tray.getMenu().add(new MenuItem("显示窗口", e -> win.postMainTask(win::restoreFromTray)));
-        tray.getMenu().add(new MenuItem("退出", e -> win.postMainTask(() -> {
-            shutdown();
-            win.requestQuit();
-        })));
-        return true;
+            PopupMenu popup = new PopupMenu();
+
+            MenuItem prev = new MenuItem("上一首");
+            prev.addActionListener(e -> win.postMainTask(controller::prev));
+            popup.add(prev);
+
+            playPauseItem = new MenuItem("播放 / 暂停");
+            playPauseItem.addActionListener(e -> win.postMainTask(controller::toggle));
+            popup.add(playPauseItem);
+
+            MenuItem next = new MenuItem("下一首");
+            next.addActionListener(e -> win.postMainTask(controller::next));
+            popup.add(next);
+
+            popup.addSeparator();
+
+            MenuItem show = new MenuItem("显示窗口");
+            show.addActionListener(e -> win.postMainTask(win::restoreFromTray));
+            popup.add(show);
+
+            MenuItem quit = new MenuItem("退出");
+            quit.addActionListener(e -> win.postMainTask(() -> {
+                shutdown();
+                win.requestQuit();
+            }));
+            popup.add(quit);
+
+            trayIcon = new TrayIcon(icon, "QPlayer", popup);
+            trayIcon.setImageAutoSize(true);
+            // Left-click also shows the popup (Windows default is right-click only).
+            trayIcon.addActionListener(e -> win.postMainTask(win::restoreFromTray));
+
+            SystemTray.getSystemTray().add(trayIcon);
+            Logger.info("system tray initialized (java.awt.TrayIcon)");
+            return true;
+        } catch (Throwable t) {
+            Logger.warn("system tray init failed: {}", t);
+            return false;
+        }
     }
 
     @Override
@@ -85,46 +93,38 @@ final class TrayController implements PlayerController.PlaybackListener {
     }
 
     private void refresh() {
-        if (tray == null) return;
+        if (trayIcon == null) return;
         try {
-            if (playPause != null) {
-                playPause.setText(controller.isPlaying() ? "暂停" : "播放");
+            if (playPauseItem != null) {
+                playPauseItem.setLabel(controller.isPlaying() ? "暂停" : "播放");
             }
             Object title = controller.title.peek();
             Object artist = controller.artist.peek();
             String tip = title == null ? "QPlayer"
                     : (artist != null ? artist + " — " + title : String.valueOf(title));
-            // dorkbox caps tooltips at 64 chars and throws past it.
+            // AWT caps tooltips at 64 chars on some platforms.
             if (tip.length() > 64) tip = tip.substring(0, 63) + "…";
-            tray.setTooltip(tip);
+            trayIcon.setToolTip(tip);
         } catch (Throwable t) {
             Logger.warn("tray refresh failed: {}", t);
         }
     }
 
     void shutdown() {
-        if (tray != null) {
-            try { tray.shutdown(); } catch (Throwable ignored) {}
-            tray = null;
+        if (trayIcon != null) {
+            try { SystemTray.getSystemTray().remove(trayIcon); } catch (Throwable ignored) {}
+            trayIcon = null;
         }
     }
 
-    // dorkbox's setImage wants a File; write the bundled PNG (or a generated
-    // placeholder) to a temp file once.
-    private File iconFile() {
-        try {
-            File f = File.createTempFile("qplayer-tray", ".png");
-            f.deleteOnExit();
-            if (iconPng != null) {
-                java.nio.file.Files.write(f.toPath(), iconPng);
-            } else {
-                ImageIO.write(placeholder(), "png", f);
-            }
-            return f;
-        } catch (Exception e) {
-            Logger.warn("tray icon temp write failed: {}", e);
-            return null;
+    private Image loadIcon() {
+        if (iconPng != null) {
+            try {
+                BufferedImage img = ImageIO.read(new ByteArrayInputStream(iconPng));
+                if (img != null) return img;
+            } catch (Exception ignored) {}
         }
+        return placeholder();
     }
 
     private static BufferedImage placeholder() {
