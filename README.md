@@ -51,14 +51,13 @@
 
 | 模块 | 说明 |
 |---|---|
-| `player-core/` | 跨平台核心(Maven,`dev.t1m3.qplayer`):面向 QML 的 `PlayerController`、网易云 API、歌词解析(LRC / YRC / TTML)、音频与元数据抽象。 |
-| `shared-lyric/` | 平台无关的宿主绘制歌词页(流体 SkSL 背景 + 逐字渲染器)与 `LyricCompositor`(三层场景合成)。纯 Skija,安卓壳与桌面宿主共用,两端歌词渲染完全一致。 |
+| `player-core/` | 跨平台核心(Maven,`dev.t1m3.qplayer`):面向 QML 的 `PlayerController`、网易云 API、歌词解析(LRC / YRC / TTML)、音频与元数据抽象,以及宿主绘制的歌词页(流体 SkSL 背景 + 逐字渲染器 + `LyricCompositor` 三层合成)。安卓壳与桌面宿主共用,两端歌词渲染完全一致。 |
 | `shared-qml/` | 共享 QML:`Main.qml` + 各页面 + 组件,vendored 的 `md3.Core` 组件库,以及内置字体(PingFang / Material Symbols)。位于仓库根目录,安卓与桌面加载同一份(响应式布局因此两端通用)。 |
 | `android-shell/` | 安卓应用(Gradle,`applicationId dev.t1m3.qplayer`,minSdk 26)。宿主集成位于 `…/android/`;UI 与歌词均来自上面两个共享模块。 |
 | `desktop-host/` | 桌面宿主(Maven):LWJGL3 + GLFW 开窗、Skija 渲染,可切换的 `GraphicsBackend`(`GLBackend` / `VulkanBackend`)、可销毁/重建的渲染线程、系统托盘,以及桌面音频(javax.sound + SPI 解码)。 |
 | [qml4j](https://github.com/TIMER-err/qml4j) | QML 引擎。一个已发布的依赖,**不在**本仓库内。 |
 
-`qml4j-core` 从 Maven Central 解析;本地构建仓库内的 `player-core` / `shared-lyric` / `desktop-host` 模块。
+`qml4j-core` 从 Maven Central 解析;本地构建仓库内的 `player-core` / `desktop-host` 模块。
 
 ## 构建
 
@@ -68,7 +67,7 @@
 
 ```sh
 # 将共享模块安装到 Maven Local(安卓壳通过 mavenLocal 消费)
-mvn -q -pl player-core,shared-lyric -am install
+mvn -q -pl player-core -am install
 
 # 构建 APK(qml4j-core 从 Maven Central 解析)
 cd android-shell && ./gradlew :app:assembleDebug
@@ -78,8 +77,8 @@ cd android-shell && ./gradlew :app:assembleDebug
 **桌面**
 
 ```sh
-# 构建一次(player-core / shared-lyric / desktop-host)
-mvn -q -pl player-core,shared-lyric,desktop-host -am install
+# 构建一次(player-core / desktop-host)
+mvn -q -pl player-core,desktop-host -am install
 
 # 运行(默认 OpenGL)
 mvn -pl desktop-host exec:exec

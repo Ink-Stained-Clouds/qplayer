@@ -51,14 +51,13 @@ The UI uses no native Views. Every control, including the lyrics, is described i
 
 | Module | Description |
 |---|---|
-| `player-core/` | Platform-neutral core (Maven, `dev.t1m3.qplayer`): the QML-facing `PlayerController`, NetEase API, lyric parsers (LRC / YRC / TTML), audio and metadata abstractions. |
-| `shared-lyric/` | Platform-neutral host-drawn lyric page (fluid SkSL backdrop + per-syllable renderer) and the `LyricCompositor` (the 3-layer scene compositor). Pure Skija, shared by the Android shell and the desktop host so both draw identical lyrics. |
+| `player-core/` | Platform-neutral core (Maven, `dev.t1m3.qplayer`): the QML-facing `PlayerController`, NetEase API, lyric parsers (LRC / YRC / TTML), audio and metadata abstractions, plus the host-drawn lyric page (fluid SkSL backdrop + per-syllable renderer + the `LyricCompositor`). Shared by the Android shell and the desktop host so both draw identical lyrics. |
 | `shared-qml/` | Shared QML: `Main.qml` + the pages + components, the vendored `md3.Core` library, and bundled fonts (PingFang / Material Symbols). At the repo root; Android and desktop load the same copy (so the responsive layout applies to both). |
 | `android-shell/` | Android app (Gradle, `applicationId dev.t1m3.qplayer`, minSdk 26). Host integration in `…/android/`; the UI and lyrics come from the two shared modules above. |
 | `desktop-host/` | Desktop host (Maven): an LWJGL3 + GLFW window rendered with Skija, a switchable `GraphicsBackend` (`GLBackend` / `VulkanBackend`), a disposable render thread, a system tray, and desktop audio (javax.sound + SPI decoders). |
 | [qml4j](https://github.com/TIMER-err/qml4j) | The QML engine. A published dependency, **not** part of this repo. |
 
-`qml4j-core` is resolved from Maven Central; the in-repo `player-core` / `shared-lyric` / `desktop-host` modules are built locally.
+`qml4j-core` is resolved from Maven Central; the in-repo `player-core` / `desktop-host` modules are built locally.
 
 ## Build
 
@@ -68,7 +67,7 @@ Requires JDK 21; building for Android also needs the Android SDK.
 
 ```sh
 # install the shared modules to Maven Local (the Android shell consumes them via mavenLocal)
-mvn -q -pl player-core,shared-lyric -am install
+mvn -q -pl player-core -am install
 
 # build the APK (qml4j-core resolves from Maven Central)
 cd android-shell && ./gradlew :app:assembleDebug
@@ -78,8 +77,8 @@ cd android-shell && ./gradlew :app:assembleDebug
 **Desktop**
 
 ```sh
-# build once (player-core / shared-lyric / desktop-host)
-mvn -q -pl player-core,shared-lyric,desktop-host -am install
+# build once (player-core / desktop-host)
+mvn -q -pl player-core,desktop-host -am install
 
 # run (OpenGL by default)
 mvn -pl desktop-host exec:exec

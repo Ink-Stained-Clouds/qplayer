@@ -14,7 +14,7 @@ CI runner.
 
 ```sh
 # install the shared modules once
-mvn -DskipTests -pl player-core,shared-lyric -am install
+mvn -DskipTests -pl player-core -am install
 # AOT-compile the QML + build the native binary → desktop-host/target/qplayer[.exe]
 mvn -DskipTests -pl desktop-host -Pnative package
 ```

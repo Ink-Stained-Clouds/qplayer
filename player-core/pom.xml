@@ -12,14 +12,23 @@
 
     <artifactId>player-core</artifactId>
     <name>Player Core</name>
-    <description>Platform-neutral player logic (netease, lyrics, audio abstraction, QML bridge) — must stay Android-dexable: no javax.sound, no native deps.</description>
+    <description>Platform-neutral player logic (netease, lyrics, audio abstraction, QML bridge, and the host-drawn lyric page) — must stay Android-dexable: no javax.sound, no platform-native deps. The native Skija .so/.dylib is supplied by each shell.</description>
 
     <dependencies>
-        <!-- QML engine: needed for the reactive Property bridge to QML.
-             skija stays out — player-core touches engine.binding only, not render. -->
+        <!-- QML engine: the reactive Property bridge to QML + Renderer/QmlView used
+             by the host-drawn lyric compositor. -->
         <dependency>
             <groupId>io.github.timer-err</groupId>
             <artifactId>qml4j-core</artifactId>
+        </dependency>
+
+        <!-- Skija (platform-neutral classes) for the fluid lyric backdrop + the
+             per-syllable renderer. The native lib is provided by each shell
+             (skija-android-arm64 / skija-linux-x64 / …). -->
+        <dependency>
+            <groupId>io.github.humbleui</groupId>
+            <artifactId>skija-shared</artifactId>
+            <version>${skija.version}</version>
         </dependency>
 
         <dependency>

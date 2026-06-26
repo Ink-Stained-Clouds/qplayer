@@ -84,16 +84,11 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Player core: netease + audio abstraction + QML bridge + the host-drawn
+             lyric page (fluid backdrop + per-syllable renderer + compositor). -->
         <dependency>
             <groupId>dev.t1m3.qplayer</groupId>
             <artifactId>player-core</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <!-- Shared host-drawn lyric page + frame compositor (pure Skija). -->
-        <dependency>
-            <groupId>dev.t1m3.qplayer</groupId>
-            <artifactId>shared-lyric</artifactId>
             <version>${project.version}</version>
         </dependency>
 
