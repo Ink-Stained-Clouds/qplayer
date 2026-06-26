@@ -40,8 +40,12 @@ points `skija.library.path` / `org.lwjgl.librarypath` at them.
 
 `.github/workflows/release.yml` is the unified release pipeline: a `v*` tag push
 builds the Android APK and the desktop native image on an `ubuntu` / `windows` /
-`macos-13` (intel) / `macos-14` (arm64) matrix in parallel, and attaches every
-artifact to the same GitHub Release.
+`macos-14` (Apple Silicon) matrix in parallel, and attaches every artifact to the
+same GitHub Release.
+
+> **Intel Mac**: GitHub retired the free Intel `macos-13` runner and native-image
+> can't cross-compile, so CI ships an Apple-Silicon `.dmg` only. Intel users build
+> locally with `package-macos.sh` (it auto-selects the natives for the host arch).
 
 ## Status
 
