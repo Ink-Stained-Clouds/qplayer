@@ -11,10 +11,11 @@ import org.lwjgl.glfw.GLFW;
 /**
  * Translates GLFW input (fired on the main thread) into qml4j dispatch calls, by
  * marshalling each event onto the render thread — the desktop analogue of the
- * Android view's {@code queueEvent(...)}. Pointer coordinates are passed in
- * logical units: under the standard framebuffer = window×contentScale relation,
- * the QML root (sized {@code framebuffer / uiScale}) matches GLFW's window/screen
- * coordinate space, so cursor positions map 1:1.
+ * Android view's {@code queueEvent(...)}. Pointer coordinates are converted to
+ * logical units (physical ÷ uiScale) before dispatch, matching the QML root's
+ * coordinate space (framebuffer ÷ uiScale). On Windows Per-Monitor DPI V2,
+ * GLFW delivers cursor positions in physical pixels; dividing by the content
+ * scale mirrors what the Android host does with {@code ev.getX() / uiScale}.
  *
  * <p>Owns the host-drawn lyric column's drag gesture (grab / slop / scroll /
  * tap-to-seek), mirroring the Android shell; all gesture state is mutated only
@@ -59,12 +60,18 @@ final class InputBridge {
         GLFW.glfwSetCursorPosCallback(window, (w, x, y) -> {
             cursorX = x;
             cursorY = y;
-            final float fx = (float) x, fy = (float) y;
+            // GLFW on Windows (Per-Monitor DPI V2) delivers cursor positions in
+            // physical pixels. qml4j expects logical (dp) coordinates — the same
+            // space as the QML root (fbW/uiScale × fbH/uiScale). Divide here so
+            // every downstream consumer (onMove, tickScroll) gets logical units.
+            float s = win.uiScale();
+            final float fx = (float) (x / s), fy = (float) (y / s);
             win.postRenderTask(() -> onMove(fx, fy));
         });
         GLFW.glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
             if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) return;
-            final float fx = (float) cursorX, fy = (float) cursorY;
+            float s = win.uiScale();
+            final float fx = (float) (cursorX / s), fy = (float) (cursorY / s);
             if (action == GLFW.GLFW_PRESS) win.postRenderTask(() -> onPress(fx, fy));
             else if (action == GLFW.GLFW_RELEASE) win.postRenderTask(() -> onRelease(fx, fy));
         });
@@ -123,7 +130,8 @@ final class InputBridge {
         if (Math.abs(pendingScrollY - stepY) < 0.002) stepY = pendingScrollY;
         pendingScrollX -= stepX;
         pendingScrollY -= stepY;
-        v.dispatchWheel((float) cursorX, (float) cursorY, (float) stepX, (float) stepY);
+        float s = win.uiScale();
+        v.dispatchWheel((float) (cursorX / s), (float) (cursorY / s), (float) stepX, (float) stepY);
     }
 
     // --- render-thread handlers ----------------------------------------------
