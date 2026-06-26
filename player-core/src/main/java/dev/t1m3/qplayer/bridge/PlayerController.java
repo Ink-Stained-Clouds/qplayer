@@ -94,6 +94,9 @@ public final class PlayerController {
     // backend.isPlaying() is briefly false right after play() — reporting that to the
     // media session shows a stale "paused". The session uses this intent instead.
     private volatile boolean playingIntent = false;
+    // Set by restoreDisplay(): the queue is populated but the backend hasn't loaded
+    // anything yet. toggle() detects this and calls playAt() instead of resume().
+    private volatile boolean needsReplay = false;
     private volatile PlaybackListener playbackListener;
 
     /** Host hook (e.g. the Android foreground service) notified on the main thread
@@ -207,12 +210,18 @@ public final class PlayerController {
     // --- Local library ----------------------------------------------------
     public final Property<List<Track>> tracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Integer> libraryCount = new Property<>(0);
+    /** Offline-search results (local library match when network unavailable). */
+    public final Property<List<Track>> localSearchResults = new Property<>(Collections.<Track>emptyList());
 
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
     /** Hot search keywords shown when search input is empty. */
     public final Property<List<String>> hotSearches = new Property<>(Collections.<String>emptyList());
+    /** Recent search history (most-recent first, max 20, persisted to disk). */
+    public final Property<List<String>> searchHistory = new Property<>(Collections.<String>emptyList());
+    private final List<String> historyList = new ArrayList<>();
+    private static final int HISTORY_MAX = 20;
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
@@ -293,6 +302,7 @@ public final class PlayerController {
             loggedIn.set(true);
             refreshLogin();
         }
+        worker.submit(this::loadSearchHistory);
     }
 
     /** Platform color extractor for Monet seeds; set once at startup. */
@@ -737,6 +747,32 @@ public final class PlayerController {
 
     // --- Playback control -------------------------------------------------
 
+    /**
+     * Restore the last-played track from persisted state without starting playback.
+     * Sets all mini-player display properties so the UI looks correct on startup.
+     * The first {@link #toggle()} call after this triggers the full resolve+play flow.
+     */
+    public void restoreDisplay(Track t, long posMs) {
+        if (t == null) return;
+        queue.clear();
+        queue.add(t);
+        queueTracks.set(new ArrayList<>(queue));
+        playIndex = 0;
+        needsReplay = true;
+        post(() -> {
+            index.set(0);
+            title.set(orEmpty(t.title));
+            artist.set(orEmpty(t.artist));
+            album.set(orEmpty(t.album));
+            coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
+            durationMs.set(t.durationMs > 0 ? t.durationMs : 0L);
+            positionMs.set(posMs > 0 ? posMs : 0L);
+            currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
+            currentLikeable.set(t.neteaseId != 0);
+        });
+        updateCover(t, 0);
+    }
+
     /** Play local library starting at {@code i}. */
     public void play(int i) {
         if (i < 0 || i >= library.size()) return;
@@ -746,6 +782,101 @@ public final class PlayerController {
     /** Queue a netease song-list and start at {@code i}. */
     public void playSearchResult(int i) {
         playSongList(searchResults.peek(), i);
+    }
+
+    /** Play a track from the offline local-search results. */
+    public void playLocalSearchResult(int i) {
+        List<Track> r = localSearchResults.peek();
+        if (r == null || i < 0 || i >= r.size()) return;
+        playQueue(new ArrayList<>(r), i);
+    }
+
+    /** Search the local library for {@code keyword} and publish to {@link #localSearchResults}. */
+    public void localSearch(String keyword) {
+        String kl = keyword.trim().toLowerCase();
+        List<Track> matches = new ArrayList<>();
+        for (Track t : library) {
+            if (fieldContains(t.title, kl) || fieldContains(t.artist, kl) || fieldContains(t.album, kl)) {
+                matches.add(t);
+                if (matches.size() >= 30) break;
+            }
+        }
+        localSearchResults.set(matches);
+    }
+
+    private static boolean fieldContains(String field, String kl) {
+        return field != null && field.toLowerCase().contains(kl);
+    }
+
+    // --- Search history ---------------------------------------------------
+
+    public void addSearchHistory(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        String kw = keyword.trim();
+        synchronized (historyList) {
+            historyList.remove(kw);
+            historyList.add(0, kw);
+            if (historyList.size() > HISTORY_MAX) historyList.remove(historyList.size() - 1);
+            List<String> snap = new ArrayList<>(historyList);
+            post(() -> searchHistory.set(snap));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    public void removeSearchHistory(int i) {
+        synchronized (historyList) {
+            if (i < 0 || i >= historyList.size()) return;
+            historyList.remove(i);
+            List<String> snap = new ArrayList<>(historyList);
+            post(() -> searchHistory.set(snap));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    public void clearSearchHistory() {
+        synchronized (historyList) {
+            historyList.clear();
+            post(() -> searchHistory.set(Collections.<String>emptyList()));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    private void saveSearchHistory() {
+        try {
+            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
+            f.getParentFile().mkdirs();
+            StringBuilder sb = new StringBuilder();
+            synchronized (historyList) {
+                for (String s : historyList) sb.append(s).append('\n');
+            }
+            java.nio.file.Files.write(f.toPath(),
+                    sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable e) {
+            Logger.warn("saveSearchHistory failed: {}", e.getMessage());
+        }
+    }
+
+    private void loadSearchHistory() {
+        try {
+            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
+            if (!f.exists()) return;
+            byte[] bytes = java.nio.file.Files.readAllBytes(f.toPath());
+            String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            synchronized (historyList) {
+                historyList.clear();
+                for (String line : content.split("\n")) {
+                    String t = line.trim();
+                    if (!t.isEmpty()) {
+                        historyList.add(t);
+                        if (historyList.size() >= HISTORY_MAX) break;
+                    }
+                }
+                List<String> snap = new ArrayList<>(historyList);
+                post(() -> searchHistory.set(snap));
+            }
+        } catch (Throwable e) {
+            Logger.warn("loadSearchHistory failed: {}", e.getMessage());
+        }
     }
 
     public void playRecommendation(int i) {
@@ -1019,6 +1150,11 @@ public final class PlayerController {
                 playingIntent = false;
                 post(() -> playing.set(false));
             } else {
+                if (needsReplay && playIndex >= 0) {
+                    needsReplay = false;
+                    playAt(playIndex);
+                    return;
+                }
                 backend.resume();
                 playingIntent = true;
                 post(() -> playing.set(true));
@@ -1296,6 +1432,7 @@ public final class PlayerController {
         // Fast path: check cache on the calling (render) thread.
         CacheEntry entry = searchCache.get(key);
         if (entry != null && !entry.isExpired()) {
+            localSearchResults.set(Collections.<Track>emptyList());
             searchResults.set(entry.songs);
             resultCount.set(entry.songs.size());
             Logger.info("search cache hit: {}", key);
@@ -1308,6 +1445,7 @@ public final class PlayerController {
                 CacheEntry existing = searchCache.get(key);
                 if (existing != null && !existing.isExpired()) {
                     post(() -> {
+                        localSearchResults.set(Collections.<Track>emptyList());
                         searchResults.set(existing.songs);
                         resultCount.set(existing.songs.size());
                     });
@@ -1321,11 +1459,23 @@ public final class PlayerController {
                 buildSongThumbs(r, "128");
                 searchCache.put(key, new CacheEntry(r));
                 post(() -> {
+                    localSearchResults.set(Collections.<Track>emptyList());
                     searchResults.set(r);
                     resultCount.set(r.size());
                 });
             } catch (Throwable e) {
-                Logger.warn("search failed: {}", e.getMessage());
+                Logger.warn("search failed (no network), falling back to cache+local: {}", e.getMessage());
+                // Use an expired/stale cache entry if one exists for this keyword.
+                CacheEntry stale = searchCache.get(key);
+                if (stale != null && !stale.songs.isEmpty()) {
+                    List<NeteaseSong> staleSongs = stale.songs;
+                    post(() -> {
+                        searchResults.set(staleSongs);
+                        resultCount.set(staleSongs.size());
+                    });
+                } else {
+                    post(() -> localSearch(key));
+                }
             }
         });
     }

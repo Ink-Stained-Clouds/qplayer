@@ -84,9 +84,10 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.topMargin: 18
-            wavy: true
-            visible: player.lyricSlide > 0.001
+            wavy: settings.lyricWavy
             value: player.lyricProgress
+            activeColor: "#FFFFFFFF"
+            trackColor: "#33FFFFFF"
         }
         MouseArea {
             anchors.fill: progress

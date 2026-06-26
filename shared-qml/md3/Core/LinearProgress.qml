@@ -6,10 +6,14 @@ Item {
     property real value: 0.0
     property bool indeterminate: false
     property bool wavy: false
-    
+
+    // Override to use custom colours (e.g. white on the dark lyric backdrop).
+    property color activeColor: _colors.primary
+    property color trackColor: _colors.surfaceContainerHighest
+
     implicitWidth: 200
     implicitHeight: wavy ? 16 : 4
-    
+
     property var _colors: Theme.color
     
     // Animation control
@@ -27,7 +31,7 @@ Item {
         id: track
         anchors.fill: parent
         visible: !control.wavy
-        color: _colors.surfaceContainerHighest
+        color: control.trackColor
         radius: height / 2
         clip: true
         
@@ -36,7 +40,7 @@ Item {
             visible: !control.indeterminate
             height: parent.height
             width: parent.width * control._visualValue
-            color: _colors.primary
+            color: control.activeColor
             radius: height / 2
         }
         
@@ -49,7 +53,7 @@ Item {
             Rectangle {
                 id: bar1
                 height: parent.height
-                color: _colors.primary
+                color: control.activeColor
                 radius: height / 2
                 
                 SequentialAnimation {
@@ -70,7 +74,7 @@ Item {
             Rectangle {
                 id: bar2
                 height: parent.height
-                color: _colors.primary
+                color: control.activeColor
                 radius: height / 2
                 
                 SequentialAnimation {
@@ -101,8 +105,8 @@ Item {
         renderStrategy: Canvas.Threaded
 
         // Trigger repaint when dependencies change
-        property color trackColor: control._colors.surfaceContainerHighest
-        property color activeColor: control._colors.primary
+        property color trackColor: control.trackColor
+        property color activeColor: control.activeColor
         // Raw value, NOT _visualValue: its Behavior restarts every frame when the
         // caller updates value per-frame (smooth source), which freezes it. Callers
         // that want easing should smooth the value they pass in.

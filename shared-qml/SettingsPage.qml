@@ -413,6 +413,32 @@ Rectangle {
                             }
                         }
 
+                        // Progress bar style: wavy Canvas or plain Rectangle.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: "进度条样式"
+                                    color: Theme.color.onSurfaceColor
+                                    font.family: Theme.typography.bodyLarge.family
+                                    font.pixelSize: Theme.typography.bodyLarge.size
+                                }
+                                Text {
+                                    text: "开启：波浪线 / 关闭：直线"
+                                    color: Theme.color.onSurfaceVariantColor
+                                    font.family: Theme.typography.bodySmall.family
+                                    font.pixelSize: Theme.typography.bodySmall.size
+                                }
+                            }
+                            Switch {
+                                checked: settings.lyricWavy
+                                onClicked: settings.lyricWavy = checked
+                            }
+                        }
+
                         // Fluid background mode: dynamic (animated) or static
                         // (rendered once + cached, lighter on the GPU). Label + desc
                         // stacked, radios on their own row so the desc has full width.

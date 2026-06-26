@@ -42,6 +42,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<Boolean> lyricScale = new Property<>(Boolean.TRUE);
     public final Property<Boolean> lyricGlow = new Property<>(Boolean.TRUE);
     public final Property<Boolean> lyricBgStatic = new Property<>(Boolean.FALSE);
+    public final Property<Boolean> lyricWavy = new Property<>(Boolean.TRUE);
 
     public final Property<Object> maxCacheSizeMB = new Property<>(200);
 
@@ -127,6 +128,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         lyricScale.set(getBool("lyricScale", true));
         lyricGlow.set(getBool("lyricGlow", true));
         lyricBgStatic.set(getBool("lyricBgStatic", false));
+        lyricWavy.set(getBool("lyricWavy", true));
         applyLyricConfig();
         lyricFontSize.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -161,6 +163,10 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         lyricBgStatic.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             put("lyricBgStatic", Boolean.TRUE.equals(p.peek()));
+        });
+        lyricWavy.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("lyricWavy", Boolean.TRUE.equals(p.peek()));
         });
 
         maxCacheSizeMB.set(getInt("maxCacheSizeMB", 200));

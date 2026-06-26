@@ -206,7 +206,12 @@ public final class PlaybackService extends Service {
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
                 .setColor(accentColor)
-                .setColorized(true);
+                .setColorized(true)
+                // When the user swipes away a dismissible (paused) notification, stop the service
+                // so the process can be reaped. Without this the service keeps running silently
+                // after the notification is gone, leaving stale state when the app reopens.
+                .setDeleteIntent(MediaButtonReceiver.buildMediaButtonPendingIntent(this,
+                        PlaybackStateCompat.ACTION_STOP));
         if (art != null) b.setLargeIcon(art);
 
         b.addAction(new NotificationCompat.Action(android.R.drawable.ic_media_previous, "prev",

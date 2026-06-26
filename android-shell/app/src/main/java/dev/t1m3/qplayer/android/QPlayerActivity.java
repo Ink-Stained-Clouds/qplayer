@@ -192,6 +192,7 @@ public final class QPlayerActivity extends Activity {
         applySystemBars(settings.resolvedDarkValue());
 
         controller.loadHome();
+        restoreLastTrack();
         // The audio-permission dialog is deferred to onSceneReady: requesting it
         // here pops a system dialog during the QML compile, and the resulting
         // pause/resume + the concurrent MediaStore scan racing the dex compile
@@ -310,14 +311,62 @@ public final class QPlayerActivity extends Activity {
     }
 
     /** Playback state / track changed (main thread): poke the foreground service to
-     *  refresh the media session + notification. */
+     *  refresh the media session + notification, and persist the current track so it
+     *  can be restored when the app is re-launched from a cold start. */
     private void onPlaybackChanged() {
+        saveTrackState();
         try {
             Intent i = new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_REFRESH);
             androidx.core.content.ContextCompat.startForegroundService(this, i);
         } catch (Throwable e) {
             dev.t1m3.qplayer.util.Logger.error("startForegroundService failed: {}", e.toString());
         }
+    }
+
+    private static final String PREFS = "qplayer_state";
+
+    /** Persist the current track to SharedPreferences so it survives process death. */
+    private void saveTrackState() {
+        dev.t1m3.qplayer.model.Track t = controller.currentTrack();
+        if (t == null || (t.title == null || t.title.isEmpty())) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("last_source",     t.source != null ? t.source.name() : "NETEASE")
+                .putLong  ("last_netease_id",  t.neteaseId)
+                .putString("last_file_path",   t.filePath   != null ? t.filePath   : "")
+                .putString("last_content_uri", t.contentUri != null ? t.contentUri : "")
+                .putString("last_title",       t.title      != null ? t.title      : "")
+                .putString("last_artist",      t.artist     != null ? t.artist     : "")
+                .putString("last_album",       t.album      != null ? t.album      : "")
+                .putString("last_cover_url",   t.coverUrl   != null ? t.coverUrl   : "")
+                .putLong  ("last_duration_ms", t.durationMs)
+                .putLong  ("last_position_ms", controller.positionMs.peek())
+                .apply();
+    }
+
+    /** On cold start: read SharedPreferences and pre-populate the mini-player display
+     *  without starting playback. Skipped if the controller already has a track loaded
+     *  (Activity recreation / PiP re-entry with a still-alive process). */
+    private void restoreLastTrack() {
+        if (!controller.title.peek().isEmpty()) return; // already has state
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String title = prefs.getString("last_title", "");
+        if (title.isEmpty()) return; // nothing saved yet
+        dev.t1m3.qplayer.model.Track t = new dev.t1m3.qplayer.model.Track();
+        String src = prefs.getString("last_source", "NETEASE");
+        t.source = "LOCAL".equals(src) ? dev.t1m3.qplayer.model.Track.Source.LOCAL
+                                       : dev.t1m3.qplayer.model.Track.Source.NETEASE;
+        t.neteaseId  = prefs.getLong  ("last_netease_id",  0L);
+        t.filePath   = prefs.getString("last_file_path",   null);
+        t.contentUri = prefs.getString("last_content_uri", null);
+        if (t.contentUri != null && t.contentUri.isEmpty()) t.contentUri = null;
+        if (t.filePath   != null && t.filePath.isEmpty())   t.filePath   = null;
+        t.title      = title;
+        t.artist     = prefs.getString("last_artist",      "");
+        t.album      = prefs.getString("last_album",       "");
+        t.coverUrl   = prefs.getString("last_cover_url",   "");
+        t.durationMs = prefs.getLong  ("last_duration_ms", 0L);
+        long posMs   = prefs.getLong  ("last_position_ms", 0L);
+        controller.restoreDisplay(t, posMs);
     }
 
     /** Android 13+ needs runtime POST_NOTIFICATIONS for the media notification to show.

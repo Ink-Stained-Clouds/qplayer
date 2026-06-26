@@ -53,6 +53,8 @@ public final class AppSettings extends QObject
     public final Property<Boolean> lyricGlow = new Property<>(Boolean.TRUE);
     /** Static fluid background (render once + cache) vs. animated. */
     public final Property<Boolean> lyricBgStatic = new Property<>(Boolean.FALSE);
+    /** Wavy (Canvas) progress bar on the lyric page vs. plain Rectangle. */
+    public final Property<Boolean> lyricWavy = new Property<>(Boolean.TRUE);
 
     // Cache settings (Object-typed: QML numeric writes arrive as Long).
     /** Maximum disk cache size in MB (audio + lyrics + images). 0 = unlimited. */
@@ -185,6 +187,7 @@ public final class AppSettings extends QObject
         lyricScale.set(prefs.getBoolean("lyricScale", true));
         lyricGlow.set(prefs.getBoolean("lyricGlow", true));
         lyricBgStatic.set(prefs.getBoolean("lyricBgStatic", false));
+        lyricWavy.set(prefs.getBoolean("lyricWavy", true));
         applyLyricConfig();
         lyricFontSize.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -219,6 +222,10 @@ public final class AppSettings extends QObject
         lyricBgStatic.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             prefs.edit().putBoolean("lyricBgStatic", Boolean.TRUE.equals(p.peek())).apply();
+        });
+        lyricWavy.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            prefs.edit().putBoolean("lyricWavy", Boolean.TRUE.equals(p.peek())).apply();
         });
 
         // Cache settings.

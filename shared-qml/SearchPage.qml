@@ -29,21 +29,16 @@ Item {
                 onTextChanged: {
                     if (text.length > 0) player.search(text)
                 }
-                onAccepted: player.search(query.text)
+                onAccepted: { player.search(query.text); player.addSearchHistory(query.text) }
             }
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "filled"; icon: "search"
-                onClicked: player.search(query.text)
+                onClicked: { player.search(query.text); player.addSearchHistory(query.text) }
             }
         }
 
-        // --- Hot searches (shown when input is empty) ---
-        // Explicit index-positioned rows in a plain Item, NOT a Column positioner:
-        // qml4j lays Repeater delegates out by their own x/y, it does not flow
-        // dynamically-created children through a positioner (same idiom as HomePage /
-        // VirtualSongList). A Column here left the rows unpositioned/zero-width — the
-        // "hot search shows nothing" bug.
+        // --- History + Hot searches (shown when input is empty) ---
         Item {
             id: hotArea
             Layout.fillWidth: true
@@ -52,15 +47,109 @@ Item {
 
             property int rowH: 44
             property int hotCount: player.hotSearches ? player.hotSearches.length : 0
+            property int histCount: player.searchHistory ? player.searchHistory.length : 0
+            // y-offset where hot searches begin (below history section if any)
+            property int hotY: histCount > 0 ? (56 + histCount * rowH + 16) : 0
 
             Flickable {
                 anchors.fill: parent
                 clip: true
                 contentWidth: width
-                contentHeight: 56 + hotArea.hotCount * hotArea.rowH + 16
+                contentHeight: hotArea.hotY + 56 + hotArea.hotCount * hotArea.rowH + 16
 
+                // ---- Search history ----
                 Text {
                     x: 16; y: 16
+                    visible: hotArea.histCount > 0
+                    text: "搜索历史"
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                    color: Theme.color.onSurfaceColor
+                }
+                Text {
+                    x: parent.width - 60; y: 22
+                    visible: hotArea.histCount > 0
+                    text: "清除"
+                    font.pixelSize: 14
+                    color: Theme.color.primary
+                    MouseArea { anchors.fill: parent; anchors.margins: -8; onClicked: player.clearSearchHistory() }
+                }
+
+                Item {
+                    x: 0; y: 56
+                    visible: hotArea.histCount > 0
+                    width: hotArea.width
+                    height: hotArea.histCount * hotArea.rowH
+
+                    Repeater {
+                        model: player.searchHistory
+
+                        Item {
+                            width: hotArea.width
+                            height: hotArea.rowH
+                            y: index * hotArea.rowH
+
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                radius: 8
+                                color: hha.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+                            }
+
+                            Row {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 24
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 8
+                                Text {
+                                    text: "history"
+                                    font.family: Theme.iconFont.name
+                                    font.pixelSize: 20
+                                    color: Theme.color.onSurfaceVariantColor
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: modelData || ""
+                                    font.pixelSize: 15
+                                    color: Theme.color.onSurfaceColor
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            // Delete button
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "close"
+                                font.family: Theme.iconFont.name
+                                font.pixelSize: 18
+                                color: Theme.color.onSurfaceVariantColor
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.margins: -8
+                                    onClicked: player.removeSearchHistory(index)
+                                }
+                            }
+
+                            MouseArea {
+                                id: hha
+                                anchors.fill: parent
+                                anchors.rightMargin: 52
+                                onClicked: {
+                                    query.text = modelData
+                                    player.search(modelData)
+                                    player.addSearchHistory(modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- Hot searches ----
+                Text {
+                    x: 16; y: hotArea.hotY + 16
                     text: "热门搜索"
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
@@ -68,7 +157,7 @@ Item {
                 }
 
                 Item {
-                    x: 0; y: 56
+                    x: 0; y: hotArea.hotY + 56
                     width: hotArea.width
                     height: hotArea.hotCount * hotArea.rowH
 
@@ -93,7 +182,6 @@ Item {
                                 anchors.leftMargin: 24
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 8
-
                                 Text {
                                     text: "search"
                                     font.family: Theme.iconFont.name
@@ -115,6 +203,7 @@ Item {
                                 onClicked: {
                                     query.text = modelData
                                     player.search(modelData)
+                                    player.addSearchHistory(modelData)
                                 }
                             }
                         }
@@ -124,13 +213,45 @@ Item {
         }
 
         // --- Search results (shown when input is not empty) ---
-        VirtualSongList {
-            id: results
+        // Network results take priority; local results are shown as fallback when
+        // the network search fails (player.localSearchResults becomes non-empty).
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: query.text.length > 0
-            list: player.searchResults
-            onActivated: player.playSearchResult(results.activatedIndex)
+
+            VirtualSongList {
+                id: results
+                anchors.fill: parent
+                visible: player.searchResults && player.searchResults.length > 0
+                list: player.searchResults
+                onActivated: player.playSearchResult(results.activatedIndex)
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                visible: !(player.searchResults && player.searchResults.length > 0) && player.localSearchResults && player.localSearchResults.length > 0
+                spacing: 0
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.topMargin: 12
+                    Layout.bottomMargin: 4
+                    text: "本地搜索结果（无网络）"
+                    font.pixelSize: 13
+                    color: Theme.color.onSurfaceVariantColor
+                }
+
+                VirtualSongList {
+                    id: localResults
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    list: player.localSearchResults
+                    isLocal: true
+                    onActivated: player.playLocalSearchResult(localResults.activatedIndex)
+                }
+            }
         }
     }
 }
