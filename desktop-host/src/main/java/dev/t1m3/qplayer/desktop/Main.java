@@ -30,6 +30,13 @@ import java.util.List;
 public final class Main {
 
     public static void main(String[] args) {
+        // In a native image there is no JDK home; javax.sound's provider loader throws
+        // "Can't find java.home" reading the optional lib/sound.properties. Point it at
+        // a real dir so the (absent) file is simply skipped.
+        if (System.getProperty("java.home") == null) {
+            System.setProperty("java.home", System.getProperty("user.dir", "/tmp"));
+        }
+
         ResourceLoader resources = new ClasspathResourceLoader();
 
         // Platform backends (the desktop impls already exist).
@@ -59,7 +66,15 @@ public final class Main {
         if (qmlBytes == null) throw new IllegalStateException("Main.qml not found on classpath");
         String qml = new String(qmlBytes, StandardCharsets.UTF_8);
 
-        QmlEngine engine = new QmlEngine();
+        // In a GraalVM native image (or with -Dqplayer.aot=true) load the build-time
+        // AOT-compiled QML classes instead of generating them at runtime — the
+        // no-runtime-codegen path native-image's closed world requires (paired with
+        // interpreted Rhino, baked via -Dqml4j.rhino.opt=-1 at build time).
+        boolean nativeImage = System.getProperty("java.vm.name", "").contains("Substrate");
+        boolean aot = nativeImage || "true".equals(System.getProperty("qplayer.aot"));
+        QmlEngine engine = aot
+                ? new QmlEngine(new dev.t1m3.qplayer.desktop.aot.PrecompiledBackend())
+                : new QmlEngine();
         DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings);
 
         // Playback control runs on the main event loop (alive even while the render
@@ -87,6 +102,35 @@ public final class Main {
             }, "qplayer-tray-init");
             trayThread.setDaemon(true);
             trayThread.start();
+        }
+
+        // Synthetic interaction exercise (-Dqplayer.exercise=true): drives playback,
+        // the lyric page (wavy-progress Canvas) and loading states so a native-image
+        // tracing-agent run captures the audio-provider + Context2D reflection that a
+        // passive headless run never touches.
+        if ("true".equals(System.getProperty("qplayer.exercise"))) {
+            Thread ex = new Thread(() -> {
+                try {
+                    Thread.sleep(3000);
+                    window.postRenderTask(controller::loadMyPlaylists); // loading indicator
+                    Thread.sleep(1500);
+                    window.postRenderTask(controller::loadRecent);
+                    Thread.sleep(1500);
+                    window.postRenderTask(() -> controller.playRecommendation(0)); // audio path
+                    Thread.sleep(3500);
+                    window.postRenderTask(() -> controller.setLyricsOpen(true)); // wavy Canvas
+                    Thread.sleep(2500);
+                    window.postRenderTask(controller::toggle);
+                    Thread.sleep(1500);
+                    window.postRenderTask(controller::next);
+                    Thread.sleep(2000);
+                    window.postRenderTask(() -> controller.setLyricsOpen(false));
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignored) {
+                }
+            }, "qplayer-exercise");
+            ex.setDaemon(true);
+            ex.start();
         }
 
         // Self-test for the minimize→restore GPU teardown/respawn path

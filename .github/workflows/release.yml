@@ -1,0 +1,74 @@
+name: Release (native desktop)
+
+# Builds the GraalVM native-image desktop app for Linux / Windows / macOS (intel +
+# apple-silicon) and attaches the packaged artifacts to a GitHub Release.
+# native-image can't cross-compile, so each platform builds on its own runner.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            package: bash desktop-host/dist/package-linux.sh
+            artifact: desktop-host/target/QPlayer-x86_64.AppImage
+          - os: windows-latest
+            name: windows-x64
+            package: powershell -ExecutionPolicy Bypass -File desktop-host/dist/package-windows.ps1
+            artifact: desktop-host/target/QPlayer-windows-x64.zip
+          - os: macos-13            # intel
+            name: macos-x64
+            package: bash desktop-host/dist/package-macos.sh
+            artifact: desktop-host/target/QPlayer.dmg
+          - os: macos-14            # apple silicon
+            name: macos-arm64
+            package: bash desktop-host/dist/package-macos.sh
+            artifact: desktop-host/target/QPlayer.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM 21
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Install shared modules to local Maven repo
+        run: mvn -B -DskipTests -pl player-core,shared-lyric -am install
+
+      - name: Build native image
+        run: mvn -B -DskipTests -pl desktop-host -Pnative package
+
+      - name: Package
+        run: ${{ matrix.package }}
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          ext="${{ matrix.artifact }}"; ext="${ext##*.}"
+          cp "${{ matrix.artifact }}" "out/QPlayer-${{ matrix.name }}.${ext}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QPlayer-${{ matrix.name }}
+          path: out/*
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

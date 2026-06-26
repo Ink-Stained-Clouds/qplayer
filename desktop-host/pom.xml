@@ -16,9 +16,12 @@
 
     <properties>
         <lwjgl.version>3.3.3</lwjgl.version>
-        <!-- The native classifier for THIS build host. skija-linux-x64 + LWJGL
-             natives-linux are the dev target; a windows/macos build flips this. -->
+        <!-- The native classifiers for THIS build host. Defaults target Linux x64;
+             the os-activated profiles below flip them for Windows / macOS (intel &
+             apple-silicon). native-image can't cross-compile, so each platform's
+             release is built on its own runner with the matching natives. -->
         <lwjgl.natives>natives-linux</lwjgl.natives>
+        <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
         <dorkbox.systemtray.version>4.4</dorkbox.systemtray.version>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
@@ -28,6 +31,11 @@
 
     <build>
         <resources>
+            <!-- Keep the default resource dir (holds META-INF/native-image/** config)
+                 — declaring <resources> otherwise replaces it. -->
+            <resource>
+                <directory>${project.basedir}/src/main/resources</directory>
+            </resource>
             <!-- Mount the shared QML tree (Main.qml + app pages + md3/Core + fonts)
                  onto the classpath so ClasspathResourceLoader serves it exactly like
                  the Android shell's merged assets. -->
@@ -96,7 +104,7 @@
         </dependency>
         <dependency>
             <groupId>io.github.humbleui</groupId>
-            <artifactId>skija-linux-x64</artifactId>
+            <artifactId>skija-${qplayer.skija.platform}</artifactId>
             <version>${skija.version}</version>
             <scope>runtime</scope>
         </dependency>
@@ -170,4 +178,91 @@
             <version>1.0.3.3</version>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!-- Per-OS native classifiers (auto-activated by the build host). -->
+        <profile>
+            <id>os-windows</id>
+            <activation><os><family>windows</family></os></activation>
+            <properties>
+                <lwjgl.natives>natives-windows</lwjgl.natives>
+                <qplayer.skija.platform>windows-x64</qplayer.skija.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>os-macos-x64</id>
+            <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+            <properties>
+                <lwjgl.natives>natives-macos</lwjgl.natives>
+                <qplayer.skija.platform>macos-x64</qplayer.skija.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>os-macos-arm64</id>
+            <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+            <properties>
+                <lwjgl.natives>natives-macos-arm64</lwjgl.natives>
+                <qplayer.skija.platform>macos-arm64</qplayer.skija.platform>
+            </properties>
+        </profile>
+
+        <!-- `mvn -Pnative package` (run under a GraalVM JDK): AOT-compile the QML to
+             classes, then build the native image. Produces target/qplayer (+ the JDK
+             native libs alongside). Packaging into AppImage/zip/dmg is done by the
+             scripts under dist/ and the GitHub Actions release workflow. -->
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <!-- 1) AOT-compile the QML graph into target/classes (forked JVM;
+                            AotCompile halts itself, so Maven keeps going). -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>aot-compile-qml</id>
+                                <phase>process-classes</phase>
+                                <goals><goal>exec</goal></goals>
+                                <configuration>
+                                    <executable>java</executable>
+                                    <arguments>
+                                        <argument>-classpath</argument>
+                                        <classpath/>
+                                        <argument>dev.t1m3.qplayer.desktop.aot.AotCompile</argument>
+                                        <argument>${project.build.outputDirectory}</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- 2) Build the native image. Build args + reflection/JNI/resource
+                            metadata come from META-INF/native-image/. -->
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.3</version>
+                        <extensions>true</extensions>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals><goal>compile-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>qplayer</imageName>
+                            <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
+                            <buildArgs>
+                                <buildArg>-J-Xmx7g</buildArg>
+                                <buildArg>-H:NumberOfThreads=4</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

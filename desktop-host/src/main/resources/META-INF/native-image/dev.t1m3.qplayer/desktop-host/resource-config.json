@@ -1,0 +1,401 @@
+{
+  "resources":{
+  "includes":[{
+    "pattern":".*\\.otf$"
+  }, {
+    "pattern":".*\\.qml$"
+  }, {
+    "pattern":".*\\.ttf$"
+  }, {
+    "pattern":".*qmldir$"
+  }, {
+    "pattern":"\\QAccountPage.qml\\E"
+  }, {
+    "pattern":"\\QBottomNav.qml\\E"
+  }, {
+    "pattern":"\\QCoverImage.qml\\E"
+  }, {
+    "pattern":"\\QDate.qml\\E"
+  }, {
+    "pattern":"\\QEasing.qml\\E"
+  }, {
+    "pattern":"\\QFont.qml\\E"
+  }, {
+    "pattern":"\\QHomePage.qml\\E"
+  }, {
+    "pattern":"\\QLibraryPage.qml\\E"
+  }, {
+    "pattern":"\\QLocalPage.qml\\E"
+  }, {
+    "pattern":"\\QLoginDialog.qml\\E"
+  }, {
+    "pattern":"\\QLyricOverlay.qml\\E"
+  }, {
+    "pattern":"\\QMETA-INF/linux/x64/org/lwjgl/glfw/libglfw.so.sha1\\E"
+  }, {
+    "pattern":"\\QMETA-INF/linux/x64/org/lwjgl/liblwjgl.so.sha1\\E"
+  }, {
+    "pattern":"\\QMETA-INF/linux/x64/org/lwjgl/opengl/liblwjgl_opengl.so.sha1\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/java.lang.System$LoggerFinder\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/java.net.spi.InetAddressResolverProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/java.net.spi.URLStreamHandlerProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/java.time.zone.ZoneRulesProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/java.util.spi.ResourceBundleControlProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.imageio.spi.ImageInputStreamSpi\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.imageio.spi.ImageOutputStreamSpi\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.imageio.spi.ImageReaderSpi\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.imageio.spi.ImageTranscoderSpi\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.imageio.spi.ImageWriterSpi\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.sound.sampled.spi.AudioFileReader\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.sound.sampled.spi.FormatConversionProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/javax.sound.sampled.spi.MixerProvider\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.mozilla.javascript.RegExpLoader\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.mozilla.javascript.config.RhinoPropertiesLoader\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.mozilla.javascript.xml.XMLLoader\\E"
+  }, {
+    "pattern":"\\QMain.qml\\E"
+  }, {
+    "pattern":"\\QMath.qml\\E"
+  }, {
+    "pattern":"\\QMiniPlayer.qml\\E"
+  }, {
+    "pattern":"\\QPlaylistCard.qml\\E"
+  }, {
+    "pattern":"\\QPlaylistDetailPage.qml\\E"
+  }, {
+    "pattern":"\\QPlaylistGrid.qml\\E"
+  }, {
+    "pattern":"\\QQt.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/AccountPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Animation.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/BottomNav.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Button.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/CircularProgress.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/CoverImage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Date.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Dialog.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Easing.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Button.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Easing.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Font.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Math.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Qt.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Ripple.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/Theme.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Effects/qmldir\\E"
+  }, {
+    "pattern":"\\QQtQuick/Font.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/HomePage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/IconButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/AccountPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Animation.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/BottomNav.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Button.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/CircularProgress.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Dialog.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Easing.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Font.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/HomePage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/IconButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/LibraryPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/LoadingIndicator.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/LocalPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/LoginDialog.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/LyricOverlay.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Math.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/MiniPlayer.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/NavigationRail.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/PlaylistDetailPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/PlaylistGrid.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Qt.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/QueuePage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/RadioButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/RecentPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Ripple.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/SearchPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/SegmentedButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/SettingsPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Snackbar.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Switch.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/TextField.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/Theme.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/TopAppBar.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/VirtualSongList.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Layouts/qmldir\\E"
+  }, {
+    "pattern":"\\QQtQuick/LibraryPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/LinearProgress.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/LoadingIndicator.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/LocalPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/LoginDialog.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/LyricOverlay.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Math.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/MiniPlayer.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/NavigationRail.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/PlaylistCard.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/PlaylistDetailPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/PlaylistGrid.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Qt.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/QueuePage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/RadioButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/RecentPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Ripple.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/SearchPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/SegmentedButton.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/SettingsPage.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Snackbar.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/SongRow.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Switch.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/TextField.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/Theme.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/TopAppBar.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/VirtualSongList.qml\\E"
+  }, {
+    "pattern":"\\QQtQuick/qmldir\\E"
+  }, {
+    "pattern":"\\QQueuePage.qml\\E"
+  }, {
+    "pattern":"\\QRecentPage.qml\\E"
+  }, {
+    "pattern":"\\QSearchPage.qml\\E"
+  }, {
+    "pattern":"\\QSettingsPage.qml\\E"
+  }, {
+    "pattern":"\\QSongRow.qml\\E"
+  }, {
+    "pattern":"\\QVirtualSongList.qml\\E"
+  }, {
+    "pattern":"\\Qapp-icon.png\\E"
+  }, {
+    "pattern":"\\Qfonts/MaterialSymbolsRounded.ttf\\E"
+  }, {
+    "pattern":"\\Qfonts/PingFangSC-Light.otf\\E"
+  }, {
+    "pattern":"\\Qfonts/PingFangSC-Medium.otf\\E"
+  }, {
+    "pattern":"\\Qfonts/PingFangSC-Regular.otf\\E"
+  }, {
+    "pattern":"\\Qfonts/PingFangSC-Thin.otf\\E"
+  }, {
+    "pattern":"\\Qhome/timer/.musicplayer/cache/image/2012249649.img\\E"
+  }, {
+    "pattern":"\\Qhome/timer/.musicplayer/cache/image/867552187.img\\E"
+  }, {
+    "pattern":"\\Qio/github/humbleui/skija/impl/Library.class\\E"
+  }, {
+    "pattern":"\\Qio/github/humbleui/skija/linux/x64/libskija.so\\E"
+  }, {
+    "pattern":"\\Qio/github/humbleui/skija/linux/x64/skija.version\\E"
+  }, {
+    "pattern":"\\Qjavazoom/jl/decoder/sfd.ser\\E"
+  }, {
+    "pattern":"\\QlibGLX.so.0\\E"
+  }, {
+    "pattern":"\\Qlinux/x64/org/lwjgl/glfw/libglfw.so\\E"
+  }, {
+    "pattern":"\\Qlinux/x64/org/lwjgl/liblwjgl.so\\E"
+  }, {
+    "pattern":"\\Qlinux/x64/org/lwjgl/opengl/liblwjgl_opengl.so\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/AccountPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Animation.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/BottomNav.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Button.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/CircularProgress.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/CoverImage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Date.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Dialog.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Easing.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Font.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/HomePage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/IconButton.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LibraryPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LinearProgress.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LoadingIndicator.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LocalPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LoginDialog.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/LyricOverlay.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Math.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/MiniPlayer.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/NavigationRail.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/PlaylistCard.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/PlaylistDetailPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/PlaylistGrid.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Qt.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/QueuePage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/RadioButton.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/RecentPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Ripple.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/SearchPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/SegmentedButton.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/SettingsPage.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Snackbar.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/SongRow.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Switch.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/TextField.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/Theme.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/TopAppBar.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/VirtualSongList.qml\\E"
+  }, {
+    "pattern":"\\Qmd3/Core/qmldir\\E"
+  }, {
+    "pattern":"\\Qqmldir\\E"
+  }, {
+    "pattern":"\\Qrhino-test.config\\E"
+  }, {
+    "pattern":"\\Qrhino.config\\E"
+  }, {
+    "pattern":"app-icon\\.png$"
+  }, {
+    "pattern":"fonts/.*"
+  }, {
+    "pattern":"java.base:\\Qjdk/internal/icu/impl/data/icudt72b/nfkc.nrm\\E"
+  }, {
+    "pattern":"java.base:\\Qjdk/internal/icu/impl/data/icudt72b/uprops.icu\\E"
+  }, {
+    "pattern":"java.base:\\Qsun/net/idn/uidna.spp\\E"
+  }, {
+    "pattern":"md3/.*"
+  }]},
+  "bundles":[{
+    "name":"org.mozilla.javascript.resources.Messages",
+    "locales":["", "und", "zh-CN"]
+  }, {
+    "name":"sun.awt.resources.awt",
+    "classNames":["sun.awt.resources.awt", "sun.awt.resources.awt_zh_CN"]
+  }]
+}

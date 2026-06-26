@@ -1,0 +1,3002 @@
+[
+{
+  "name":"[B"
+},
+{
+  "name":"[Ljava.lang.String;"
+},
+{
+  "name":"[Lsun.security.pkcs.SignerInfo;"
+},
+{
+  "name":"android.os.Build$VERSION"
+},
+{
+  "name":"com.sun.crypto.provider.AESCipher$General",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.ARCFOURCipher",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.ChaCha20Cipher$ChaCha20Poly1305",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.DESCipher",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.DESedeCipher",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.DHParameters",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.GaloisCounterMode$AESGCM",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.HmacCore$HmacSHA384",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"com.sun.crypto.provider.TlsMasterSecretGenerator",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.ColorExtractor",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"loadHotSearches","parameterTypes":[] }]
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$CacheEntry",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$ExitListener",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$Installer",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$PlaybackListener",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.bridge.PlayerController$UrlOpener",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.desktop.DesktopSettings",
+  "allDeclaredFields":true,
+  "allPublicFields":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.EsLrcParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.LrcParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.LyricLine",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.LyricLine$VocalChannel",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.LyricParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.LysParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.QrcParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.Syllable",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.TtmlParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.lyric.YrcParser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.model.Track",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.model.Track$Source",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.NeteaseClient",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.NeteaseClient$ErrorListener",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.NeteaseClient$UrlInfo",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.NeteaseCrypto",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.X25519",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.dto.NeteaseLyric",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.dto.NeteasePlaylist",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.dto.NeteaseSong",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"dev.t1m3.qplayer.netease.dto.NeteaseUser",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.Callable",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.Context",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.DelegateFactory",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.DelegateHost",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.DelegateRoot",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.ParentTransparent",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.PropertyChangeSink",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.QObject",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.QmlDefaultList",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.QmlEngine",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.QtObject",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.Signal",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.SignalHandler",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.SignalParams",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.SignalRelay",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.Binding",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.BindingEvaluationContext",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.DirtyQueue",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.ObservableList",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.Property",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.binding.Property$WriteInterceptor",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.classloader.ClassLoaderBackend",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.classloader.JvmClassLoaderBackend",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.classloader.JvmClassLoaderBackend$DynamicClassLoader",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.classloader.ScriptCache",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsConstRepair",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsRuntime",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsRuntime$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$2",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$3",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$BoundMethod",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$JavaMember",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$JavaMember$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$JavaMember$1$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$JsColor",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$RhinoFunctionValue",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.JsWrap$SignalRef",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QmlScope",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QtGlobals",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QtGlobals$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QtGlobals$2",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QtGlobals$3",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.QtGlobals$4",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.RhinoBinding",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.RhinoClosure",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.RhinoFunction",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.RhinoHandler",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.engine.js.RhinoJsBinding",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$1$Child$13",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$1$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$1$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$10",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$10$Child$5",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$10$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$10$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$11",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$11$Child$13",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$12",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$12$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$12$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$13",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$14",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$14$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$14$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$15",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$16",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$17",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$18",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$19",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$19$Child$2",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$2",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$2$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$2$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$20",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$21",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$22",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$22$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$22$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$23",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$24",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$25",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$26",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$27",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"fmt","parameterTypes":["java.lang.Object"] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$28",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$28$Child$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$28$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$28$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$29",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"fmt","parameterTypes":["java.lang.Object"] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"__instance","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$10",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$11",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$12",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$13",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$14",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$15",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$16",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$17",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$18",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$19",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$2",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$20",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$21",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$3",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$4",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$5",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$6",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$7",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$8",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$3$Child$9",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$30",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$30$Child$21",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$31",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"statusText","parameterTypes":["java.lang.Object"] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$32",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$33",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$4",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$5",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"disabledColor","parameterTypes":["java.lang.Object"] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$6",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"greeting","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$6$Delegate$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$6$Delegate$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$6$Factory$0",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$6$Factory$1",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$7",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$8",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.generated.Component$9",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.AnchorLine",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Anchors",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Clipboard",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.ComponentFactory",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Context2D",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "methods":[{"name":"beginPath","parameterTypes":[] }, {"name":"lineTo","parameterTypes":["double","double"] }, {"name":"moveTo","parameterTypes":["double","double"] }, {"name":"reset","parameterTypes":[] }, {"name":"stroke","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.render.EventDispatcher",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.FocusManager",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.FontResolver",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.IconResolver",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.ImageLoader",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Loader",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Painter",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.QmlView",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.Renderer",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.ResourceLoader",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.StockTypes",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.SurfaceBackend",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.TextLayout",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.AbstractAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Animatable",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Behavior",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.ColorAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Easing",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Easings",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.GroupAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.NumberAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.OpacityAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.ParallelAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.PauseAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.PropertyAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.PropertyChanges",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.RotationAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.ScriptAction",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.SequentialAnimation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.State",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.StateController",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.TargetKey",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Timer",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.animation.Transition",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Binding",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Border",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Canvas",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"getContext","parameterTypes":["java.lang.String"] }, {"name":"requestPaint","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.ChildrenRect",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.ColorMath",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Drag",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Flickable",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Font",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Gradient",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.GradientStop",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Image",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Item",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.MouseArea",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.MouseEvent",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Rectangle",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Size",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.Text",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.TextWrap",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.TextWrap$Measure",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.core.TextWrap$Result",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.dialog.FileDialog",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.ColorOverlay",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.DropShadow",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.Glow",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.Layer",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.MultiEffect",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.effect.ShaderEffectSource",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.handler.DragHandler",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.handler.TapHandler",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.FocusScope",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.KeyEvent",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.Keys",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.TextEdit",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.TextEditable",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.TextField",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.input.TextInput",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.Column",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.ColumnLayout",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.Flow",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.GridLayout",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.GridLayout$Cell",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.LayoutAttached",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.LayoutSizing",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.Row",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.RowLayout",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.layout.StackLayout",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.ImageFill",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.ImageFill$Op",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.ImageFill$Plan",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathArc",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathCubic",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathElement",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathLine",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathMove",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.PathQuad",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.Shape",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.shape.ShapePath",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Axis",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Origin",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Rotation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Scale",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Transform",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.transform.Translate",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.Component",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.Connections",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.GridView",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.ListElement",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.ListModel",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.ListView",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.Loader",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.view.Repeater",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.AbstractButton",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.ApplicationWindow",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.Button",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.Control",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.Label",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.render.items.window.Window",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.ClassCache",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.Cam16",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.ColorUtils",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.Hct",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.MathUtils",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.Scheme",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.StyleManager",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true,
+  "methods":[{"name":"__instance","parameterTypes":[] }]
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.TonalPalette",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.color.ViewingConditions",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.convert.Coercion",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.invoke.MethodInvocation",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.invoke.MethodInvocation$Resolved",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.invoke.Scheduler",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.member.DelegateScope",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.member.MemberAccess",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.qt.QColor",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.qt.QtColorFactory",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"io.github.timer_err.qml4j.runtime.qt.QtDateFormat",
+  "allDeclaredFields":true,
+  "allPublicFields":true,
+  "allDeclaredMethods":true,
+  "allPublicMethods":true,
+  "allDeclaredConstructors":true,
+  "allPublicConstructors":true
+},
+{
+  "name":"java.io.ObjectInputStream"
+},
+{
+  "name":"java.io.ObjectOutputStream"
+},
+{
+  "name":"java.lang.Boolean"
+},
+{
+  "name":"java.lang.Byte"
+},
+{
+  "name":"java.lang.Character"
+},
+{
+  "name":"java.lang.Class",
+  "methods":[{"name":"getRecordComponents","parameterTypes":[] }, {"name":"isRecord","parameterTypes":[] }]
+},
+{
+  "name":"java.lang.Double"
+},
+{
+  "name":"java.lang.Float"
+},
+{
+  "name":"java.lang.Integer"
+},
+{
+  "name":"java.lang.Long"
+},
+{
+  "name":"java.lang.Number"
+},
+{
+  "name":"java.lang.Object"
+},
+{
+  "name":"java.lang.Short"
+},
+{
+  "name":"java.lang.String"
+},
+{
+  "name":"java.lang.Thread",
+  "fields":[{"name":"threadLocalRandomProbe"}]
+},
+{
+  "name":"java.lang.reflect.RecordComponent",
+  "methods":[{"name":"getName","parameterTypes":[] }, {"name":"getType","parameterTypes":[] }]
+},
+{
+  "name":"java.math.BigInteger"
+},
+{
+  "name":"java.nio.Buffer",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.ByteBuffer",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.DirectByteBuffer",
+  "allDeclaredFields":true,
+  "unsafeAllocated":true
+},
+{
+  "name":"java.nio.DirectCharBufferU",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.DirectDoubleBufferU",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.DirectFloatBufferU",
+  "allDeclaredFields":true,
+  "unsafeAllocated":true
+},
+{
+  "name":"java.nio.DirectIntBufferU",
+  "allDeclaredFields":true,
+  "unsafeAllocated":true
+},
+{
+  "name":"java.nio.DirectLongBufferU",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.DirectShortBufferU",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.nio.MappedByteBuffer",
+  "allDeclaredFields":true
+},
+{
+  "name":"java.security.AlgorithmParametersSpi"
+},
+{
+  "name":"java.security.KeyStoreSpi"
+},
+{
+  "name":"java.security.SecureRandomParameters"
+},
+{
+  "name":"java.security.interfaces.ECPrivateKey"
+},
+{
+  "name":"java.security.interfaces.ECPublicKey"
+},
+{
+  "name":"java.security.interfaces.RSAPrivateKey"
+},
+{
+  "name":"java.security.interfaces.RSAPublicKey"
+},
+{
+  "name":"java.sql.Date"
+},
+{
+  "name":"java.util.Date"
+},
+{
+  "name":"java.util.HashMap",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"java.util.concurrent.atomic.AtomicBoolean",
+  "fields":[{"name":"value"}]
+},
+{
+  "name":"java.util.concurrent.atomic.Striped64",
+  "fields":[{"name":"base"}, {"name":"cellsBusy"}]
+},
+{
+  "name":"javax.imageio.spi.ImageReaderSpi"
+},
+{
+  "name":"javax.imageio.spi.ImageReaderWriterSpi",
+  "methods":[{"name":"getFileSuffixes","parameterTypes":[] }, {"name":"getFormatNames","parameterTypes":[] }, {"name":"getMIMETypes","parameterTypes":[] }]
+},
+{
+  "name":"javax.imageio.spi.ImageWriterSpi"
+},
+{
+  "name":"javax.security.auth.x500.X500Principal",
+  "fields":[{"name":"thisX500Name"}],
+  "methods":[{"name":"<init>","parameterTypes":["sun.security.x509.X500Name"] }]
+},
+{
+  "name":"org.lwjgl.glfw.GLFW",
+  "allDeclaredFields":true
+},
+{
+  "name":"org.lwjgl.system.CallbackI",
+  "methods":[{"name":"callback","parameterTypes":["long","long"] }]
+},
+{
+  "name":"org.lwjgl.system.CustomBuffer",
+  "fields":[{"name":"capacity"}, {"name":"container"}, {"name":"limit"}, {"name":"mark"}, {"name":"position"}]
+},
+{
+  "name":"org.lwjgl.system.Pointer$Default",
+  "fields":[{"name":"address"}]
+},
+{
+  "name":"org.lwjgl.system.jemalloc.JEmallocAllocator"
+},
+{
+  "name":"org.mozilla.javascript.Context"
+},
+{
+  "name":"org.mozilla.javascript.ContextFactory"
+},
+{
+  "name":"org.mozilla.javascript.Function"
+},
+{
+  "name":"org.mozilla.javascript.Interpreter",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"org.mozilla.javascript.JavaAdapter",
+  "methods":[{"name":"readAdapterObject","parameterTypes":["org.mozilla.javascript.Scriptable","java.io.ObjectInputStream"] }, {"name":"writeAdapterObject","parameterTypes":["java.lang.Object","java.io.ObjectOutputStream"] }]
+},
+{
+  "name":"org.mozilla.javascript.ScriptableObject",
+  "methods":[{"name":"getExternalArrayLength","parameterTypes":[] }]
+},
+{
+  "name":"org.mozilla.javascript.optimizer.Codegen"
+},
+{
+  "name":"sun.java2d.marlin.DMarlinRenderingEngine",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.misc.Unsafe",
+  "allDeclaredFields":true
+},
+{
+  "name":"sun.security.pkcs12.PKCS12KeyStore",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.pkcs12.PKCS12KeyStore$DualFormatPKCS12",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.DSA$SHA224withDSA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.DSA$SHA256withDSA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.JavaKeyStore$DualFormatJKS",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.JavaKeyStore$JKS",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.NativePRNG",
+  "methods":[{"name":"<init>","parameterTypes":[] }, {"name":"<init>","parameterTypes":["java.security.SecureRandomParameters"] }]
+},
+{
+  "name":"sun.security.provider.SHA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.SHA2$SHA224",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.SHA2$SHA256",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.SHA5$SHA384",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.SHA5$SHA512",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.X509Factory",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.provider.certpath.PKIXCertPathValidator",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.rsa.PSSParameters",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.rsa.RSAKeyFactory$Legacy",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.rsa.RSAPSSSignature",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.rsa.RSASignature$SHA224withRSA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.rsa.RSASignature$SHA256withRSA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.ssl.KeyManagerFactoryImpl$SunX509",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.ssl.SSLContextImpl$DefaultSSLContext",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.ssl.TrustManagerFactoryImpl$PKIXFactory",
+  "methods":[{"name":"<init>","parameterTypes":[] }]
+},
+{
+  "name":"sun.security.util.ObjectIdentifier"
+},
+{
+  "name":"sun.security.x509.AuthorityInfoAccessExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.AuthorityKeyIdentifierExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.BasicConstraintsExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.CRLDistributionPointsExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.CertificateExtensions"
+},
+{
+  "name":"sun.security.x509.CertificatePoliciesExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.ExtendedKeyUsageExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.IssuerAlternativeNameExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.KeyUsageExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.NetscapeCertTypeExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.PrivateKeyUsageExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.SubjectAlternativeNameExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+},
+{
+  "name":"sun.security.x509.SubjectKeyIdentifierExtension",
+  "methods":[{"name":"<init>","parameterTypes":["java.lang.Boolean","java.lang.Object"] }]
+}
+]
