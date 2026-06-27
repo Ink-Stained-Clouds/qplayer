@@ -210,6 +210,11 @@ jobs:
         run: mvn -B -DskipTests -Dnative.xmx=${{ matrix.xmx }} -pl desktop-host -Pnative package
 
       - name: Package
+        # macOS bakes this into Info.plist (CFBundleShortVersionString); the
+        # Linux/Windows packagers ignore it. Resolved like the Windows installer
+        # step below (release tag, or the pushed tag ref).
+        env:
+          QPLAYER_VERSION: ${{ github.event.release.tag_name || github.ref_name }}
         run: ${{ matrix.package }}
 
       - name: Rename artifact
