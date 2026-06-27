@@ -26,6 +26,10 @@
              release is built on its own runner with the matching natives. -->
         <lwjgl.natives>natives-linux</lwjgl.natives>
         <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
+        <!-- Heap cap for the native-image build JVM. Sized for a local dev box;
+             CI overrides per-runner (Linux/Windows ubuntu/windows-latest have 16GB,
+             macos-14 has 7GB) via -Dnative.xmx=… on the mvn command line. -->
+        <native.xmx>7g</native.xmx>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
         <win.w>1100</win.w>
@@ -296,7 +300,7 @@
                             <imageName>qplayer</imageName>
                             <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
                             <buildArgs>
-                                <buildArg>-J-Xmx7g</buildArg>
+                                <buildArg>-J-Xmx${native.xmx}</buildArg>
                                 <buildArg>-H:NumberOfThreads=4</buildArg>
                             </buildArgs>
                         </configuration>
