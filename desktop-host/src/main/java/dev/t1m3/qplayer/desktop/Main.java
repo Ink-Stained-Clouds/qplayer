@@ -92,7 +92,11 @@ public final class Main {
         // file and point AWT at it (sun.awt.fontconfig is the documented override —
         // FontConfiguration.findFontConfigFile reads it before falling back to the
         // default lib/fontconfig.bfc lookup) BEFORE any tray/Swing code runs.
+        // Only the macOS tray uses AWT/Swing (Windows = WinTray, Linux = GTK
+        // LinuxTray), so this matters there alone — skip it (and its misleading
+        // "tray menus will fail" warning) on the native Linux/Windows builds.
         if (System.getProperty("java.vm.name", "").contains("Substrate")
+                && System.getProperty("os.name", "").toLowerCase().contains("mac")
                 && System.getProperty("sun.awt.fontconfig") == null) {
             try (InputStream is = Main.class.getResourceAsStream("/fontconfig.bfc")) {
                 if (is == null) {

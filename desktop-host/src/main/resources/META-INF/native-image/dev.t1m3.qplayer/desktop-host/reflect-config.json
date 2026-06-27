@@ -322,6 +322,18 @@
   "methods":[{"name":"callback","parameterTypes":["com.sun.jna.platform.win32.WinDef$HWND","int","com.sun.jna.platform.win32.WinDef$WPARAM","com.sun.jna.platform.win32.WinDef$LPARAM"] }]
 },
 {
+  "name":"dev.t1m3.qplayer.desktop.LinuxTray$GCallback",
+  "queryAllDeclaredMethods":true,
+  "queryAllPublicMethods":true,
+  "methods":[{"name":"invoke","parameterTypes":["com.sun.jna.Pointer","com.sun.jna.Pointer"] }]
+},
+{
+  "name":"dev.t1m3.qplayer.desktop.LinuxTray$GSourceFunc",
+  "queryAllDeclaredMethods":true,
+  "queryAllPublicMethods":true,
+  "methods":[{"name":"invoke","parameterTypes":["com.sun.jna.Pointer"] }]
+},
+{
   "name":"dev.t1m3.qplayer.library.LibraryCache$Entry",
   "allDeclaredFields":true,
   "methods":[{"name":"<init>","parameterTypes":[] }]

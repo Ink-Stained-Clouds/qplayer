@@ -15,6 +15,18 @@
     "interfaces":["dev.t1m3.qplayer.desktop.SingleInstance$U32"]
   },
   {
+    "interfaces":["dev.t1m3.qplayer.desktop.LinuxTray$Gtk"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.LinuxTray$GObject"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.LinuxTray$GLib"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.LinuxTray$AppIndicator"]
+  },
+  {
     "interfaces":["org.apache.maven.plugin.MavenPluginManager"]
   }
 ]
