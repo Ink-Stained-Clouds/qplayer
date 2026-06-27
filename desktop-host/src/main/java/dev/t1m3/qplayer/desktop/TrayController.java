@@ -48,6 +48,10 @@ final class TrayController implements PlayerController.PlaybackListener {
     private WinTray winTray;
     private Object winPlayPause;
 
+    // Linux backend (non-null when active).
+    private LinuxTray linuxTray;
+    private Object linuxPlayPause;
+
     // AWT backend (non-Windows).
     private TrayIcon trayIcon;
     private javax.swing.JPopupMenu popup;
@@ -64,11 +68,18 @@ final class TrayController implements PlayerController.PlaybackListener {
     /** Build the tray. Returns false (and logs) if no tray is available, in which
      *  case the app still runs windowed. */
     boolean install() {
-        return isWindows() ? installWin() : installAwt();
+        if (isWindows()) return installWin();
+        if (isLinux()) return installLinux();
+        return installAwt();
     }
 
     private static boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static boolean isLinux() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        return os.contains("nux") || os.contains("nix");
     }
 
     // ---------- Windows backend ----------
@@ -97,7 +108,33 @@ final class TrayController implements PlayerController.PlaybackListener {
         }
     }
 
-    // ---------- AWT backend (Linux / macOS) ----------
+    // ---------- Linux backend (AppIndicator + GTK via JNA) ----------
+    private boolean installLinux() {
+        try {
+            linuxTray = new LinuxTray();
+            linuxTray.setIconPng(iconPng != null ? iconPng : placeholderPng());
+            linuxTray.addItem("上一首", () -> win.postMainTask(controller::prev));
+            linuxPlayPause = linuxTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
+            linuxTray.addItem("下一首", () -> win.postMainTask(controller::next));
+            linuxTray.addSeparator();
+            linuxTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
+            linuxTray.addItem("退出", () -> win.postMainTask(() -> {
+                shutdown();
+                win.requestQuit();
+            }));
+            if (linuxTray.install()) return true;
+            linuxTray = null;
+            return false;
+        } catch (Throwable t) {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            t.printStackTrace(new java.io.PrintWriter(sw));
+            Logger.warn("Linux tray init failed:\n{}", sw);
+            linuxTray = null;
+            return false;
+        }
+    }
+
+    // ---------- AWT backend (macOS) ----------
     private boolean installAwt() {
         if (!SystemTray.isSupported()) {
             Logger.warn("system tray not supported; tray menu disabled");
@@ -173,6 +210,9 @@ final class TrayController implements PlayerController.PlaybackListener {
             if (winTray != null) {
                 winTray.setLabel(winPlayPause, pp);
                 winTray.setTooltip(tip);
+            } else if (linuxTray != null) {
+                linuxTray.setLabel(linuxPlayPause, pp);
+                linuxTray.setTooltip(tip);
             } else if (trayIcon != null) {
                 String tipF = tip;
                 if (playPause != null) {
@@ -189,6 +229,10 @@ final class TrayController implements PlayerController.PlaybackListener {
         if (winTray != null) {
             try { winTray.shutdown(); } catch (Throwable ignored) {}
             winTray = null;
+        }
+        if (linuxTray != null) {
+            try { linuxTray.shutdown(); } catch (Throwable ignored) {}
+            linuxTray = null;
         }
         if (trayIcon != null) {
             try { SystemTray.getSystemTray().remove(trayIcon); } catch (Throwable ignored) {}
