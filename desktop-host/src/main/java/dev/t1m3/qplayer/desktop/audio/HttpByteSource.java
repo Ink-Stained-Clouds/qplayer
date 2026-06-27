@@ -149,18 +149,9 @@ final class HttpByteSource implements SeekableByteSource {
     }
 
     @Override
-    public File localFileBlocking() throws IOException {
-        synchronized (lock) {
-            while (!complete && error == null && !closed) {
-                try {
-                    lock.wait();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("interrupted while downloading");
-                }
-            }
-        }
-        if (error != null) throw error;
+    public File backingFile() {
+        // The temp file exists from construction; it fills in as the download
+        // proceeds. Callers that read through seek()/read() block progressively.
         return tempFile;
     }
 

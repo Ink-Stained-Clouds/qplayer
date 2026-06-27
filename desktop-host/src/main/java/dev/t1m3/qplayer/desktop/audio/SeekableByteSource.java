@@ -32,11 +32,13 @@ interface SeekableByteSource extends AutoCloseable {
     long size();
 
     /**
-     * A fully-materialised local file backing this source. For a remote source
-     * this blocks until the download completes. Needed by decoders that demand
-     * a real seekable file (jflac's {@code RandomFileInputStream}).
+     * The local file backing this source, returned immediately — for a remote
+     * source this is the temp file the download streams into, which may still
+     * be partial. Decoders that need a {@code RandomFileInputStream} (jflac) wrap
+     * it but route reads through {@link #read}/{@link #seek} so they still block
+     * progressively rather than wait for the whole file.
      */
-    File localFileBlocking() throws IOException;
+    File backingFile();
 
     @Override
     void close();

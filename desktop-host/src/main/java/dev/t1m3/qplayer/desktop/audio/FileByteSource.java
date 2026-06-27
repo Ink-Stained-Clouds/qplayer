@@ -42,7 +42,7 @@ final class FileByteSource implements SeekableByteSource {
     }
 
     @Override
-    public File localFileBlocking() {
+    public File backingFile() {
         return file;
     }
 

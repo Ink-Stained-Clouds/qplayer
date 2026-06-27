@@ -6,14 +6,15 @@ import org.jflac.io.RandomFileInputStream;
 import org.jflac.metadata.StreamInfo;
 import org.jflac.util.ByteData;
 
-import java.io.File;
 import java.io.IOException;
 
 /**
- * FLAC decoder over jflac. jflac's {@code FLACDecoder.seek} demands a real
- * random-access file (it casts the stream to {@link RandomFileInputStream}), so
- * we hand it the local file — a remote source is downloaded to its temp file
- * first. 24-bit FLAC is folded to 16-bit (top two bytes) on output.
+ * FLAC decoder over jflac. jflac's {@code FLACDecoder.seek} demands a
+ * {@link RandomFileInputStream}; we satisfy that with a
+ * {@link SeekableRandomFileInputStream} whose reads route through the
+ * {@link SeekableByteSource}, so a remote FLAC streams as it downloads rather
+ * than blocking on the whole file. 24-bit FLAC is folded to 16-bit (top two
+ * bytes) on output.
  */
 final class FlacPcmSource implements PcmSource {
 
@@ -32,11 +33,11 @@ final class FlacPcmSource implements PcmSource {
     private boolean eof = false;
 
     FlacPcmSource(SeekableByteSource src) throws IOException {
-        // Keep src open: for a remote source it owns the temp file the decoder
-        // reads from, and closing it would delete that file out from under us.
+        // Route the decoder through src (not a plain file handle) so a remote
+        // FLAC streams as it downloads instead of blocking on the whole file,
+        // while still satisfying jflac's RandomFileInputStream-for-seek contract.
         this.src = src;
-        File file = src.localFileBlocking();
-        this.rfis = new RandomFileInputStream(file);
+        this.rfis = new SeekableRandomFileInputStream(src);
         this.decoder = new FLACDecoder(rfis);
         decoder.readMetadata();
         StreamInfo si = decoder.getStreamInfo();
@@ -63,7 +64,12 @@ final class FlacPcmSource implements PcmSource {
 
     @Override
     public int read(byte[] dst, int off, int len) throws IOException {
-        if (pendingPos >= pendingLen && !fill()) return -1;
+        if (len <= 0) return 0;
+        // Loop past any zero-length frame so a transient empty decode is never
+        // mistaken for end-of-stream.
+        while (pendingPos >= pendingLen) {
+            if (!fill()) return -1;
+        }
         int n = Math.min(len, pendingLen - pendingPos);
         System.arraycopy(pending, pendingPos, dst, off, n);
         pendingPos += n;

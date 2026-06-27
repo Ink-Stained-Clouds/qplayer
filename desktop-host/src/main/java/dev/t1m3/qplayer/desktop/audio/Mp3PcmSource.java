@@ -62,7 +62,13 @@ final class Mp3PcmSource implements PcmSource {
 
     @Override
     public int read(byte[] dst, int off, int len) throws IOException {
-        if (pendingPos >= pendingLen && !fill()) return -1;
+        if (len <= 0) return 0;
+        // Keep filling past empty frames: the first frame after a seek can decode
+        // to zero samples (Layer III bit reservoir has no prior-frame context), and
+        // returning 0 must not be mistaken for end-of-stream by the caller.
+        while (pendingPos >= pendingLen) {
+            if (!fill()) return -1;
+        }
         int n = Math.min(len, pendingLen - pendingPos);
         System.arraycopy(pending, pendingPos, dst, off, n);
         pendingPos += n;
