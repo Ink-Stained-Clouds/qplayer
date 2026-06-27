@@ -203,6 +203,10 @@ jobs:
         run: mvn -B -DskipTests -pl player-core -am install
 
       - name: Build native image
+        # bash on every runner (git-bash on Windows): PowerShell splits the bare
+        # -Dnative.xmx=12g arg into "-Dnative" + ".xmx=12g", which mvn reads as a
+        # bogus lifecycle phase. setup-graalvm's JAVA_HOME/PATH apply to bash too.
+        shell: bash
         run: mvn -B -DskipTests -Dnative.xmx=${{ matrix.xmx }} -pl desktop-host -Pnative package
 
       - name: Package
