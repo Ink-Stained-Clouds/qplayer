@@ -34,6 +34,11 @@ import java.util.List;
 public final class Main {
 
     public static void main(String[] args) {
+        // Route the shared player-core logger to log4j2 (colored console + rolling
+        // logs/ file, config in log4j2.xml). First thing in main so every later line
+        // — incl. the startup property fixups below — lands in the configured format.
+        Logger.setSink(new Log4j2Sink());
+
         // Pin Rhino to the interpreter BEFORE any qml4j class loads. JsRuntime caches
         // the optimization level into a `static final` field whose initializer reads
         // `qml4j.rhino.opt`, and `-Dqml4j.rhino.opt=-1` in native-image.properties is

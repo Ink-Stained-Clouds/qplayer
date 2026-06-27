@@ -3,6 +3,8 @@
   "includes":[{
     "pattern":"\\Qfontconfig.bfc\\E"
   }, {
+    "pattern":"\\Qlog4j2.xml\\E"
+  }, {
     "pattern":".*\\.otf$"
   }, {
     "pattern":".*\\.qml$"
