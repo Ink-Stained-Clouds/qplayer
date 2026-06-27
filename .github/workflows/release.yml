@@ -111,24 +111,33 @@ jobs:
           path: out/*
 
       - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+        # github.ref is unreliable for release:published when the tag is auto-created
+        # from the UI (lands as refs/heads/master instead of refs/tags/<tag>), so check
+        # the event name and pass the release tag explicitly.
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
 
   desktop:
     strategy:
       fail-fast: false
       matrix:
         include:
+          # native-image -J-Xmx per runner: ubuntu/windows-latest have 16GB,
+          # macos-14 has 7GB. Keep ~3GB headroom for OS + Maven on the 16GB boxes
+          # and ~2GB on the 7GB one.
           - os: ubuntu-latest
             name: linux-x64
             package: bash desktop-host/dist/package-linux.sh
             artifact: desktop-host/target/QPlayer-x86_64.AppImage
+            xmx: 12g
           - os: windows-latest
             name: windows-x64
             package: powershell -ExecutionPolicy Bypass -File desktop-host/dist/package-windows.ps1
             artifact: desktop-host/target/QPlayer-windows-x64.zip
+            xmx: 12g
           # Apple Silicon only: GitHub retired the free Intel (macos-13) runner and
           # native-image can't cross-compile, so an arm64 runner can't emit an Intel
           # binary. Intel Mac users build locally (desktop-host/dist/package-macos.sh).
@@ -136,6 +145,7 @@ jobs:
             name: macos-arm64
             package: bash desktop-host/dist/package-macos.sh
             artifact: desktop-host/target/QPlayer.dmg
+            xmx: 5g
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -143,8 +153,12 @@ jobs:
       - name: Set up GraalVM 21
         uses: graalvm/setup-graalvm@v1
         with:
+          # Oracle GraalVM (free under GFTC for prod). The Community distribution
+          # resolves '21' to 21.0.2 here, which precedes the Windows AWT heap-walk
+          # fixes (21.0.5+) that headful TrayIcon depends on. Oracle '21' tracks
+          # the latest LTS patch (21.0.7+), matching the local agent run.
           java-version: '21'
-          distribution: 'graalvm-community'
+          distribution: 'graalvm'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           native-image-job-reports: 'true'
 
@@ -189,7 +203,11 @@ jobs:
         run: mvn -B -DskipTests -pl player-core -am install
 
       - name: Build native image
-        run: mvn -B -DskipTests -pl desktop-host -Pnative package
+        # bash on every runner (git-bash on Windows): PowerShell splits the bare
+        # -Dnative.xmx=12g arg into "-Dnative" + ".xmx=12g", which mvn reads as a
+        # bogus lifecycle phase. setup-graalvm's JAVA_HOME/PATH apply to bash too.
+        shell: bash
+        run: mvn -B -DskipTests -Dnative.xmx=${{ matrix.xmx }} -pl desktop-host -Pnative package
 
       - name: Package
         run: ${{ matrix.package }}
@@ -201,13 +219,37 @@ jobs:
           ext="${{ matrix.artifact }}"; ext="${ext##*.}"
           cp "${{ matrix.artifact }}" "out/QPlayer-${{ matrix.name }}.${ext}"
 
+      # Windows: also build an Inno Setup installer over the packaged QPlayer/ folder
+      # (Program Files install + Start-Menu/desktop shortcut + uninstaller), so users
+      # get a single setup.exe instead of a folder of loose DLLs. The portable zip is
+      # still attached alongside.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $ver = "${{ github.event.release.tag_name }}"
+          if (-not $ver) { $ver = "${{ github.ref_name }}" }
+          $ver = $ver -replace '^v',''
+          if (-not $ver) { $ver = "0.0.0" }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & "$iscc" /DAppVersion=$ver `
+            /DSourceFolder="$PWD\desktop-host\target\QPlayer" `
+            /DIconFile="$PWD\desktop-host\dist\app-icon.ico" `
+            "desktop-host\dist\qplayer.iss"
+          Copy-Item "desktop-host\dist\QPlayer-windows-x64-setup.exe" "out\"
+
       - uses: actions/upload-artifact@v4
         with:
           name: QPlayer-${{ matrix.name }}
           path: out/*
 
       - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+        # github.ref is unreliable for release:published when the tag is auto-created
+        # from the UI (lands as refs/heads/master instead of refs/tags/<tag>), so check
+        # the event name and pass the release tag explicitly.
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}

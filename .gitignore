@@ -17,4 +17,7 @@ local.properties
 .vscode/
 
 # App runtime data
-.musicplayer/
+.qplayer/
+
+# log4j2 rolling output (created at runtime next to the app / module dir)
+logs/

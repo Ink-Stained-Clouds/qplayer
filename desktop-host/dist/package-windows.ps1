@@ -13,9 +13,29 @@ $dir = "$T\QPlayer"
 if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-# binary + the JDK native DLLs native-image emits next to it
+# binary + the JDK native DLLs native-image emits next to it. AWT/Java2D
+# (awt.dll, javajpeg.dll, lcms.dll, mlib_image.dll, ...) is still needed at runtime
+# by DesktopColorExtractor (album-art colour), the GLFW window-icon decode, and the
+# AWT clipboard — so these are NOT excluded. (The tray itself is JNA on Windows.)
 Copy-Item $bin "$dir\qplayer.exe"
 Copy-Item "$T\*.dll" $dir -ErrorAction SilentlyContinue
+
+# Flip the PE subsystem from console (3) to GUI (2) so double-clicking shows no
+# console window at all — not even a flash. The entry point is unchanged; the flag
+# only tells Windows whether to allocate a console. (WinConsole then re-attaches to
+# a parent terminal's console when launched from a shell, so logs still stream.)
+# Subsystem is a little-endian uint16 at OptionalHeader+68 = PEHeader+4+20+68.
+$exe = "$dir\qplayer.exe"
+$bytes = [System.IO.File]::ReadAllBytes($exe)
+$peOff = [BitConverter]::ToInt32($bytes, 0x3C)
+$subsysOff = $peOff + 92
+if ([BitConverter]::ToUInt16($bytes, $subsysOff) -eq 3) {
+  $bytes[$subsysOff] = 2
+  [System.IO.File]::WriteAllBytes($exe, $bytes)
+  Write-Host "patched PE subsystem: console -> GUI"
+} else {
+  Write-Host "PE subsystem not console (already $([BitConverter]::ToUInt16($bytes, $subsysOff))); left as-is"
+}
 
 # Skija + LWJGL native DLLs straight from the local Maven repo (Windows resolves
 # DLLs from the exe directory, so everything goes next to qplayer.exe).
@@ -38,15 +58,9 @@ foreach ($j in $jars) {
 }
 if (-not (Get-ChildItem "$dir\*.dll" -ErrorAction SilentlyContinue)) { throw "no Skija/LWJGL DLLs found under $m2" }
 
-# Optional convenience launcher. The exe self-configures its native-lib path from
-# its own location (Main.defaultNativePath), so it also runs fine double-clicked or
-# from any working directory — we deliberately DON'T pass -Dskija.library.path here,
-# since a non-ASCII install path gets mangled through a .cmd and would then override
-# the clean path the exe derives itself.
-@"
-@echo off
-"%~dp0qplayer.exe" %*
-"@ | Set-Content -Encoding ascii "$dir\QPlayer.cmd"
+# No launcher .cmd: qplayer.exe self-configures its native-lib path from its own
+# location (Main.defaultNativePath), so it runs fine double-clicked or from any
+# working directory — the wrapper was just a redundant shell.
 
 Compress-Archive -Path "$dir\*" -DestinationPath "$T\QPlayer-windows-x64.zip" -Force
 Write-Host "-> $T\QPlayer-windows-x64.zip"

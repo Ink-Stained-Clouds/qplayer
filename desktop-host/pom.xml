@@ -26,7 +26,12 @@
              release is built on its own runner with the matching natives. -->
         <lwjgl.natives>natives-linux</lwjgl.natives>
         <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
-        <dorkbox.systemtray.version>4.4</dorkbox.systemtray.version>
+        <!-- Heap cap for the native-image build JVM. Sized for a local dev box;
+             CI overrides per-runner (Linux/Windows ubuntu/windows-latest have 16GB,
+             macos-14 has 7GB) via -Dnative.xmx=… on the mvn command line. -->
+        <native.xmx>7g</native.xmx>
+        <log4j.version>2.25.2</log4j.version>
+        <jna.version>5.14.0</jna.version>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
         <win.w>1100</win.w>
@@ -147,12 +152,48 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Cross-platform system tray (GtkStatusIcon / AppIndicator / Windows / macOS).
-             GLFW has no tray support; this drives the minimize-to-tray menu. -->
+        <!-- @NotNull annotations on Main/DesktopAudioBackend. Used to come in
+             transitively via dorkbox SystemTray; pin it directly now. -->
         <dependency>
-            <groupId>com.dorkbox</groupId>
-            <artifactId>SystemTray</artifactId>
-            <version>${dorkbox.systemtray.version}</version>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>24.1.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Logging backend for the desktop host: the shared player-core Logger
+             routes through a log4j2 Sink installed in Main. log4j-core 2.25+ ships
+             GraalVM reachability metadata, so the native image needs no hand-written
+             reflect/resource config for it. Kept out of player-core so Android keeps
+             its java.util.logging → logcat path. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- System tray. On Windows we drive Shell_NotifyIcon + a native Win32
+             popup menu directly via JNA (TrayController → WinTray): the menu is
+             rendered by the OS, so CJK works with zero AWT font-manager init —
+             which is unusable in the native image (sun.awt.FontConfiguration NPEs
+             with no JDK lib dir). Other platforms still use the AWT tray. The
+             standard net.java.dev.jna artifact has official GraalVM reachability
+             metadata, so jnidispatch + the mapped calls work in the native image. -->
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>${jna.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+            <version>${jna.version}</version>
         </dependency>
 
         <!-- Desktop audio: tag reading + javax.sound SPI decoders (mp3/flac/ogg) -->
@@ -213,6 +254,32 @@
             <id>native</id>
             <build>
                 <plugins>
+                    <!-- 0) Bundle the build JDK's fontconfig.bfc onto the classpath so
+                            the native binary can extract it at startup and point
+                            `java.awt.fontconfig` at the copy. Without it AWT's logical-
+                            font init throws "Fontconfig head is null" (the native image
+                            has no JDK lib dir), and any font-metrics lookup downstream
+                            — the tray's Swing JPopupMenu sizing, for one — fails. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>bundle-fontconfig</id>
+                                <phase>process-classes</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <copy file="${java.home}/lib/fontconfig.bfc"
+                                              tofile="${project.build.outputDirectory}/fontconfig.bfc"
+                                              failonerror="false"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
                     <!-- 1) AOT-compile the QML graph into target/classes (forked JVM;
                             AotCompile halts itself, so Maven keeps going). -->
                     <plugin>
@@ -255,7 +322,7 @@
                             <imageName>qplayer</imageName>
                             <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
                             <buildArgs>
-                                <buildArg>-J-Xmx7g</buildArg>
+                                <buildArg>-J-Xmx${native.xmx}</buildArg>
                                 <buildArg>-H:NumberOfThreads=4</buildArg>
                             </buildArgs>
                         </configuration>

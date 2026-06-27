@@ -10,8 +10,12 @@ import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.util.Logger;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -30,11 +34,79 @@ import java.util.List;
 public final class Main {
 
     public static void main(String[] args) {
+        // Windows native binary (GUI subsystem): no console on double-click, but
+        // attach to the launching terminal's console so logs still stream there.
+        // Before anything writes to stdout (log4j console appender resolves it).
+        if (System.getProperty("java.vm.name", "").contains("Substrate")
+                && System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            WinConsole.attachParentConsole();
+        }
+
+        // Single instance: if QPlayer is already running, raise its window and exit.
+        // Checked before log4j inits so this short-lived second process never opens
+        // the shared rolling log file. The activation target is wired once the window
+        // exists (below).
+        java.util.concurrent.atomic.AtomicReference<Runnable> onActivate =
+                new java.util.concurrent.atomic.AtomicReference<>(() -> {});
+        if (!SingleInstance.acquire(() -> onActivate.get().run())) {
+            return;
+        }
+
+        // Put the rolling log under the writable app data dir (~/.qplayer/logs) —
+        // when installed to Program Files the working dir isn't writable, so a
+        // CWD-relative logs/ would silently fail. Set before log4j2 first inits
+        // (in Log4j2Sink below); log4j2.xml reads ${sys:qplayer.logs}.
+        if (System.getProperty("qplayer.logs") == null) {
+            System.setProperty("qplayer.logs",
+                    new File(dev.t1m3.qplayer.store.AppDirs.base(), "logs").getAbsolutePath());
+        }
+
+        // Route the shared player-core logger to log4j2 (colored console + rolling
+        // file, config in log4j2.xml). First thing in main so every later line — incl.
+        // the startup property fixups below — lands in the configured format.
+        Logger.setSink(new Log4j2Sink());
+
+        // Pin Rhino to the interpreter BEFORE any qml4j class loads. JsRuntime caches
+        // the optimization level into a `static final` field whose initializer reads
+        // `qml4j.rhino.opt`, and `-Dqml4j.rhino.opt=-1` in native-image.properties is
+        // not reliably baked into runtime System properties by newer GraalVM. Without
+        // the interpreter, Rhino's Codegen path calls ClassLoader.defineClass at
+        // runtime — which native-image forbids — and the render thread crashes with
+        // "No classes have been predefined during the image build".
+        if (System.getProperty("qml4j.rhino.opt") == null) {
+            System.setProperty("qml4j.rhino.opt", "-1");
+        }
+
         // In a native image there is no JDK home; javax.sound's provider loader throws
         // "Can't find java.home" reading the optional lib/sound.properties. Point it at
         // a real dir so the (absent) file is simply skipped.
         if (System.getProperty("java.home") == null) {
             System.setProperty("java.home", System.getProperty("user.dir", "/tmp"));
+        }
+
+        // AWT's logical-font init reads <java.home>/lib/fontconfig.bfc; the native
+        // binary has no JDK lib dir, so it throws "Fontconfig head is null" and any
+        // downstream font-metrics call (incl. the tray's Swing JPopupMenu sizing) dies.
+        // The native build bundles the host JDK's fontconfig.bfc as a classpath
+        // resource (maven-antrun-plugin in the native profile); extract it to a temp
+        // file and point AWT at it (sun.awt.fontconfig is the documented override —
+        // FontConfiguration.findFontConfigFile reads it before falling back to the
+        // default lib/fontconfig.bfc lookup) BEFORE any tray/Swing code runs.
+        if (System.getProperty("java.vm.name", "").contains("Substrate")
+                && System.getProperty("sun.awt.fontconfig") == null) {
+            try (InputStream is = Main.class.getResourceAsStream("/fontconfig.bfc")) {
+                if (is == null) {
+                    Logger.warn("fontconfig.bfc not bundled — tray menus will fail");
+                } else {
+                    File f = File.createTempFile("qplayer-fontconfig", ".bfc");
+                    f.deleteOnExit();
+                    try (OutputStream os = new FileOutputStream(f)) { is.transferTo(os); }
+                    System.setProperty("sun.awt.fontconfig", f.getAbsolutePath());
+                    Logger.info("fontconfig extracted: {}", f.getAbsolutePath());
+                }
+            } catch (Throwable t) {
+                Logger.warn("fontconfig extract failed: {}", t);
+            }
         }
 
         // In the native image, make the bare binary self-sufficient: point Skija +
@@ -95,6 +167,10 @@ public final class Main {
         // thread is dead); back/exit folds the window to the tray.
         controller.setMainExecutor(window::postMainTask);
         controller.setExitListener(window::onExitRequested);
+        // Open external links (the About page) in the system browser. The Android
+        // host uses an ACTION_VIEW intent; on the desktop hand the URL to the OS
+        // (no java.awt.Desktop, which is unreliable in the native image).
+        controller.setUrlOpener(Main::openUrl);
 
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
 
@@ -104,6 +180,9 @@ public final class Main {
         // never gate the window coming up.
         window.spawnRenderThread();
 
+        // A second launch now surfaces this window instead of starting a new process.
+        onActivate.set(() -> window.postMainTask(window::restoreFromTray));
+
         // Initial content + a background scan of the local music folder.
         controller.loadHome();
         startLibraryScan(controller, reader, window);
@@ -111,29 +190,57 @@ public final class Main {
         // Tray init on a daemon thread so a GTK/AppIndicator hang can't freeze the app.
         // (-Dqplayer.tray=false disables it, e.g. for headless rendering checks.)
         if (!"false".equals(System.getProperty("qplayer.tray", "true"))) {
-            Thread trayThread = new Thread(() -> {
-                boolean ok = false;
-                try {
-                    ok = tray.install();
-                } catch (Throwable t) {
-                    // Never let a tray failure (e.g. an AWT/JNI Error) kill the
-                    // thread silently and leave trayAvailable unset.
-                    Logger.warn("tray install threw: {}", t);
-                }
-                window.setTrayAvailable(ok);
-                if (ok) controller.setPlaybackListener(tray);
-            }, "qplayer-tray-init");
-            trayThread.setDaemon(true);
+            Thread trayThread = getTrayThread(tray, window, controller);
             trayThread.start();
         }
 
         window.runEventLoop(); // blocks on the main thread until quit
 
         tray.shutdown();
-        try { controller.shutdown(); } catch (Throwable ignored) {}
+        try {
+            controller.shutdown();
+        } catch (Throwable ignored) {
+        }
         window.shutdown();
         Logger.info("QPlayer desktop exited");
         killSelf();
+    }
+
+    /** Open a URL in the system default browser via the OS handler (no AWT). */
+    private static void openUrl(String url) {
+        if (url == null || url.isBlank()) return;
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String[] cmd;
+        if (os.contains("win")) {
+            cmd = new String[]{"rundll32", "url.dll,FileProtocolHandler", url};
+        } else if (os.contains("mac")) {
+            cmd = new String[]{"open", url};
+        } else {
+            cmd = new String[]{"xdg-open", url};
+        }
+        try {
+            new ProcessBuilder(cmd).start();
+        } catch (Exception e) {
+            Logger.warn("open url failed ({}): {}", url, e.toString());
+        }
+    }
+
+    @NotNull
+    private static Thread getTrayThread(TrayController tray, DesktopWindow window, PlayerController controller) {
+        Thread trayThread = new Thread(() -> {
+            boolean ok = false;
+            try {
+                ok = tray.install();
+            } catch (Throwable t) {
+                // Never let a tray failure (e.g. an AWT/JNI Error) kill the
+                // thread silently and leave trayAvailable unset.
+                Logger.warn("tray install threw: {}", t);
+            }
+            window.setTrayAvailable(ok);
+            if (ok) controller.setPlaybackListener(tray);
+        }, "qplayer-tray-init");
+        trayThread.setDaemon(true);
+        return trayThread;
     }
 
     private static void startLibraryScan(PlayerController controller, MetadataReader reader,

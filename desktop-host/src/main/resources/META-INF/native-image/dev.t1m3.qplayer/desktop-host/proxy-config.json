@@ -1,3 +1,20 @@
 [
-  { "interfaces": ["dorkbox.jna.linux.Glib$GLogFunc"] }
+  {
+    "interfaces":["com.sun.jna.platform.win32.Kernel32"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.WinTray$Shell32"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.WinTray$U32"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.WinConsole$K32"]
+  },
+  {
+    "interfaces":["dev.t1m3.qplayer.desktop.SingleInstance$U32"]
+  },
+  {
+    "interfaces":["org.apache.maven.plugin.MavenPluginManager"]
+  }
 ]
