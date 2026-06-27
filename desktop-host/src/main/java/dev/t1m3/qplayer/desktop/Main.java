@@ -31,6 +31,17 @@ import java.util.List;
 public final class Main {
 
     public static void main(String[] args) {
+        // Pin Rhino to the interpreter BEFORE any qml4j class loads. JsRuntime caches
+        // the optimization level into a `static final` field whose initializer reads
+        // `qml4j.rhino.opt`, and `-Dqml4j.rhino.opt=-1` in native-image.properties is
+        // not reliably baked into runtime System properties by newer GraalVM. Without
+        // the interpreter, Rhino's Codegen path calls ClassLoader.defineClass at
+        // runtime — which native-image forbids — and the render thread crashes with
+        // "No classes have been predefined during the image build".
+        if (System.getProperty("qml4j.rhino.opt") == null) {
+            System.setProperty("qml4j.rhino.opt", "-1");
+        }
+
         // In a native image there is no JDK home; javax.sound's provider loader throws
         // "Can't find java.home" reading the optional lib/sound.properties. Point it at
         // a real dir so the (absent) file is simply skipped.
