@@ -116,6 +116,10 @@ final class RenderThread extends Thread {
             } catch (Throwable ignored) {
             }
             try {
+                win.compositor().invalidateGpuResources();
+            } catch (Throwable ignored) {
+            }
+            try {
                 backend.dispose();
             } catch (Throwable ignored) {
             }

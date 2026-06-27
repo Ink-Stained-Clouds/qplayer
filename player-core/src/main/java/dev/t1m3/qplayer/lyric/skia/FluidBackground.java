@@ -210,7 +210,7 @@ public final class FluidBackground {
         }
     }
 
-    private void invalidateStatic() {
+    public void invalidateStatic() {
         if (staticImage != null) {
             staticImage.close();
             staticImage = null;

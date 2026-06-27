@@ -261,4 +261,21 @@ public final class LyricCompositor {
         lyricChrome = null;
         renderedVersion = -1;
     }
+
+    /**
+     * Release GPU-bound resources tied to the current DirectContext. Must be called
+     * on the render thread before the context is destroyed (e.g. minimize-to-tray).
+     * CPU-side objects (lyricRenderer, lyMaskPaint, lyFadeShader) are safe to keep.
+     * Resources lazily rebuild against the fresh context on the next render.
+     */
+    public void invalidateGpuResources() {
+        fluidBg.invalidateStatic();
+    }
+
+    /** Full teardown on app exit. */
+    public void dispose() {
+        fluidBg.dispose();
+        if (lyFadeShader != null) { lyFadeShader.close(); lyFadeShader = null; }
+        lyMaskPaint.close();
+    }
 }
