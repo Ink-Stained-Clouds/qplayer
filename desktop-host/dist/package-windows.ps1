@@ -13,17 +13,12 @@ $dir = "$T\QPlayer"
 if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-# binary + the JDK native DLLs native-image emits next to it, MINUS the AWT/Java2D
-# DLLs. AWT is statically reachable (the macOS tray + placeholder still reference it)
-# so native-image emits awt.dll/fontmanager.dll/... but the Windows runtime never
-# calls AWT — the tray is JNA (WinTray) and the icon ships as app-icon.png, so no
-# Java2D placeholder is drawn. Shipping these would just bloat the zip.
+# binary + the JDK native DLLs native-image emits next to it. AWT/Java2D
+# (awt.dll, javajpeg.dll, lcms.dll, mlib_image.dll, ...) is still needed at runtime
+# by DesktopColorExtractor (album-art colour), the GLFW window-icon decode, and the
+# AWT clipboard — so these are NOT excluded. (The tray itself is JNA on Windows.)
 Copy-Item $bin "$dir\qplayer.exe"
-$awtDlls = @('awt.dll','jawt.dll','fontmanager.dll','freetype.dll','javajpeg.dll',
-             'lcms.dll','mlib_image.dll','splashscreen.dll')
-Get-ChildItem "$T\*.dll" -ErrorAction SilentlyContinue |
-    Where-Object { $awtDlls -notcontains $_.Name } |
-    Copy-Item -Destination $dir
+Copy-Item "$T\*.dll" $dir -ErrorAction SilentlyContinue
 
 # Skija + LWJGL native DLLs straight from the local Maven repo (Windows resolves
 # DLLs from the exe directory, so everything goes next to qplayer.exe).
