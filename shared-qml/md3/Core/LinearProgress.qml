@@ -145,51 +145,57 @@ Item {
             var m = lw / 2 + 1;
             var x0 = m, x1 = w - m;
             var amplitude = Math.min(h / 4, h / 2 - lw / 2);
-            var frequency = 0.1; // Wave density
+            var frequency = 0.1;
 
-            // Track (inactive)
+            // Build a smooth sine-wave path using cubic Hermite bezier segments.
+            // Each segment uses the analytical slope (A·k·cos(kx+φ)) as the tangent,
+            // so the curve is mathematically C¹-continuous with no polyline kinks.
+            // segW=8px gives ~8 bezier spans per wave period (≈63px) — fast and
+            // indistinguishable from the true sine at any zoom level.
+            function buildPath(fromX, toX) {
+                var segW = 8;
+                var x = fromX;
+                ctx.moveTo(x, cy + amplitude * Math.sin(x * frequency + phase));
+                while (x < toX) {
+                    var x2 = Math.min(x + segW, toX);
+                    var y1 = cy + amplitude * Math.sin(x  * frequency + phase);
+                    var y2 = cy + amplitude * Math.sin(x2 * frequency + phase);
+                    // Hermite control points from the analytical derivative.
+                    var s1 = amplitude * frequency * Math.cos(x  * frequency + phase);
+                    var s2 = amplitude * frequency * Math.cos(x2 * frequency + phase);
+                    var d  = (x2 - x) / 3;
+                    ctx.bezierCurveTo(x  + d, y1 + s1 * d,
+                                      x2 - d, y2 - s2 * d,
+                                      x2, y2);
+                    x = x2;
+                }
+            }
+
+            // Track (inactive, full width)
             ctx.beginPath();
             ctx.strokeStyle = trackColor;
-            for (var x = x0; x <= x1; x += 2) {
-                var y = cy + amplitude * Math.sin((x * frequency) + phase);
-                if (x === x0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
+            buildPath(x0, x1);
             ctx.stroke();
 
             // Indicator (active)
             ctx.beginPath();
             ctx.strokeStyle = activeColor;
             if (control.indeterminate) {
-                var indetProgress = (phase % (Math.PI * 2)) / (Math.PI * 2); // 0..1
                 var span = x1 - x0;
                 var barWidth = span * 0.5;
-                var startX = x0 + (span + barWidth) * indetProgress - barWidth;
-                var endXi = startX + barWidth;
-                var begun = false;
-                for (var xi = x0; xi <= x1; xi += 2) {
-                    if (xi >= startX && xi <= endXi) {
-                        var yi = cy + amplitude * Math.sin((xi * frequency) + phase);
-                        if (!begun) { ctx.moveTo(xi, yi); begun = true; }
-                        else ctx.lineTo(xi, yi);
-                    }
+                var startX = x0 + (phase / (Math.PI * 2)) * (span + barWidth) - barWidth;
+                var fromXi = Math.max(x0, startX);
+                var toXi   = Math.min(x1, startX + barWidth);
+                if (fromXi < toXi) {
+                    buildPath(fromXi, toXi);
+                    ctx.stroke();
                 }
-                ctx.stroke();
             } else {
                 var endX = x0 + (x1 - x0) * Math.max(0, Math.min(1, progress));
-                var started = false;
-                for (var xd = x0; xd < endX; xd += 2) {
-                    var yd = cy + amplitude * Math.sin((xd * frequency) + phase);
-                    if (!started) { ctx.moveTo(xd, yd); started = true; }
-                    else ctx.lineTo(xd, yd);
+                if (endX > x0) {
+                    buildPath(x0, endX);
+                    ctx.stroke();
                 }
-                // End exactly at endX (not the last 2px step) so the active tip advances
-                // continuously instead of snapping to the 2px sampling grid.
-                if (started) {
-                    var yEnd = cy + amplitude * Math.sin((endX * frequency) + phase);
-                    ctx.lineTo(endX, yEnd);
-                }
-                ctx.stroke();
             }
         }
         

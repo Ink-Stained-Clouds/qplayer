@@ -49,6 +49,7 @@ Item {
         elide: Text.ElideRight
     }
     Text {
+        id: artistText
         anchors.top: titleText.bottom
         anchors.topMargin: 4
         anchors.left: parent.left
@@ -59,6 +60,25 @@ Item {
         color: "#B3FFFFFF"
         fontSize: 14
         elide: Text.ElideRight
+    }
+
+    // --- middle: album cover (pure-music / no lyrics) -----------------
+    Item {
+        visible: !player.hasLyrics
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: artistText.bottom
+        anchors.bottom: transport.top
+        anchors.topMargin: 16
+        anchors.bottomMargin: 16
+
+        CoverImage {
+            anchors.centerIn: parent
+            width: Math.max(80, Math.min(parent.width - 56, parent.height - 56))
+            height: width
+            radius: 12
+            source: player.coverPath !== "" ? player.coverPath : player.coverUrl
+        }
     }
 
     // --- bottom: transport --------------------------------------------

@@ -193,6 +193,10 @@ public final class PlayerController {
     // 0 = list loop (default, current behaviour), 1 = shuffle, 2 = repeat one.
     public final Property<Integer> playMode = new Property<>(0);
     public final Property<List<LyricLine>> lyrics = new Property<>(Collections.<LyricLine>emptyList());
+    /** True once lyrics have been loaded and the list is non-empty; false for
+     *  pure-music / instrumental tracks. QML binds this to show the album cover
+     *  in the lyric area instead of empty space. */
+    public final Property<Boolean> hasLyrics = new Property<>(false);
     /** Index of the current lyric line for player.positionMs, or -1. */
     public final Property<Integer> lyricIndex = new Property<>(-1);
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
@@ -931,6 +935,10 @@ public final class PlayerController {
             positionMs.set(0L);
             currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
             currentLikeable.set(t.neteaseId != 0);
+            // Clear previous track's lyrics immediately so the cover art shows
+            // while the new track's lyrics are loading.
+            lyrics.set(Collections.<LyricLine>emptyList());
+            hasLyrics.set(false);
         });
         updateCover(t, i);
 
@@ -1258,7 +1266,7 @@ public final class PlayerController {
                 lines = neteaseLyricCacheFirst(songId);
             }
             final List<LyricLine> ly = lines;
-            post(() -> { if (playIndex == expectedIndex) lyrics.set(ly); });
+            post(() -> { if (playIndex == expectedIndex) { lyrics.set(ly); hasLyrics.set(!ly.isEmpty()); } });
         });
     }
 
@@ -1383,13 +1391,16 @@ public final class PlayerController {
     private void loadLocalLyrics(Track t) {
         if (t.lyricFilePath != null) {
             try {
-                lyrics.set(LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath));
+                List<LyricLine> parsed = LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath);
+                lyrics.set(parsed);
+                hasLyrics.set(!parsed.isEmpty());
                 return;
             } catch (Throwable e) {
                 Logger.warn("lyric parse failed: {}", e.getMessage());
             }
         }
         lyrics.set(Collections.<LyricLine>emptyList());
+        hasLyrics.set(false);
     }
 
     private static Track toTrack(NeteaseSong s) {
