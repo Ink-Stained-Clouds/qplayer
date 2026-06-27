@@ -148,12 +148,13 @@ final class InputBridge {
         QmlView v = win.view();
         if (v == null) return;
         float topInset = win.settings() != null ? win.settings().topInset() : 0f;
+        float surfaceWLogical = win.framebufferSize()[0] / win.uiScale();
         float surfaceHLogical = win.framebufferSize()[1] / win.uiScale();
         LyricCompositor c = win.compositor();
         // The lyric body (between the QML title and transport bands) is host-drawn
         // with no QML controls under it: a drag scrolls, a tap seeks. Wait for slop
         // before engaging the scroll so a tap stays a tap.
-        if (c.lyricsScrollable(y, surfaceHLogical, topInset)) {
+        if (c.lyricsScrollable(x, y, surfaceWLogical, surfaceHLogical, topInset)) {
             lyGrab = true;
             lyDownY = y;
             lyMoved = false;

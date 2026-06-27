@@ -41,8 +41,14 @@ public final class LyricCompositor {
         boolean lyricBgStatic();
     }
 
-    // Reserved height (logical px) for the lyric-page transport bar at the bottom.
+    // Reserved height (logical px) for the lyric-page transport bar at the bottom
+    // (portrait, where the transport sits under the lyrics).
     private static final float L_TRANSPORT_H = 136f;
+    // Landscape lyric column insets: the column moves to the right half and the
+    // cover + transport live in the QML chrome on the left, so the column can run
+    // nearly the full height. Kept in sync with LyricOverlay.qml and lyricsScrollable.
+    private static final float L_LANDSCAPE_TOP = 24f;
+    private static final float L_LANDSCAPE_BOTTOM = 24f;
 
     private final LyricRenderer lyricRenderer = new LyricRenderer();
     private final FluidBackground fluidBg = new FluidBackground(System.nanoTime());
@@ -61,15 +67,17 @@ public final class LyricCompositor {
     private long lyBaseMs;
     private long lyBaseNanos;
 
-    // Edge-fade gradient + mask paint, cached by surface height + column top.
-    private float lyShaderH = -1f;
+    // Edge-fade gradient + mask paint, cached by column top + height.
+    private float lyShaderColH = -1f;
     private float lyShaderTopY = -1f;
     private Shader lyFadeShader;
     private final Paint lyMaskPaint = new Paint();
 
     // Cached lyric-column rect + cover-key string (both were rebuilt every frame).
     private Rect lyColRect;
-    private float lyColW = -1f, lyColH = -1f;
+    private float lyColW = -1f, lyColH = -1f, lyColTopY = -1f, lyColLeft = -1f;
+    // Last published cover-only flag, read by lyricsScrollable off the input thread.
+    private boolean coverOnlyCached;
     private Object lyKeyTitle, lyKeyUrl;
     private String lyCoverKey;
 
@@ -88,10 +96,19 @@ public final class LyricCompositor {
         return topInset + 144f;
     }
 
-    /** Whether a touch/drag at logical {@code y} should scroll the lyric column: the
-     *  page must be fully open and the point inside the lyric band. */
-    public boolean lyricsScrollable(float y, float surfaceHeightLogical, float topInset) {
+    /** Whether a touch/drag at logical {@code (x,y)} should scroll the lyric column: the
+     *  page must be fully open and the point inside the lyric band. In landscape the
+     *  column is the right half only (the left half holds the QML cover + transport),
+     *  and a cover-only track has no column to scroll. */
+    public boolean lyricsScrollable(float x, float y, float surfaceWLogical,
+                                    float surfaceHeightLogical, float topInset) {
         if (lyricSlide < 0.99f || !lyricRenderer.hasLines()) return false;
+        if (surfaceWLogical > surfaceHeightLogical) {
+            if (coverOnlyCached) return false;
+            float topY = topInset + L_LANDSCAPE_TOP;
+            float bottomY = surfaceHeightLogical - L_LANDSCAPE_BOTTOM;
+            return x >= surfaceWLogical * 0.5f && y >= topY && y <= bottomY;
+        }
         float topY = lyricTopY(topInset);
         float bottomY = surfaceHeightLogical - L_TRANSPORT_H;
         return y >= topY && y <= bottomY;
@@ -192,8 +209,29 @@ public final class LyricCompositor {
         float w = fbW / uiScale;
         float h = fbH / uiScale;
         float topInset = settings != null ? settings.topInset() : 0f;
-        float topY = lyricTopY(topInset);
-        ensureLyricShaders(h, topY);
+
+        // Lyric-column geometry by orientation. Portrait stacks the column full-width
+        // between the QML title and transport bands; landscape moves it to the right
+        // half (the QML chrome draws cover + transport on the left). A cover-only track
+        // (no lyrics / instrumental) drops the side column in landscape so the cover
+        // can center. Kept in sync with LyricOverlay.qml and lyricsScrollable.
+        boolean landscape = w > h;
+        boolean coverOnly = Boolean.TRUE.equals(controller.lyricsCoverOnly.peek());
+        coverOnlyCached = coverOnly;
+        float pad = 28f;
+        float colLeft, colTopY, colW, colH;
+        if (landscape) {
+            colLeft = w * 0.5f;
+            colTopY = topInset + L_LANDSCAPE_TOP;
+            colW = (w - colLeft) - 2f * pad;
+            colH = h - colTopY - L_LANDSCAPE_BOTTOM;
+        } else {
+            colLeft = 0f;
+            colTopY = lyricTopY(topInset);
+            colW = w - 2f * pad;
+            colH = h - colTopY - L_TRANSPORT_H;
+        }
+        ensureLyricShaders(colTopY, colH);
         int sc = canvas.save();
         canvas.scale(uiScale, uiScale);
 
@@ -219,35 +257,39 @@ public final class LyricCompositor {
         // 2) the lyrics column. The title (top band) and transport (bottom band) are
         // drawn by the QML LyricOverlay on top of this; only the lyrics column is
         // host-drawn. Render into a layer, then multiply a vertical alpha gradient
-        // (DST_IN) so lines fade toward the top/bottom edges.
-        float pad = 28f;
-        float colH = h - topY - L_TRANSPORT_H;
-        if (lyColRect == null || lyColW != w || lyColH != colH) {
-            lyColRect = Rect.makeXYWH(0f, topY, w, colH);
-            lyColW = w;
-            lyColH = colH;
+        // (DST_IN) so lines fade toward the top/bottom edges. Skipped for a cover-only
+        // landscape track — there's no side column, the QML cover centers instead.
+        if (!(landscape && coverOnly)) {
+            if (lyColRect == null || lyColLeft != colLeft || lyColTopY != colTopY
+                    || lyColW != w || lyColH != colH) {
+                lyColRect = Rect.makeXYWH(colLeft, colTopY, w - colLeft, colH);
+                lyColLeft = colLeft;
+                lyColTopY = colTopY;
+                lyColW = w;
+                lyColH = colH;
+            }
+            Rect colRect = lyColRect;
+            int lc = canvas.saveLayer(colRect, null);
+            LyricSkia.setCanvas(canvas);
+            lyricRenderer.render(canvas, colLeft + pad, colTopY, colW, colH, controller.position());
+            lyMaskPaint.setShader(lyFadeShader);
+            lyMaskPaint.setBlendMode(BlendMode.DST_IN);
+            canvas.drawRect(colRect, lyMaskPaint);
+            lyMaskPaint.setShader(null);
+            canvas.restoreToCount(lc);
         }
-        Rect colRect = lyColRect;
-        int lc = canvas.saveLayer(colRect, null);
-        LyricSkia.setCanvas(canvas);
-        lyricRenderer.render(canvas, pad, topY, w - 2f * pad, colH, controller.position());
-        lyMaskPaint.setShader(lyFadeShader);
-        lyMaskPaint.setBlendMode(BlendMode.DST_IN);
-        canvas.drawRect(colRect, lyMaskPaint);
-        lyMaskPaint.setShader(null);
-        canvas.restoreToCount(lc);
 
         canvas.restoreToCount(sc);
     }
 
-    // Rebuild the cached lyric gradients only when the surface height or column top
-    // changes (top tracks the status-bar inset, which can settle late).
-    private void ensureLyricShaders(float h, float topY) {
-        if (h == lyShaderH && topY == lyShaderTopY && lyFadeShader != null) return;
-        lyShaderH = h;
+    // Rebuild the cached lyric gradients only when the column top or height changes
+    // (top tracks the status-bar inset, which can settle late; both change on a
+    // portrait<->landscape flip).
+    private void ensureLyricShaders(float topY, float colH) {
+        if (topY == lyShaderTopY && colH == lyShaderColH && lyFadeShader != null) return;
         lyShaderTopY = topY;
+        lyShaderColH = colH;
         if (lyFadeShader != null) lyFadeShader.close();
-        float colH = h - topY - L_TRANSPORT_H;
         float f = Math.min(0.4f, 40f / colH);
         lyFadeShader = Shader.makeLinearGradient(
                 0f, topY, 0f, topY + colH,

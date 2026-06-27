@@ -190,6 +190,11 @@ public final class PlayerController {
     // 0 = list loop (default, current behaviour), 1 = shuffle, 2 = repeat one.
     public final Property<Integer> playMode = new Property<>(0);
     public final Property<List<LyricLine>> lyrics = new Property<>(Collections.<LyricLine>emptyList());
+    /** Cover-centered layout flag for the lyric page: true when there are no lyrics, or
+     *  it's an instrumental ("纯音乐") track with fewer than 3 lines. Both the QML chrome
+     *  (centers the cover) and the host compositor (drops the side lyric column in
+     *  landscape) read it. */
+    public final Property<Boolean> lyricsCoverOnly = new Property<>(Boolean.TRUE);
     /** Index of the current lyric line for player.positionMs, or -1. */
     public final Property<Integer> lyricIndex = new Property<>(-1);
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
@@ -344,6 +349,27 @@ public final class PlayerController {
     public void setLogVisible(boolean visible) {
         this.logVisible = visible;
         if (visible) lastLogVersion = -1;
+    }
+
+    /** Publish a new lyric list and derive {@link #lyricsCoverOnly}. */
+    private void applyLyrics(List<LyricLine> ly) {
+        lyrics.set(ly);
+        lyricsCoverOnly.set(computeCoverOnly(ly));
+    }
+
+    /** Cover-only when there are no lyrics, or an instrumental marker ("纯音乐") with
+     *  fewer than 3 lines — a lone "纯音乐，请欣赏" placeholder centers the cover instead
+     *  of floating a single line beside it. */
+    private static boolean computeCoverOnly(List<LyricLine> ly) {
+        if (ly == null || ly.isEmpty()) return true;
+        if (ly.size() < 3) {
+            for (LyricLine l : ly) {
+                if (l == null) continue;
+                if (l.text().contains("纯音乐")) return true;
+                if (l.translation != null && l.translation.contains("纯音乐")) return true;
+            }
+        }
+        return false;
     }
 
     private void updateLyricIndex(long pos) {
@@ -1124,7 +1150,7 @@ public final class PlayerController {
                 lines = neteaseLyricCacheFirst(songId);
             }
             final List<LyricLine> ly = lines;
-            post(() -> { if (playIndex == expectedIndex) lyrics.set(ly); });
+            post(() -> { if (playIndex == expectedIndex) applyLyrics(ly); });
         });
     }
 
@@ -1248,13 +1274,13 @@ public final class PlayerController {
     private void loadLocalLyrics(Track t) {
         if (t.lyricFilePath != null) {
             try {
-                lyrics.set(LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath));
+                applyLyrics(LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath));
                 return;
             } catch (Throwable e) {
                 Logger.warn("lyric parse failed: {}", e.getMessage());
             }
         }
-        lyrics.set(Collections.<LyricLine>emptyList());
+        applyLyrics(Collections.<LyricLine>emptyList());
     }
 
     private static Track toTrack(NeteaseSong s) {

@@ -10,6 +10,12 @@ import "."
 Item {
     id: overlay
 
+    // Landscape (wide) layout: cover + transport on the left, lyrics on the right
+    // half (host-drawn). Driven by aspect so a desktop window, tablet, or phone in
+    // landscape all adopt it. coverOnly (no lyrics / instrumental) centers the cover.
+    property bool landscape: overlay.width > overlay.height
+    property bool coverOnly: player.lyricsCoverOnly
+
     function fmt(ms) {
         if (ms <= 0) return "0:00";
         var s = Math.floor(ms / 1000), m = Math.floor(s / 60), r = s % 60;
@@ -34,6 +40,7 @@ Item {
 
     Text {
         id: titleText
+        visible: !overlay.landscape
         anchors.top: backBtn.bottom
         anchors.topMargin: 2
         anchors.left: parent.left
@@ -49,6 +56,7 @@ Item {
         elide: Text.ElideRight
     }
     Text {
+        visible: !overlay.landscape
         anchors.top: titleText.bottom
         anchors.topMargin: 4
         anchors.left: parent.left
@@ -61,9 +69,10 @@ Item {
         elide: Text.ElideRight
     }
 
-    // --- bottom: transport --------------------------------------------
+    // --- bottom: transport (portrait) ---------------------------------
     Item {
         id: transport
+        visible: !overlay.landscape
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -148,6 +157,139 @@ Item {
                 icon: player.currentLiked ? "favorite" : "favorite_border"
                 contentColor: player.currentLiked ? "#FFFF5277" : "#99FFFFFF"
                 onClicked: player.toggleLike()
+            }
+        }
+    }
+
+    // --- landscape: cover + title + transport on the left -------------
+    // The host draws the lyrics in the right half (or, when coverOnly, nothing — and
+    // this column centers across the full width). Plain anchors, no positioner: the
+    // play clock republishes positionMs/lyricProgress ~5x/s and a Column/Layout here
+    // would re-run its distribution pass each of those frames (see MiniPlayer).
+    Item {
+        id: landscapeChrome
+        visible: overlay.landscape
+        anchors.fill: parent
+
+        // Half the page, or the whole width when there's no side lyric column.
+        readonly property real regionW: overlay.coverOnly ? overlay.width : overlay.width / 2
+        // Square cover bounded by the region width and the height left after the
+        // title/artist/progress/buttons stack; capped so it isn't huge on desktop.
+        readonly property real coverSize:
+            Math.max(120, Math.min(regionW - 96, overlay.height - 248, 360))
+
+        Item {
+            id: col
+            width: landscapeChrome.coverSize
+            // cover + (title 26 + artist 18 + gaps + progress + labels + buttons 48).
+            height: landscapeChrome.coverSize + 196
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.horizontalCenter: parent.left
+            anchors.horizontalCenterOffset: landscapeChrome.regionW / 2
+
+            CoverImage {
+                id: lCover
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: landscapeChrome.coverSize
+                height: landscapeChrome.coverSize
+                radius: 16
+                iconSize: 64
+                source: player.coverPath !== "" ? player.coverPath : player.coverUrl
+            }
+            Text {
+                id: lTitle
+                anchors.top: lCover.bottom
+                anchors.topMargin: 20
+                anchors.left: parent.left
+                anchors.right: parent.right
+                text: player.title
+                color: "#FFFFFFFF"
+                font.family: Theme.typography.titleLarge.family
+                font.pixelSize: 20
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+            }
+            Text {
+                id: lArtist
+                anchors.top: lTitle.bottom
+                anchors.topMargin: 4
+                anchors.left: parent.left
+                anchors.right: parent.right
+                text: player.artist
+                color: "#B3FFFFFF"
+                fontSize: 13
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+            }
+            LinearProgress {
+                id: lProgress
+                anchors.top: lArtist.bottom
+                anchors.topMargin: 22
+                anchors.left: parent.left
+                anchors.right: parent.right
+                wavy: true
+                visible: player.lyricSlide > 0.001
+                value: player.lyricProgress
+            }
+            MouseArea {
+                anchors.fill: lProgress
+                anchors.topMargin: -10
+                anchors.bottomMargin: -10
+                onPressed: if (player.durationMs > 0)
+                               player.seek(Math.round(mouseX / width * player.durationMs))
+                onPositionChanged: if (pressed && player.durationMs > 0)
+                                       player.seek(Math.round(Math.max(0, Math.min(width, mouseX)) / width * player.durationMs))
+            }
+            Text {
+                anchors.left: parent.left
+                anchors.top: lProgress.bottom
+                anchors.topMargin: 6
+                text: overlay.fmt(player.positionMs)
+                color: "#B3FFFFFF"
+                fontSize: 11
+            }
+            Text {
+                anchors.right: parent.right
+                anchors.top: lProgress.bottom
+                anchors.topMargin: 6
+                text: overlay.fmt(player.durationMs)
+                color: "#B3FFFFFF"
+                fontSize: 11
+            }
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                spacing: 18
+                IconButton {
+                    type: "standard"
+                    icon: player.playMode === 1 ? "shuffle"
+                          : (player.playMode === 2 ? "repeat_one" : "repeat")
+                    contentColor: player.playMode === 0 ? "#99FFFFFF" : "#FF82B1FF"
+                    onClicked: player.cyclePlayMode()
+                }
+                IconButton {
+                    type: "standard"; icon: "skip_previous"
+                    contentColor: "#FFFFFFFF"
+                    onClicked: player.prev()
+                }
+                IconButton {
+                    type: "filled"
+                    icon: player.playing ? "pause" : "play_arrow"
+                    onClicked: player.toggle()
+                }
+                IconButton {
+                    type: "standard"; icon: "skip_next"
+                    contentColor: "#FFFFFFFF"
+                    onClicked: player.next()
+                }
+                IconButton {
+                    type: "standard"
+                    enabled: player.currentLikeable
+                    icon: player.currentLiked ? "favorite" : "favorite_border"
+                    contentColor: player.currentLiked ? "#FFFF5277" : "#99FFFFFF"
+                    onClicked: player.toggleLike()
+                }
             }
         }
     }
