@@ -50,6 +50,10 @@ final class TrayController implements PlayerController.PlaybackListener {
         // field IDs aren't registered). With AUTO_SIZE off, the file goes straight
         // to the GTK tray, which scales it to the panel itself — no AWT involved.
         SystemTray.AUTO_SIZE = false;
+        // TEMP DIAGNOSTIC (revert): surface dorkbox's internal logging so the Windows
+        // tray-click failure (a silently-swallowed SLF4J error) becomes visible.
+        // Needs an SLF4J binding on the classpath (slf4j-simple, added to the pom).
+        SystemTray.DEBUG = true;
         try {
             tray = SystemTray.get("QPlayer");
         } catch (Throwable t) {
