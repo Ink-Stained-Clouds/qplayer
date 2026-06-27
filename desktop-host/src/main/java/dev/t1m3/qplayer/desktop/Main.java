@@ -34,6 +34,15 @@ import java.util.List;
 public final class Main {
 
     public static void main(String[] args) {
+        // Windows native binary: drop the console window when double-clicked (we own
+        // a fresh console alone), keep it when launched from a terminal so logs show.
+        // Before anything writes to stdout (log4j console appender) so the decision
+        // is made first.
+        if (System.getProperty("java.vm.name", "").contains("Substrate")
+                && System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            WinConsole.detachIfStandalone();
+        }
+
         // Route the shared player-core logger to log4j2 (colored console + rolling
         // logs/ file, config in log4j2.xml). First thing in main so every later line
         // — incl. the startup property fixups below — lands in the configured format.

@@ -9,6 +9,9 @@
     "interfaces":["dev.t1m3.qplayer.desktop.WinTray$U32"]
   },
   {
+    "interfaces":["dev.t1m3.qplayer.desktop.WinConsole$K32"]
+  },
+  {
     "interfaces":["org.apache.maven.plugin.MavenPluginManager"]
   }
 ]
