@@ -22,21 +22,21 @@ import java.io.File;
 /**
  * System-tray integration (the desktop analogue of the Android PlaybackService).
  *
- * <p>Architecture: a {@link TrayIcon} (native Win32 NOTIFYICON / GtkStatusIcon /
- * macOS NSStatusItem via AWT) carries the icon + tooltip and surfaces mouse events
- * in absolute screen coords. The menu itself is a Swing {@link javax.swing.JPopupMenu}
- * drawn by Java2D — gives us full font control (native menus on Windows ignore
- * setFont and rely on GDI font-linking, which renders CJK as tofu on some Win10
- * LTSC installs) AND a single code path across all three OSes.
+ * <p>Two backends:
+ * <ul>
+ *   <li><b>Windows</b> ({@link WinTray}): Shell_NotifyIcon + a native Win32 popup
+ *       menu via JNA. The menu is rendered by the OS, so CJK works with zero
+ *       {@code java.awt} font-manager init — which dies in the native image
+ *       ({@code sun.awt.FontConfiguration} NPEs with no JDK lib dir).
+ *   <li><b>Linux / macOS</b>: AWT {@link TrayIcon} + a Swing {@link javax.swing.JPopupMenu}
+ *       (Java2D-drawn, so setFont controls the CJK font). Works on the JVM; the
+ *       native backends for these platforms are a follow-up.
+ * </ul>
  *
- * <p>FlatLaf (Material Design Dark) styles the popup; the rest of the app is
- * GLFW/LWJGL so there is no other Swing UI to clash with the L&amp;F change.
- *
- * <p>Threading: tray callbacks arrive on AWT's EDT, and
- * {@link PlayerController.PlaybackListener#onPlaybackChanged} may fire from the
- * audio/worker threads, so every read/write funnels through the window's
- * main-task queue — the same queue playback control runs on — so neither the
- * audio thread nor the EDT touches controller state directly.
+ * <p>Threading: tray callbacks arrive on a backend thread (the Win32 pump thread
+ * or AWT's EDT) and {@link PlayerController.PlaybackListener#onPlaybackChanged} may
+ * fire from the audio/worker threads, so every action funnels through the window's
+ * main-task queue — the same queue playback control runs on.
  */
 final class TrayController implements PlayerController.PlaybackListener {
 
@@ -44,6 +44,11 @@ final class TrayController implements PlayerController.PlaybackListener {
     private final DesktopWindow win;
     private final byte[] iconPng;
 
+    // Windows backend (non-null when active).
+    private WinTray winTray;
+    private Object winPlayPause;
+
+    // AWT backend (non-Windows).
     private TrayIcon trayIcon;
     private javax.swing.JPopupMenu popup;
     private javax.swing.JDialog popupAnchor;
@@ -59,6 +64,41 @@ final class TrayController implements PlayerController.PlaybackListener {
     /** Build the tray. Returns false (and logs) if no tray is available, in which
      *  case the app still runs windowed. */
     boolean install() {
+        return isWindows() ? installWin() : installAwt();
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    // ---------- Windows backend ----------
+    private boolean installWin() {
+        try {
+            winTray = new WinTray();
+            winTray.setIconPng(iconPng != null ? iconPng : placeholderPng());
+            winTray.addItem("上一首", () -> win.postMainTask(controller::prev));
+            winPlayPause = winTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
+            winTray.addItem("下一首", () -> win.postMainTask(controller::next));
+            winTray.addSeparator();
+            winTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
+            winTray.addItem("退出", () -> win.postMainTask(() -> {
+                shutdown();
+                win.requestQuit();
+            }));
+            if (winTray.install()) return true;
+            winTray = null;
+            return false;
+        } catch (Throwable t) {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            t.printStackTrace(new java.io.PrintWriter(sw));
+            Logger.warn("Windows tray init failed:\n{}", sw);
+            winTray = null;
+            return false;
+        }
+    }
+
+    // ---------- AWT backend (Linux / macOS) ----------
+    private boolean installAwt() {
         if (!SystemTray.isSupported()) {
             Logger.warn("system tray not supported; tray menu disabled");
             return false;
@@ -67,10 +107,6 @@ final class TrayController implements PlayerController.PlaybackListener {
             File icon = iconFile();
             Image img = (icon != null) ? ImageIO.read(icon) : placeholder();
             menuFont = pickCjkFont();
-
-            // Dark, flat L&F for the popup. Set before any JComponent is built.
-            try { com.formdev.flatlaf.intellijthemes.FlatMaterialDesignDarkIJTheme.setup(); }
-            catch (Throwable t) { Logger.warn("FlatLaf init failed: {}", t); }
 
             popup = new javax.swing.JPopupMenu();
             popup.add(swingItem("上一首", controller::prev));
@@ -106,12 +142,10 @@ final class TrayController implements PlayerController.PlaybackListener {
                 @Override public void mouseReleased(MouseEvent e) { showPopupAt(e.getX(), e.getY()); }
             });
             SystemTray.getSystemTray().add(trayIcon);
-            Logger.info("system tray initialized (font={})",
+            Logger.info("system tray initialized: AWT (font={})",
                     menuFont != null ? menuFont.getFamily() : "default");
             return true;
         } catch (Throwable t) {
-            // Print the full stack: under native-image a bare NPE carries no message
-            // (helpful-NPE info is stripped), so the toString alone is useless.
             java.io.StringWriter sw = new java.io.StringWriter();
             t.printStackTrace(new java.io.PrintWriter(sw));
             Logger.warn("system tray init failed:\n{}", sw);
@@ -127,25 +161,35 @@ final class TrayController implements PlayerController.PlaybackListener {
     }
 
     private void refresh() {
-        if (trayIcon == null) return;
         try {
-            if (playPause != null) {
-                javax.swing.SwingUtilities.invokeLater(() ->
-                        playPause.setText(controller.isPlaying() ? "暂停" : "播放"));
-            }
+            String pp = controller.isPlaying() ? "暂停" : "播放";
             Object title = controller.title.peek();
             Object artist = controller.artist.peek();
             String tip = title == null ? "QPlayer"
                     : (artist != null ? artist + " — " + title : String.valueOf(title));
-            // AWT TrayIcon caps tooltips at 127 chars on Windows; trim well under.
+            // Tooltips: AWT caps at 127 chars on Windows, Win32 szTip at 128; trim well under.
             if (tip.length() > 64) tip = tip.substring(0, 63) + "…";
-            trayIcon.setToolTip(tip);
+
+            if (winTray != null) {
+                winTray.setLabel(winPlayPause, pp);
+                winTray.setTooltip(tip);
+            } else if (trayIcon != null) {
+                String tipF = tip;
+                if (playPause != null) {
+                    javax.swing.SwingUtilities.invokeLater(() -> playPause.setText(pp));
+                }
+                trayIcon.setToolTip(tipF);
+            }
         } catch (Throwable t) {
             Logger.warn("tray refresh failed: {}", t);
         }
     }
 
     void shutdown() {
+        if (winTray != null) {
+            try { winTray.shutdown(); } catch (Throwable ignored) {}
+            winTray = null;
+        }
         if (trayIcon != null) {
             try { SystemTray.getSystemTray().remove(trayIcon); } catch (Throwable ignored) {}
             trayIcon = null;
@@ -161,10 +205,8 @@ final class TrayController implements PlayerController.PlaybackListener {
             if (popup == null || popupAnchor == null) return;
             Dimension pref = popup.getPreferredSize();
             Rectangle screen = boundsContaining(screenX, screenY);
-            // Tray sits in the bottom-right of the screen (Win) / top-right (mac)
-            // / wherever-the-panel-is (Linux). Snap the popup's bottom-right to
-            // the click point — works for any of those layouts; clamping below
-            // keeps it on-screen if the click is near a top/left edge.
+            // Snap the popup's bottom-right corner to the click point; clamping
+            // keeps it on-screen for any panel position.
             int x = screenX - pref.width;
             int y = screenY - pref.height;
             if (x < screen.x) x = screen.x;
@@ -194,12 +236,11 @@ final class TrayController implements PlayerController.PlaybackListener {
         return mi;
     }
 
-    /** Pin a CJK family; Windows default (Segoe UI) and macOS default (Helvetica
-     *  Neue) lack CJK glyphs and fall through to the JDK's logical-font chain,
-     *  which renders tofu on stripped / non-fontconfig JDKs. */
+    /** Pin a CJK family; macOS default (Helvetica Neue) lacks CJK glyphs and falls
+     *  through to the JDK's logical-font chain, which renders tofu on stripped /
+     *  non-fontconfig JDKs. */
     private static Font pickCjkFont() {
         String[] candidates = {
-                "Microsoft YaHei UI", "Microsoft YaHei",   // Windows
                 "PingFang SC", "Hiragino Sans GB",         // macOS
                 "Noto Sans CJK SC", "WenQuanYi Micro Hei", // Linux
                 "SimSun", "SimHei"
@@ -225,6 +266,18 @@ final class TrayController implements PlayerController.PlaybackListener {
             return f;
         } catch (Exception e) {
             Logger.warn("tray icon temp write failed: {}", e);
+            return null;
+        }
+    }
+
+    /** Encode the generated placeholder to PNG bytes (icon resource is absent). */
+    private static byte[] placeholderPng() {
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            ImageIO.write(placeholder(), "png", bos);
+            return bos.toByteArray();
+        } catch (Exception e) {
+            Logger.warn("placeholder PNG encode failed: {}", e);
             return null;
         }
     }
