@@ -57,15 +57,20 @@ public final class Main {
         // downstream font-metrics call (incl. the tray's Swing JPopupMenu sizing) dies.
         // The native build bundles the host JDK's fontconfig.bfc as a classpath
         // resource (maven-antrun-plugin in the native profile); extract it to a temp
-        // file and point AWT at it BEFORE any tray/Swing code runs.
+        // file and point AWT at it (sun.awt.fontconfig is the documented override —
+        // FontConfiguration.findFontConfigFile reads it before falling back to the
+        // default lib/fontconfig.bfc lookup) BEFORE any tray/Swing code runs.
         if (System.getProperty("java.vm.name", "").contains("Substrate")
-                && System.getProperty("java.awt.fontconfig") == null) {
+                && System.getProperty("sun.awt.fontconfig") == null) {
             try (InputStream is = Main.class.getResourceAsStream("/fontconfig.bfc")) {
-                if (is != null) {
+                if (is == null) {
+                    Logger.warn("fontconfig.bfc not bundled — tray menus will fail");
+                } else {
                     File f = File.createTempFile("qplayer-fontconfig", ".bfc");
                     f.deleteOnExit();
                     try (OutputStream os = new FileOutputStream(f)) { is.transferTo(os); }
-                    System.setProperty("java.awt.fontconfig", f.getAbsolutePath());
+                    System.setProperty("sun.awt.fontconfig", f.getAbsolutePath());
+                    Logger.info("fontconfig extracted: {}", f.getAbsolutePath());
                 }
             } catch (Throwable t) {
                 Logger.warn("fontconfig extract failed: {}", t);
