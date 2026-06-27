@@ -265,12 +265,6 @@
   }, {
     "pattern":"\\Qapp-icon.png\\E"
   }, {
-    "pattern":"\\Qcom/sun/jna/linux-x86-64/libjnidispatch.so\\E"
-  }, {
-    "pattern":"\\Qcom/sun/jna/win32-x86-64/jnidispatch.dll\\E"
-  }, {
-    "pattern":"\\Qcom/sun/jna/darwin-aarch64/libjnidispatch.jnilib\\E"
-  }, {
     "pattern":"\\Qfonts/MaterialSymbolsRounded.ttf\\E"
   }, {
     "pattern":"\\Qfonts/PingFangSC-Light.otf\\E"

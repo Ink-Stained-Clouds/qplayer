@@ -26,7 +26,6 @@
              release is built on its own runner with the matching natives. -->
         <lwjgl.natives>natives-linux</lwjgl.natives>
         <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
-        <dorkbox.systemtray.version>4.4</dorkbox.systemtray.version>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
         <win.w>1100</win.w>
@@ -147,22 +146,28 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Cross-platform system tray (GtkStatusIcon / AppIndicator / Windows / macOS).
-             GLFW has no tray support; this drives the minimize-to-tray menu. -->
+        <!-- @NotNull annotations on Main/DesktopAudioBackend. Used to come in
+             transitively via dorkbox SystemTray; pin it directly now. -->
         <dependency>
-            <groupId>com.dorkbox</groupId>
-            <artifactId>SystemTray</artifactId>
-            <version>${dorkbox.systemtray.version}</version>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>24.1.0</version>
+            <scope>provided</scope>
         </dependency>
 
-        <!-- TEMP DIAGNOSTIC (revert): dorkbox logs via SLF4J but the app ships no
-             binding, so its tray-click error is swallowed. Bind it (version matches
-             the slf4j-api dorkbox pulls) + simplelogger.properties=debug to see it. -->
+        <!-- System tray. java.awt.SystemTray + TrayIcon for the icon/tooltip;
+             the menu itself is a Swing JPopupMenu (FlatLaf-themed) since native
+             AWT menus on Windows ignore setFont and render CJK as tofu when GDI
+             font-linking is incomplete. See TrayController. -->
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>1.8.0-beta4</version>
-            <scope>runtime</scope>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>3.7.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf-intellij-themes</artifactId>
+            <version>3.7.1</version>
         </dependency>
 
         <!-- Desktop audio: tag reading + javax.sound SPI decoders (mp3/flac/ogg) -->
