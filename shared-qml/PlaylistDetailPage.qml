@@ -49,9 +49,9 @@ Rectangle {
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
-                visible: player.loggedIn && !player.playlistLoading && !player.playlistOwned
-                icon: player.playlistSubscribed ? "bookmark" : "bookmark_border"
-                contentColor: player.playlistSubscribed ? Theme.color.primary : Theme.color.onSurfaceColor
+                visible: player.loggedIn && !player.playlistLoading && !player.currentPlaylistIsOwn
+                icon: player.currentPlaylistSubscribed ? "bookmark" : "bookmark_border"
+                contentColor: player.currentPlaylistSubscribed ? Theme.color.primary : Theme.color.onSurfaceColor
                 onClicked: player.togglePlaylistSubscribe()
             }
         }
@@ -68,7 +68,9 @@ Rectangle {
                 // QueuePage): an invisible detail otherwise keeps the whole
                 // playlist's SongRows alive after you return home.
                 list: page.visible ? player.playlistTracks : null
+                addable: true
                 onActivated: player.playPlaylistTrack(tracks.activatedIndex)
+                onAddRequested: player.addPlaylistTrackToQueue(tracks.addIndex)
             }
 
             LoadingIndicator {

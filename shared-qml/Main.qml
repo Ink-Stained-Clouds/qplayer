@@ -354,6 +354,8 @@ Rectangle {
         }
     }
 
+    DynamicIsland {}
+
     Snackbar { id: snack }
 
     // --- debug log overlay ---------------------------------------------

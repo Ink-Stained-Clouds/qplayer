@@ -605,18 +605,25 @@ public final class NeteaseClient {
     /**
      * Hot search keywords for the search page (shown when input is empty).
      * Returns a list of keyword strings ordered by popularity.
+     *
+     * <p>Uses {@code /weapi/search/hot} with {@code type=1111} (the
+     * {@code /search/hot/detail} endpoint was removed server-side and now
+     * returns 404). Response shape: {@code result.hots[].first}.
      */
     public List<String> searchHot() throws IOException {
         // NeteaseCloudMusicApi uses /hotsearchlist/get for the hot-search list; the
         // older search/hot/detail returns nothing now. Both shape data[].searchWord.
         JsonObject obj = weapiJson("hotsearchlist/get", new HashMap<String, Object>());
         List<String> out = new ArrayList<>();
-        if (obj.has("data") && obj.get("data").isJsonArray()) {
-            for (JsonElement el : obj.getAsJsonArray("data")) {
-                if (!el.isJsonObject()) continue;
-                JsonObject item = el.getAsJsonObject();
-                if (item.has("searchWord") && !item.get("searchWord").isJsonNull()) {
-                    out.add(item.get("searchWord").getAsString());
+        if (obj.has("result") && obj.get("result").isJsonObject()) {
+            JsonObject result = obj.getAsJsonObject("result");
+            if (result.has("hots") && result.get("hots").isJsonArray()) {
+                for (JsonElement el : result.getAsJsonArray("hots")) {
+                    if (!el.isJsonObject()) continue;
+                    JsonObject item = el.getAsJsonObject();
+                    if (item.has("first") && !item.get("first").isJsonNull()) {
+                        out.add(item.get("first").getAsString());
+                    }
                 }
             }
         }

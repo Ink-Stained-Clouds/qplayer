@@ -17,6 +17,8 @@ Item {
     }
 
     // Swallow taps on the empty (lyrics) area so they don't leak through.
+    // The lyricDragArea declared below takes priority in the middle region
+    // because it is rendered on top (declared later in source order).
     MouseArea { anchors.fill: parent }
 
     // --- top: dismiss + title + artist ---------------------------------
@@ -169,6 +171,82 @@ Item {
                 icon: player.currentLiked ? "favorite" : "favorite_border"
                 contentColor: player.currentLiked ? "#FFFF5277" : "#99FFFFFF"
                 onClicked: player.toggleLike()
+            }
+        }
+    }
+
+    // --- lyric area: vertical drag to seek ----------------------------
+    // Spans the transparent middle between the title block and the transport.
+    // Declared after the full-screen swallow MouseArea so it has higher
+    // priority and intercepts touch in the lyrics region.
+    Item {
+        id: lyricDragArea
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: artistText.bottom
+        anchors.topMargin: 8
+        anchors.bottom: transport.top
+
+        property bool dragging: false
+        property real dragY: 0
+        property real dragProgress: 0.5  // 0..1 within this area → maps to 0..durationMs
+
+        MouseArea {
+            anchors.fill: parent
+            onPressed: {
+                lyricDragArea.dragging = true
+                lyricDragArea.dragY = mouseY
+                lyricDragArea.dragProgress = Math.max(0, Math.min(1, mouseY / height))
+            }
+            onPositionChanged: {
+                lyricDragArea.dragY = mouseY
+                lyricDragArea.dragProgress = Math.max(0, Math.min(1, mouseY / height))
+            }
+            onReleased: {
+                if (player.durationMs > 0)
+                    player.seek(Math.round(lyricDragArea.dragProgress * player.durationMs))
+                lyricDragArea.dragging = false
+            }
+            onCanceled: { lyricDragArea.dragging = false }
+        }
+
+        // Horizontal seek line
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            y: lyricDragArea.dragY
+            height: 1
+            color: "#FFFFFFFF"
+            opacity: 0.7
+            visible: lyricDragArea.dragging
+        }
+
+        // Small dot anchoring the left end of the seek line
+        Rectangle {
+            x: 20
+            y: lyricDragArea.dragY - 5
+            width: 10; height: 10; radius: 5
+            color: "#FFFFFFFF"
+            visible: lyricDragArea.dragging
+        }
+
+        // Time badge on the right — clipped to stay within the drag area
+        Rectangle {
+            anchors.right: parent.right
+            anchors.rightMargin: 20
+            y: Math.max(0, Math.min(parent.height - 32, lyricDragArea.dragY - 16))
+            width: seekTimeText.width + 20
+            height: 32
+            radius: 8
+            color: "#CC000000"
+            visible: lyricDragArea.dragging
+
+            Text {
+                id: seekTimeText
+                anchors.centerIn: parent
+                text: overlay.fmt(Math.round(lyricDragArea.dragProgress * player.durationMs))
+                color: "#FFFFFFFF"
+                fontSize: 13
             }
         }
     }
