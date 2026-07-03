@@ -825,27 +825,12 @@ public final class NeteaseClient {
     /**
      * Collect (subscribe) or un-collect (unsubscribe) a playlist for the signed-in user.
      * True when code == 200.
-     *
-     * <p>The two directions ride different transports because Netease's risk control
-     * diverges by direction:
-     * <ul>
-     *   <li><b>subscribe</b> → {@code /xeapi/playlist/subscribe}. The official Android
-     *       app moved collecting onto the newest "xeapi" scheme; the old eapi endpoint
-     *       now trips code 405 "操作过于频繁" regardless of the anti-cheat token (the
-     *       hard-coded {@code checkToken} is stale server-side). xeapi clears it.</li>
-     *   <li><b>unsubscribe</b> → {@code /eapi/playlist/unsubscribe}. Un-collecting is
-     *       laxly controlled and keeps working over plain eapi with no token, so we
-     *       leave it on the simpler path.</li>
-     * </ul>
      */
     public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
-        if (subscribe) {
-            JsonObject obj = xeapiJson("/api/playlist/subscribe", "id=" + playlistId);
-            return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
-        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", playlistId);
-        JsonObject obj = eapiJson("/api/playlist/unsubscribe", body, false);
+        String path = subscribe ? "/api/playlist/subscribe" : "/api/playlist/unsubscribe";
+        JsonObject obj = eapiJson(path, body, false);
         return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 
@@ -1011,19 +996,6 @@ public final class NeteaseClient {
      * usually only care about the success flag.
      */
     public boolean like(long songId, boolean isLike) throws IOException {
-        // Tier 1: xeapi /radio/like — the official app's encrypted mobile path.
-        // Single-song favoriting hits the same risk control that pushed playlist
-        // subscribe onto xeapi, so try it here first. Quiet (no toast / no
-        // exception): a non-200 or a transport error just falls through to weapi.
-        try {
-            int xc = xeapiCode("/api/radio/like",
-                    "trackId=" + songId + "&like=" + isLike + "&alg=itembased&time=3");
-            if (xc == 200) return true;
-            Logger.warn("xeapi radio/like non-200 for {} (like={}): code {}", songId, isLike, xc);
-        } catch (IOException e) {
-            Logger.warn("xeapi radio/like failed for {} (like={}): {}", songId, isLike, e.getMessage());
-        }
-        // Tier 2: legacy weapi /radio/like.
         Map<String, Object> body = new HashMap<>();
         body.put("trackId", songId);
         body.put("like", isLike);

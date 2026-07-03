@@ -15,6 +15,24 @@
     <description>Platform-neutral player logic (netease, lyrics, audio abstraction, QML bridge, and the host-drawn lyric page) — must stay Android-dexable: no javax.sound, no platform-native deps. The native Skija .so/.dylib is supplied by each shell.</description>
 
     <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.11.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>5.11.0</version>
+            <scope>test</scope>
+        </dependency>
         <!-- QML engine: the reactive Property bridge to QML + Renderer/QmlView used
              by the host-drawn lyric compositor. -->
         <dependency>

@@ -354,7 +354,11 @@ Rectangle {
         }
     }
 
-    DynamicIsland {}
+    DynamicIsland {
+        // Keep the pill centred over the content area (right of the rail) rather
+        // than the full window width.
+        contentLeft: rail.width
+    }
 
     Snackbar { id: snack }
 

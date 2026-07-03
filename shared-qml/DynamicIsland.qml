@@ -12,6 +12,11 @@ Item {
     anchors.fill: parent
     visible: player.title.length > 0 && player.lyricSlide < 0.001
 
+    // Width of the navigation rail (or any left-side chrome). The pill is centered
+    // over the content area, not the full window, so it stays clear of the rail
+    // in wide/landscape/desktop layouts.
+    property real contentLeft: 0
+
     property bool expanded: false
 
     Timer {
@@ -33,6 +38,10 @@ Item {
         id: pill
 
         anchors.horizontalCenter: parent.horizontalCenter
+        // Shift the pill right so it centres over the content area rather than
+        // the full window. On compact layouts contentLeft is 0 (no rail) so this
+        // is a no-op; on wide/desktop the rail pushes it into the right region.
+        anchors.horizontalCenterOffset: island.contentLeft / 2
         // Center vertically inside the status-bar inset; fall back to 8 dp
         // when there is no inset (e.g. tablet or desktop test).
         y: settings.topInset > 36 ? (settings.topInset - 36) / 2 : 8
