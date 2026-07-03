@@ -37,11 +37,9 @@ Item {
     Rectangle {
         id: pill
 
-        anchors.horizontalCenter: parent.horizontalCenter
-        // Shift the pill right so it centres over the content area rather than
-        // the full window. On compact layouts contentLeft is 0 (no rail) so this
-        // is a no-op; on wide/desktop the rail pushes it into the right region.
-        anchors.horizontalCenterOffset: island.contentLeft / 2
+        // Centre over the content area (right of the rail). On compact layouts
+        // contentLeft is 0 so this equals (parent.width - width) / 2.
+        x: (parent.width + island.contentLeft - width) / 2
         // Center vertically inside the status-bar inset; fall back to 8 dp
         // when there is no inset (e.g. tablet or desktop test).
         y: settings.topInset > 36 ? (settings.topInset - 36) / 2 : 8
@@ -83,19 +81,23 @@ Item {
             Repeater {
                 model: 3
                 Rectangle {
+                    property bool high: false
                     x: index * 6
-                    // Keep the bar vertically centred as its height animates.
                     y: (waveArea.height - height) / 2
                     width: 3
-                    height: 12
+                    height: high ? 18 : 5
                     radius: 2
                     color: Theme.color.inverseOnSurface
-
-                    SequentialAnimation on height {
-                        loops: Animation.Infinite
+                    Behavior on height {
+                        NumberAnimation { duration: 280 + index * 70; easing.type: Easing.InOutSine }
+                    }
+                    // Toggle height on a repeating timer so bars drift out of phase.
+                    Timer {
                         running: player.playing && !island.expanded
-                        NumberAnimation { to: 5;  duration: 280 + index * 70; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 18; duration: 280 + index * 70; easing.type: Easing.InOutSine }
+                        interval: (280 + index * 70) * 2
+                        repeat: true
+                        triggeredOnStart: true
+                        onTriggered: parent.high = !parent.high
                     }
                 }
             }
