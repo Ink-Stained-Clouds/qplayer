@@ -169,6 +169,7 @@ public final class PlayerController {
         }
     }
 
+    private volatile String currentSearchKey = "";
     private volatile String playLevel = "exhigh";
     private volatile boolean unblockEnabled = true;
     private volatile long uid;
@@ -1461,6 +1462,7 @@ public final class PlayerController {
     public void search(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
         final String key = keyword.trim().toLowerCase();
+        currentSearchKey = key;
         // Fast path: check cache on the calling (render) thread.
         CacheEntry entry = searchCache.get(key);
         if (entry != null && !entry.isExpired()) {
@@ -1477,6 +1479,7 @@ public final class PlayerController {
                 CacheEntry existing = searchCache.get(key);
                 if (existing != null && !existing.isExpired()) {
                     post(() -> {
+                        if (!key.equals(currentSearchKey)) return;
                         localSearchResults.set(Collections.<Track>emptyList());
                         searchResults.set(existing.songs);
                         resultCount.set(existing.songs.size());
@@ -1484,29 +1487,29 @@ public final class PlayerController {
                     return;
                 }
                 List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
-                // Legacy /search/get omits album picUrl; batch-fetch details, then
-                // refresh the thumbnail URL for the rows whose cover we just filled
-                // (parseSong already set it for songs that had a cover).
                 fillMissingCovers(r);
                 buildSongThumbs(r, "128");
                 searchCache.put(key, new CacheEntry(r));
                 post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
                     localSearchResults.set(Collections.<Track>emptyList());
                     searchResults.set(r);
                     resultCount.set(r.size());
                 });
             } catch (Throwable e) {
                 Logger.warn("search failed (no network), falling back to cache+local: {}", e.getMessage());
-                // Use an expired/stale cache entry if one exists for this keyword.
                 CacheEntry stale = searchCache.get(key);
                 if (stale != null && !stale.songs.isEmpty()) {
                     List<NeteaseSong> staleSongs = stale.songs;
                     post(() -> {
+                        if (!key.equals(currentSearchKey)) return;
                         searchResults.set(staleSongs);
                         resultCount.set(staleSongs.size());
                     });
                 } else {
-                    post(() -> localSearch(key));
+                    post(() -> {
+                        if (key.equals(currentSearchKey)) localSearch(key);
+                    });
                 }
             }
         });
