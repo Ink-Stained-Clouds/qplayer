@@ -27,31 +27,25 @@ Rectangle {
     implicitHeight: 84
     color: Theme.color.surfaceContainerHigh
 
-    // progress line along the very top edge
-    Rectangle {
+    // Wavy progress bar along the very top edge
+    LinearProgress {
         id: track
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 3
-        color: Theme.color.surfaceContainerHighest
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: player.durationMs > 0
-                   ? parent.width * Math.min(1, player.positionMs / player.durationMs) : 0
-            color: Theme.color.primary
-        }
-        MouseArea {
-            anchors.fill: parent
-            anchors.topMargin: -10
-            anchors.bottomMargin: -10
-            onClicked: {
-                if (player.durationMs > 0)
-                    player.seek(Math.round(mouseX / width * player.durationMs));
-            }
+        height: 16
+        wavy: true
+        value: player.durationMs > 0
+               ? Math.min(1, player.positionMs / player.durationMs) : 0
+    }
+    MouseArea {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: 16
+        onClicked: {
+            if (player.durationMs > 0)
+                player.seek(Math.round(mouseX / width * player.durationMs))
         }
     }
 

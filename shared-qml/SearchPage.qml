@@ -64,132 +64,119 @@ Item {
                     width: parent.width - 32
                     spacing: 12
 
-                    // --- Search history section (hidden when empty) ---
-                    Column {
+                    // --- Search history section (items directly in hotColumn, no nested Column) ---
+                    Item {
                         width: parent.width
-                        spacing: 4
+                        height: 44
                         visible: player.searchHistory.length > 0
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "搜索历史"
+                            font.pixelSize: 18
+                            font.weight: Font.DemiBold
+                            color: Theme.color.onSurfaceColor
+                        }
+                        IconButton {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            type: "standard"
+                            icon: "delete_sweep"
+                            onClicked: player.clearSearchHistory()
+                        }
+                    }
+
+                    Repeater {
+                        model: player.searchHistory.length <= 10 || page.historyExpanded
+                               ? player.searchHistory.length : 10
 
                         Item {
                             width: parent.width
                             height: 44
 
-                            Text {
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "搜索历史"
-                                font.pixelSize: 18
-                                font.weight: Font.DemiBold
-                                color: Theme.color.onSurfaceColor
-                            }
-                            IconButton {
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                type: "standard"
-                                icon: "delete_sweep"
-                                onClicked: player.clearSearchHistory()
-                            }
-                        }
-
-                        Repeater {
-                            model: player.searchHistory.length <= 10 || page.historyExpanded
-                                   ? player.searchHistory.length : 10
-
-                            Item {
-                                width: parent.width
-                                height: 44
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 8
-                                    color: hha.pressed ? Theme.color.surfaceContainerHigh : "transparent"
-
-                                    Row {
-                                        anchors.left: parent.left; anchors.leftMargin: 12
-                                        anchors.right: deleteBtn.left; anchors.rightMargin: 8
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 8
-
-                                        Text {
-                                            text: "history"
-                                            font.family: Theme.iconFont.name
-                                            font.pixelSize: 20
-                                            color: Theme.color.onSurfaceVariantColor
-                                            anchors.verticalCenter: parent.verticalCenter
-                                        }
-                                        Text {
-                                            text: player.searchHistory[index] || ""
-                                            font.pixelSize: 15
-                                            color: Theme.color.onSurfaceColor
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-
-                                    Text {
-                                        id: deleteBtn
-                                        anchors.right: parent.right
-                                        anchors.rightMargin: 12
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: "close"
-                                        font.family: Theme.iconFont.name
-                                        font.pixelSize: 18
-                                        color: Theme.color.onSurfaceVariantColor
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            anchors.margins: -8
-                                            onClicked: player.removeSearchHistory(index)
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: hha
-                                        anchors.fill: parent
-                                        anchors.rightMargin: 44
-                                        onClicked: {
-                                            var kw = player.searchHistory[index]
-                                            query.text = kw
-                                            player.search(kw)
-                                            player.addSearchHistory(kw)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Expand button — visible when there are more than 10 history entries
-                        Item {
-                            width: parent.width
-                            height: 40
-                            visible: player.searchHistory.length > 10 && !page.historyExpanded
-
                             Rectangle {
                                 anchors.fill: parent
                                 radius: 8
-                                color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+                                color: hha.pressed ? Theme.color.surfaceContainerHigh : "transparent"
 
                                 Text {
-                                    anchors.centerIn: parent
-                                    text: "展开更多"
-                                    font.pixelSize: 14
-                                    color: Theme.color.primary
+                                    anchors.left: parent.left; anchors.leftMargin: 40
+                                    anchors.right: parent.right; anchors.rightMargin: 44
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: player.searchHistory[index] || ""
+                                    font.pixelSize: 15
+                                    color: Theme.color.onSurfaceColor
+                                    elide: Text.ElideRight
                                 }
-
+                                Text {
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "history"
+                                    font.family: Theme.iconFont.name
+                                    font.pixelSize: 20
+                                    color: Theme.color.onSurfaceVariantColor
+                                }
+                                Text {
+                                    anchors.right: parent.right; anchors.rightMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "close"
+                                    font.family: Theme.iconFont.name
+                                    font.pixelSize: 18
+                                    color: Theme.color.onSurfaceVariantColor
+                                }
                                 MouseArea {
-                                    id: expandMA
+                                    id: hha
                                     anchors.fill: parent
-                                    onClicked: page.historyExpanded = true
+                                    onClicked: {
+                                        if (mouseX > parent.width - 44) {
+                                            player.removeSearchHistory(index)
+                                        } else {
+                                            var kw = player.searchHistory[index] || ""
+                                            if (kw.length > 0) {
+                                                query.text = kw
+                                                player.search(kw)
+                                                player.addSearchHistory(kw)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
 
-                        // Divider between history and hot searches
+                    // Expand button — visible when there are more than 10 history entries
+                    Item {
+                        width: parent.width
+                        height: 40
+                        visible: player.searchHistory.length > 10 && !page.historyExpanded
+
                         Rectangle {
-                            width: parent.width
-                            height: 1
-                            color: Theme.color.outlineVariant
-                            visible: player.hotSearches.length > 0
+                            anchors.fill: parent
+                            radius: 8
+                            color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "展开更多"
+                                font.pixelSize: 14
+                                color: Theme.color.primary
+                            }
+
+                            MouseArea {
+                                id: expandMA
+                                anchors.fill: parent
+                                onClicked: page.historyExpanded = true
+                            }
                         }
+                    }
+
+                    // Divider between history and hot searches
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Theme.color.outlineVariant
+                        visible: player.searchHistory.length > 0 && player.hotSearches.length > 0
                     }
 
                     // --- Hot searches section ---

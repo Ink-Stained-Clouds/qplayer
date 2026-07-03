@@ -101,8 +101,6 @@ Item {
         visible: control.wavy
         anchors.fill: parent
         antialiasing: true
-        renderTarget: Canvas.FramebufferObject
-        renderStrategy: Canvas.Threaded
 
         // Trigger repaint when dependencies change
         property color trackColor: control.trackColor
