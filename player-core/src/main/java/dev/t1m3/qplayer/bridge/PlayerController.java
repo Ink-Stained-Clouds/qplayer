@@ -236,10 +236,8 @@ public final class PlayerController {
     public final Property<Integer> resultCount = new Property<>(0);
     /** Hot search keywords shown when search input is empty. */
     public final Property<List<String>> hotSearches = new Property<>(Collections.<String>emptyList());
-    /** Recent search history (most-recent first, max 20, persisted to disk). */
+    /** Recent search history (most-recent first, max 50, persisted to disk). */
     public final Property<List<String>> searchHistory = new Property<>(Collections.<String>emptyList());
-    private final List<String> historyList = new ArrayList<>();
-    private static final int HISTORY_MAX = 20;
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
@@ -2095,58 +2093,4 @@ public final class PlayerController {
         saveLocalRecent();
     }
 
-    // --- Search history ---------------------------------------------------
-
-    private void loadSearchHistory() {
-        Path p = Paths.get(AppDirs.base(), "search_history.txt");
-        try {
-            if (!Files.exists(p)) return;
-            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
-            for (String line : text.split("\n")) {
-                String kw = line.trim();
-                if (!kw.isEmpty()) historyList.add(kw);
-            }
-            searchHistory.set(new ArrayList<>(historyList));
-        } catch (IOException e) {
-            Logger.warn("search history load failed: {}", e.getMessage());
-        }
-    }
-
-    private void saveSearchHistory() {
-        try {
-            Files.createDirectories(Paths.get(AppDirs.base()));
-            StringBuilder sb = new StringBuilder();
-            for (String kw : historyList) sb.append(kw).append('\n');
-            Files.write(Paths.get(AppDirs.base(), "search_history.txt"),
-                    sb.toString().getBytes(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            Logger.warn("search history save failed: {}", e.getMessage());
-        }
-    }
-
-    /** Add a keyword to search history (moves to front if already present). */
-    public void addSearchHistory(String keyword) {
-        if (keyword == null || keyword.trim().isEmpty()) return;
-        String kw = keyword.trim();
-        historyList.remove(kw);
-        historyList.add(0, kw);
-        if (historyList.size() > HISTORY_MAX)
-            historyList.subList(HISTORY_MAX, historyList.size()).clear();
-        searchHistory.set(new ArrayList<>(historyList));
-        worker.submit(this::saveSearchHistory);
-    }
-
-    /** Clear all search history. */
-    public void clearSearchHistory() {
-        historyList.clear();
-        searchHistory.set(Collections.<String>emptyList());
-        worker.submit(() -> {
-            try {
-                Path p = Paths.get(AppDirs.base(), "search_history.txt");
-                if (Files.exists(p)) Files.delete(p);
-            } catch (IOException e) {
-                Logger.warn("search history clear failed: {}", e.getMessage());
-            }
-        });
-    }
 }
