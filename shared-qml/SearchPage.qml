@@ -100,36 +100,45 @@ Item {
                                 radius: 8
                                 color: hha.pressed ? Theme.color.surfaceContainerHigh : "transparent"
 
+                                // history icon
                                 Text {
-                                    anchors.left: parent.left; anchors.leftMargin: 40
-                                    anchors.right: parent.right; anchors.rightMargin: 44
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: player.searchHistory[index] || ""
-                                    font.pixelSize: 15
-                                    color: Theme.color.onSurfaceColor
-                                    elide: Text.ElideRight
-                                }
-                                Text {
-                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    x: 12
+                                    width: 24
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: "history"
                                     font.family: Theme.iconFont.name
                                     font.pixelSize: 20
                                     color: Theme.color.onSurfaceVariantColor
                                 }
+                                // keyword text (fills space between icon and close button)
                                 Text {
-                                    anchors.right: parent.right; anchors.rightMargin: 12
+                                    x: 44
+                                    width: parent.width - 44 - 44
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: "close"
-                                    font.family: Theme.iconFont.name
-                                    font.pixelSize: 18
-                                    color: Theme.color.onSurfaceVariantColor
+                                    text: player.searchHistory[index] || ""
+                                    font.pixelSize: 15
+                                    color: Theme.color.onSurfaceColor
+                                    elide: Text.ElideRight
+                                }
+                                // close button — fixed-width container anchored to right
+                                Item {
+                                    id: closeBtn
+                                    width: 40
+                                    height: parent.height
+                                    x: parent.width - width
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "close"
+                                        font.family: Theme.iconFont.name
+                                        font.pixelSize: 18
+                                        color: Theme.color.onSurfaceVariantColor
+                                    }
                                 }
                                 MouseArea {
                                     id: hha
                                     anchors.fill: parent
                                     onClicked: {
-                                        if (mouseX > parent.width - 44) {
+                                        if (mouseX >= closeBtn.x) {
                                             player.removeSearchHistory(index)
                                         } else {
                                             var kw = player.searchHistory[index] || ""

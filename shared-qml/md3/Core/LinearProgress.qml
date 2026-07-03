@@ -116,16 +116,20 @@ Item {
 
         property real phase: 0.0
 
-        // Animation for phase shift (make it flow). Runs for determinate too so the
-        // wave visibly flows and the Canvas keeps repainting (onPhaseChanged), instead
-        // of freezing on the first paint with only the track drawn.
-        NumberAnimation on phase {
+        // Drive the wave phase with a Timer (qml4j does not support
+        // "NumberAnimation on property" attach syntax).
+        // interval=16ms ≈ 60fps; increment 0.1 rad/frame ≈ 1Hz full cycle.
+        Timer {
             running: control.wavy && control.visible
-            from: 0
-            to: Math.PI * 2
-            duration: 1000 // 1Hz wave frequency
-            loops: Animation.Infinite
+            interval: 16
+            repeat: true
+            onTriggered: {
+                wavyCanvas.phase = (wavyCanvas.phase + 0.1) % (Math.PI * 2)
+            }
         }
+
+        onVisibleChanged: if (visible) requestPaint()
+        Component.onCompleted: requestPaint()
 
         onPaint: {
             var ctx = getContext("2d");
