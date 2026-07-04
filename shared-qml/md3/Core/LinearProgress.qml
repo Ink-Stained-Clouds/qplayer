@@ -134,69 +134,58 @@ Item {
 
         onPaint: {
             var ctx = getContext("2d");
+            if (!ctx) return;
             ctx.reset();
 
             var w = width;
             var h = height;
+            if (w <= 0 || h <= 0) return;
+
             var cy = h / 2;
-            var lw = 4;
+            var lw = 3;
             ctx.lineWidth = lw;
             ctx.lineCap = "round";
             ctx.lineJoin = "round";
-            // Inset by half the stroke so the round end-caps fall inside the canvas
-            // instead of being clipped; clamp amplitude so peaks+caps stay in bounds.
-            var m = lw / 2 + 1;
-            var x0 = m, x1 = w - m;
-            var amplitude = Math.min(h / 4, h / 2 - lw / 2);
-            var frequency = 0.1;
 
-            // Build a smooth sine-wave path using cubic Hermite bezier segments.
-            // Each segment uses the analytical slope (A·k·cos(kx+φ)) as the tangent,
-            // so the curve is mathematically C¹-continuous with no polyline kinks.
-            // segW=8px gives ~8 bezier spans per wave period (≈63px) — fast and
-            // indistinguishable from the true sine at any zoom level.
+            var amplitude = Math.min(h / 4, (h - lw) / 2);
+            var frequency = 0.08;
+            var segW = 4;
+
+            // Draw sine wave using lineTo segments (qml4j Context2D has no bezierCurveTo)
             function buildPath(fromX, toX) {
-                var segW = 8;
                 var x = fromX;
                 ctx.moveTo(x, cy + amplitude * Math.sin(x * frequency + phase));
-                while (x < toX) {
-                    var x2 = Math.min(x + segW, toX);
-                    var y1 = cy + amplitude * Math.sin(x  * frequency + phase);
-                    var y2 = cy + amplitude * Math.sin(x2 * frequency + phase);
-                    // Hermite control points from the analytical derivative.
-                    var s1 = amplitude * frequency * Math.cos(x  * frequency + phase);
-                    var s2 = amplitude * frequency * Math.cos(x2 * frequency + phase);
-                    var d  = (x2 - x) / 3;
-                    ctx.bezierCurveTo(x  + d, y1 + s1 * d,
-                                      x2 - d, y2 - s2 * d,
-                                      x2, y2);
-                    x = x2;
+                x += segW;
+                while (x <= toX + segW) {
+                    var px = x < toX ? x : toX;
+                    ctx.lineTo(px, cy + amplitude * Math.sin(px * frequency + phase));
+                    if (px >= toX) break;
+                    x += segW;
                 }
             }
 
             // Track (inactive, full width)
             ctx.beginPath();
             ctx.strokeStyle = trackColor;
-            buildPath(x0, x1);
+            buildPath(0, w);
             ctx.stroke();
 
-            // Indicator (active)
+            // Indicator (active portion)
             ctx.beginPath();
             ctx.strokeStyle = activeColor;
             if (control.indeterminate) {
-                var span = x1 - x0;
-                var barWidth = span * 0.5;
-                var startX = x0 + (phase / (Math.PI * 2)) * (span + barWidth) - barWidth;
-                var fromXi = Math.max(x0, startX);
-                var toXi   = Math.min(x1, startX + barWidth);
-                if (fromXi < toXi) {
-                    buildPath(fromXi, toXi);
+                var barW = w * 0.45;
+                var startX = (phase / (Math.PI * 2)) * (w + barW) - barW;
+                var fi = Math.max(0, startX);
+                var ti = Math.min(w, startX + barW);
+                if (fi < ti) {
+                    buildPath(fi, ti);
                     ctx.stroke();
                 }
             } else {
-                var endX = x0 + (x1 - x0) * Math.max(0, Math.min(1, progress));
-                if (endX > x0) {
-                    buildPath(x0, endX);
+                var endX = w * Math.max(0, Math.min(1, progress));
+                if (endX > 0) {
+                    buildPath(0, endX);
                     ctx.stroke();
                 }
             }
