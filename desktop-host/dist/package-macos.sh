@@ -12,6 +12,18 @@ T=desktop-host/target
 BIN="$T/qplayer"
 [ -x "$BIN" ] || { echo "native binary $BIN not found — run the native build first"; exit 1; }
 
+# Version for Info.plist. CI passes QPLAYER_VERSION (the release tag, like the
+# Windows installer step); a local build falls back to the latest git tag, then
+# to 0.0.0. Leading "v" stripped either way.
+VERSION="${QPLAYER_VERSION:-${GITHUB_REF_NAME:-}}"
+VERSION="${VERSION#v}"
+if [ -z "$VERSION" ]; then
+  VERSION="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  VERSION="${VERSION#v}"
+fi
+[ -n "$VERSION" ] || VERSION="0.0.0"
+echo "packaging QPlayer $VERSION"
+
 APP="$T/QPlayer.app"
 LIBS="$APP/Contents/lib"
 rm -rf "$APP"
@@ -50,8 +62,28 @@ exec "$HERE/qplayer-bin" \
 EOF
 chmod +x "$APP/Contents/MacOS/qplayer" "$APP/Contents/MacOS/qplayer-bin"
 
-cp docs/icon.png "$APP/Contents/Resources/qplayer.png" 2>/dev/null || true
-cat > "$APP/Contents/Info.plist" <<'EOF'
+# App icon: macOS wants a multi-resolution .icns, not a loose PNG, and the bundle
+# only shows it when Info.plist names it via CFBundleIconFile. Build the .icns
+# from the 512px source with sips + iconutil (both ship with macOS). If that
+# fails for any reason, fall back to the bare PNG so packaging still succeeds.
+ICON_SRC="docs/icon.png"
+ICON_OK=""
+if command -v sips >/dev/null && command -v iconutil >/dev/null && [ -f "$ICON_SRC" ]; then
+  SET="$T/qplayer.iconset"
+  rm -rf "$SET"; mkdir -p "$SET"
+  # name:px pairs (16/32/128/256/512 pt, each + @2x, capped at the 512px source).
+  for pair in 16x16:16 16x16@2x:32 32x32:32 32x32@2x:64 \
+              128x128:128 128x128@2x:256 256x256:256 256x256@2x:512 512x512:512; do
+    sips -z "${pair##*:}" "${pair##*:}" "$ICON_SRC" --out "$SET/icon_${pair%%:*}.png" >/dev/null 2>&1
+  done
+  if iconutil -c icns "$SET" -o "$APP/Contents/Resources/qplayer.icns" 2>/dev/null; then
+    ICON_OK=1
+  fi
+  rm -rf "$SET"
+fi
+[ -n "$ICON_OK" ] || cp "$ICON_SRC" "$APP/Contents/Resources/qplayer.png" 2>/dev/null || true
+
+cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -59,7 +91,9 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleExecutable</key><string>qplayer</string>
   <key>CFBundleIdentifier</key><string>dev.t1m3.qplayer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.8.0</string>
+  <key>CFBundleIconFile</key><string>qplayer</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+  <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOF

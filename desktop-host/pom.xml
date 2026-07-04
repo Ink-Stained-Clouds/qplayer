@@ -30,8 +30,13 @@
              CI overrides per-runner (Linux/Windows ubuntu/windows-latest have 16GB,
              macos-14 has 7GB) via -Dnative.xmx=… on the mvn command line. -->
         <native.xmx>7g</native.xmx>
-        <log4j.version>2.25.2</log4j.version>
+        <log4j.version>2.25.4</log4j.version>
         <jna.version>5.14.0</jna.version>
+        <!-- App version baked into version.properties (read by Main → the update
+             check). Local dev default; the release workflow overrides it with the
+             git tag (-Dqplayer.app.version=…) so release binaries match the tag
+             without a committed bump, like the macOS/Windows packagers. -->
+        <qplayer.app.version>0.8.1</qplayer.app.version>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
         <win.w>1100</win.w>
@@ -44,6 +49,13 @@
                  — declaring <resources> otherwise replaces it. -->
             <resource>
                 <directory>${project.basedir}/src/main/resources</directory>
+            </resource>
+            <!-- Maven-filtered: substitutes ${qplayer.app.version} into
+                 version.properties. Kept in its own dir so filtering never touches
+                 the QML / native-image config / fonts above. -->
+            <resource>
+                <directory>${project.basedir}/src/main/resources-filtered</directory>
+                <filtering>true</filtering>
             </resource>
             <!-- Mount the shared QML tree (Main.qml + app pages + md3/Core + fonts)
                  onto the classpath so ClasspathResourceLoader serves it exactly like
@@ -131,6 +143,18 @@
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-vulkan</artifactId>
         </dependency>
+        <!-- Audio: OpenAL Soft drives the output device (replaces javax.sound, which
+             has no Mixer in the native image on macOS); stb_vorbis decodes ogg with
+             real sample-accurate seek. Both load through the same LWJGL native path
+             the graphics modules already use, so the image needs no extra config. -->
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-openal</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-stb</artifactId>
+        </dependency>
         <!-- LWJGL native libraries for this host. lwjgl-vulkan ships no natives jar
              (it binds the system Vulkan loader / MoltenVK). -->
         <dependency>
@@ -148,6 +172,18 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-opengl</artifactId>
+            <classifier>${lwjgl.natives}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-openal</artifactId>
+            <classifier>${lwjgl.natives}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-stb</artifactId>
             <classifier>${lwjgl.natives}</classifier>
             <scope>runtime</scope>
         </dependency>
@@ -196,7 +232,11 @@
             <version>${jna.version}</version>
         </dependency>
 
-        <!-- Desktop audio: tag reading + javax.sound SPI decoders (mp3/flac/ogg) -->
+        <!-- Desktop audio decoders. We drive these libraries directly (no
+             javax.sound SPI / AudioSystem) so each can seek for real instead of
+             decode-and-discard from zero: jlayer (mp3) frame-walks headers,
+             jflac (flac) uses FLACDecoder.seek, ogg goes through stb_vorbis above.
+             jaudiotagger stays for reading tags. -->
         <dependency>
             <groupId>net.jthink</groupId>
             <artifactId>jaudiotagger</artifactId>
@@ -204,18 +244,13 @@
         </dependency>
         <dependency>
             <groupId>com.googlecode.soundlibs</groupId>
-            <artifactId>mp3spi</artifactId>
-            <version>1.9.5.4</version>
+            <artifactId>jlayer</artifactId>
+            <version>1.0.1.4</version>
         </dependency>
         <dependency>
             <groupId>org.jflac</groupId>
             <artifactId>jflac-codec</artifactId>
             <version>1.5.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.googlecode.soundlibs</groupId>
-            <artifactId>vorbisspi</artifactId>
-            <version>1.0.3.3</version>
         </dependency>
     </dependencies>
 

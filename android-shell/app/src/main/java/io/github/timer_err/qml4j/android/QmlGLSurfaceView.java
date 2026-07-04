@@ -129,7 +129,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         // host-drawn with no QML controls under it, so a touch there is
                         // ours: a drag scrolls the column, a tap seeks to that line. Don't
                         // engage the scroll yet -- wait for movement so a tap stays a tap.
-                        if (compositor.lyricsScrollable(y, surface.height() / uiScale, insetTop())) {
+                        if (compositor.lyricsScrollable(x, y, surface.width() / uiScale, surface.height() / uiScale, insetTop())) {
                             lyGrab = true;
                             lyDownY = y;
                             lyMoved = false;

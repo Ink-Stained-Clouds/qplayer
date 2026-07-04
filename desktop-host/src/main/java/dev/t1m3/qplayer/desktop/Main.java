@@ -92,7 +92,11 @@ public final class Main {
         // file and point AWT at it (sun.awt.fontconfig is the documented override —
         // FontConfiguration.findFontConfigFile reads it before falling back to the
         // default lib/fontconfig.bfc lookup) BEFORE any tray/Swing code runs.
+        // Only the macOS tray uses AWT/Swing (Windows = WinTray, Linux = GTK
+        // LinuxTray), so this matters there alone — skip it (and its misleading
+        // "tray menus will fail" warning) on the native Linux/Windows builds.
         if (System.getProperty("java.vm.name", "").contains("Substrate")
+                && System.getProperty("os.name", "").toLowerCase().contains("mac")
                 && System.getProperty("sun.awt.fontconfig") == null) {
             try (InputStream is = Main.class.getResourceAsStream("/fontconfig.bfc")) {
                 if (is == null) {
@@ -131,6 +135,7 @@ public final class Main {
 
         PlayerController controller = new PlayerController(audio, reader);
         controller.setColorExtractor(new DesktopColorExtractor());
+        controller.setCurrentVersion(appVersion());
 
         DesktopSettings settings = new DesktopSettings();
         settings.setMonetListener(controller::setMonetEnabled);
@@ -222,6 +227,20 @@ public final class Main {
             new ProcessBuilder(cmd).start();
         } catch (Exception e) {
             Logger.warn("open url failed ({}): {}", url, e.toString());
+        }
+    }
+
+    /** Running app version from the Maven-filtered version.properties (baked into
+     *  the classpath / native image), for the update check. Empty if unavailable. */
+    private static String appVersion() {
+        try (InputStream is = Main.class.getResourceAsStream("/version.properties")) {
+            if (is == null) return "";
+            java.util.Properties p = new java.util.Properties();
+            p.load(is);
+            return p.getProperty("version", "").trim();
+        } catch (Exception e) {
+            Logger.warn("version.properties read failed: {}", e.toString());
+            return "";
         }
     }
 
