@@ -95,115 +95,40 @@ Item {
         }
     }
 
-    // Wavy Linear Progress
-    Canvas {
-        id: wavyCanvas
+    // Wavy Linear Progress — pure QML dots on a sine path.
+    // Canvas requestPaint() is not reliable in the qml4j GLFW backend, so we use a
+    // Repeater of Rectangle dots. 80 dots spaced evenly across the width gives a
+    // smooth-looking sine curve at typical mini-player widths.
+    Item {
+        id: wavyItem
         visible: control.wavy
         anchors.fill: parent
-        antialiasing: true
-
-        // Trigger repaint when dependencies change
-        property color trackColor: control.trackColor
-        property color activeColor: control.activeColor
-        // Raw value, NOT _visualValue: its Behavior restarts every frame when the
-        // caller updates value per-frame (smooth source), which freezes it. Callers
-        // that want easing should smooth the value they pass in.
-        property real progress: control.value
-
-        onTrackColorChanged: requestPaint()
-        onActiveColorChanged: requestPaint()
-        onProgressChanged: requestPaint()
+        clip: true
 
         property real phase: 0.0
+        // Snapshot value so all 80 color bindings read the same value per frame.
+        property real progress: Math.max(0.0, Math.min(1.0, control.value))
 
-        // Drive the wave phase with a Timer (qml4j does not support
-        // "NumberAnimation on property" attach syntax).
-        // interval=16ms ≈ 60fps; increment 0.1 rad/frame ≈ 1Hz full cycle.
         Timer {
             running: control.wavy && control.visible
-            interval: 16
+            interval: 33
             repeat: true
-            onTriggered: {
-                wavyCanvas.phase = (wavyCanvas.phase + 0.1) % (Math.PI * 2)
-            }
+            onTriggered: wavyItem.phase = (wavyItem.phase + 0.25) % (Math.PI * 2)
         }
 
-        onVisibleChanged: if (visible) requestPaint()
-        Component.onCompleted: requestPaint()
-
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-
-            var w = width;
-            var h = height;
-            var cy = h / 2;
-            var lw = 4;
-            ctx.lineWidth = lw;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
-            // Inset by half the stroke so the round end-caps fall inside the canvas
-            // instead of being clipped; clamp amplitude so peaks+caps stay in bounds.
-            var m = lw / 2 + 1;
-            var x0 = m, x1 = w - m;
-            var amplitude = Math.min(h / 4, h / 2 - lw / 2);
-            var frequency = 0.1;
-
-            // Build a smooth sine-wave path using cubic Hermite bezier segments.
-            // Each segment uses the analytical slope (A·k·cos(kx+φ)) as the tangent,
-            // so the curve is mathematically C¹-continuous with no polyline kinks.
-            // segW=8px gives ~8 bezier spans per wave period (≈63px) — fast and
-            // indistinguishable from the true sine at any zoom level.
-            function buildPath(fromX, toX) {
-                var segW = 8;
-                var x = fromX;
-                ctx.moveTo(x, cy + amplitude * Math.sin(x * frequency + phase));
-                while (x < toX) {
-                    var x2 = Math.min(x + segW, toX);
-                    var y1 = cy + amplitude * Math.sin(x  * frequency + phase);
-                    var y2 = cy + amplitude * Math.sin(x2 * frequency + phase);
-                    // Hermite control points from the analytical derivative.
-                    var s1 = amplitude * frequency * Math.cos(x  * frequency + phase);
-                    var s2 = amplitude * frequency * Math.cos(x2 * frequency + phase);
-                    var d  = (x2 - x) / 3;
-                    ctx.bezierCurveTo(x  + d, y1 + s1 * d,
-                                      x2 - d, y2 - s2 * d,
-                                      x2, y2);
-                    x = x2;
-                }
-            }
-
-            // Track (inactive, full width)
-            ctx.beginPath();
-            ctx.strokeStyle = trackColor;
-            buildPath(x0, x1);
-            ctx.stroke();
-
-            // Indicator (active)
-            ctx.beginPath();
-            ctx.strokeStyle = activeColor;
-            if (control.indeterminate) {
-                var span = x1 - x0;
-                var barWidth = span * 0.5;
-                var startX = x0 + (phase / (Math.PI * 2)) * (span + barWidth) - barWidth;
-                var fromXi = Math.max(x0, startX);
-                var toXi   = Math.min(x1, startX + barWidth);
-                if (fromXi < toXi) {
-                    buildPath(fromXi, toXi);
-                    ctx.stroke();
-                }
-            } else {
-                var endX = x0 + (x1 - x0) * Math.max(0, Math.min(1, progress));
-                if (endX > x0) {
-                    buildPath(x0, endX);
-                    ctx.stroke();
-                }
+        Repeater {
+            model: 80
+            Rectangle {
+                x: (index / 79.0) * wavyItem.width - 2
+                y: wavyItem.height * 0.5
+                  + Math.sin((index / 79.0) * wavyItem.width * 0.12 + wavyItem.phase)
+                  * (wavyItem.height * 0.30) - 2
+                width: 4
+                height: 4
+                radius: 2
+                color: (index / 79.0) <= wavyItem.progress ? control.activeColor : control.trackColor
             }
         }
-        
-        onPhaseChanged: requestPaint()
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
     }
 }
 

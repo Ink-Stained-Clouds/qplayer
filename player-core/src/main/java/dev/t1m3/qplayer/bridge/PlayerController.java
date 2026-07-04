@@ -1984,6 +1984,7 @@ public final class PlayerController {
                 queueTracks.set(new ArrayList<>(queue));
                 int idx = Math.max(0, Math.min(savedIdx, loaded.size() - 1));
                 playIndex = idx;
+                needsReplay = true;
                 index.set(idx);
                 Track cur = loaded.get(idx);
                 title.set(cur.title != null ? cur.title : "");
