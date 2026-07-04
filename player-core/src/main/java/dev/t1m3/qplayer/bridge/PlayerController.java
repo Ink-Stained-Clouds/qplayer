@@ -14,6 +14,7 @@ import dev.t1m3.qplayer.unblock.SongUnblocker;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.netease.dto.NeteaseUser;
+import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.util.Logger;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -23,6 +24,15 @@ import com.google.gson.JsonParser;
 import io.github.timer_err.qml4j.engine.binding.Property;
 import io.github.timer_err.qml4j.runtime.color.StyleManager;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -81,6 +91,10 @@ public final class PlayerController {
     private final Queue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> likedSet = new HashSet<>();
     private final Random rng = new Random();
+    private final List<String> historyList = new ArrayList<>();
+    private static final int HISTORY_MAX = 50;
+    private static final int RECENT_LOCAL_MAX = 100;
+    private final List<NeteaseSong> localRecentList = new ArrayList<>();
 
     // Playback control runs on the host's main thread (always alive — unlike the GL
     // render thread, which pauses in the background and would stall auto-advance);
@@ -94,6 +108,9 @@ public final class PlayerController {
     // backend.isPlaying() is briefly false right after play() — reporting that to the
     // media session shows a stale "paused". The session uses this intent instead.
     private volatile boolean playingIntent = false;
+    // Set by restoreDisplay(): the queue is populated but the backend hasn't loaded
+    // anything yet. toggle() detects this and calls playAt() instead of resume().
+    private volatile boolean needsReplay = false;
     private volatile PlaybackListener playbackListener;
 
     /** Host hook (e.g. the Android foreground service) notified on the main thread
@@ -152,6 +169,7 @@ public final class PlayerController {
         }
     }
 
+    private volatile String currentSearchKey = "";
     private volatile String playLevel = "exhigh";
     private volatile boolean unblockEnabled = true;
     private volatile long uid;
@@ -190,13 +208,15 @@ public final class PlayerController {
     // 0 = list loop (default, current behaviour), 1 = shuffle, 2 = repeat one.
     public final Property<Integer> playMode = new Property<>(0);
     public final Property<List<LyricLine>> lyrics = new Property<>(Collections.<LyricLine>emptyList());
-    /** Cover-centered layout flag for the lyric page: true when there are no lyrics, or
-     *  it's an instrumental ("纯音乐") track with fewer than 3 lines. Both the QML chrome
-     *  (centers the cover) and the host compositor (drops the side lyric column in
-     *  landscape) read it. */
-    public final Property<Boolean> lyricsCoverOnly = new Property<>(Boolean.TRUE);
+    /** True once lyrics have been loaded and the list is non-empty; false for
+     *  pure-music / instrumental tracks. QML binds this to show the album cover
+     *  in the lyric area instead of empty space. */
+    public final Property<Boolean> hasLyrics = new Property<>(false);
     /** Index of the current lyric line for player.positionMs, or -1. */
     public final Property<Integer> lyricIndex = new Property<>(-1);
+    /** True when there are no scrollable lyrics — QML LyricOverlay and host compositor
+     *  use this to center the cover instead of showing an empty lyric column. */
+    public final Property<Boolean> lyricsCoverOnly = new Property<>(Boolean.TRUE);
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
     public final Property<Boolean> lyricsOpen = new Property<>(false);
     /** Host-published lyric-overlay slide progress (0 closed .. 1 open); the QML
@@ -212,12 +232,16 @@ public final class PlayerController {
     // --- Local library ----------------------------------------------------
     public final Property<List<Track>> tracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Integer> libraryCount = new Property<>(0);
+    /** Offline-search results (local library match when network unavailable). */
+    public final Property<List<Track>> localSearchResults = new Property<>(Collections.<Track>emptyList());
 
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
     /** Hot search keywords shown when search input is empty. */
     public final Property<List<String>> hotSearches = new Property<>(Collections.<String>emptyList());
+    /** Recent search history (most-recent first, max 50, persisted to disk). */
+    public final Property<List<String>> searchHistory = new Property<>(Collections.<String>emptyList());
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
@@ -229,13 +253,17 @@ public final class PlayerController {
      *  spinner instead of the previous playlist's content. */
     public final Property<Boolean> playlistLoading = new Property<>(false);
     /** Id of the currently open playlist (0 = none); guards stale async results. */
-    private volatile long currentPlaylistId;
+    private volatile long currentPlaylistId = 0;
     /** Whether the signed-in user has collected the open playlist — drives the detail
      *  page's collect icon. Resolved from playlist/detail, so it reflects the real state
      *  on open (no guessing). */
     public final Property<Boolean> playlistSubscribed = new Property<>(false);
     /** Whether the open playlist is the user's own (can't collect your own). */
     public final Property<Boolean> playlistOwned = new Property<>(false);
+    /** Alias for {@link #playlistSubscribed} (ink_clouds naming). */
+    public final Property<Boolean> currentPlaylistSubscribed = new Property<>(false);
+    /** Alias for {@link #playlistOwned} (ink_clouds naming). */
+    public final Property<Boolean> currentPlaylistIsOwn = new Property<>(false);
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
     public final Property<List<Track>> queueTracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Boolean> queueOpen = new Property<>(false);
@@ -294,10 +322,14 @@ public final class PlayerController {
         // (expired VIP link, region lock, etc.). Non-netease or already-retried
         // tracks fall through to autoAdvance.
         backend.setOnError(() -> onMain(this::onPlaybackError));
+        loadSearchHistory();
+        loadLocalRecent();
+        loadQueue();
         if (netease.isLoggedIn()) {
             loggedIn.set(true);
             refreshLogin();
         }
+        worker.submit(this::loadSearchHistory);
     }
 
     /** Platform color extractor for Monet seeds; set once at startup. */
@@ -349,27 +381,6 @@ public final class PlayerController {
     public void setLogVisible(boolean visible) {
         this.logVisible = visible;
         if (visible) lastLogVersion = -1;
-    }
-
-    /** Publish a new lyric list and derive {@link #lyricsCoverOnly}. */
-    private void applyLyrics(List<LyricLine> ly) {
-        lyrics.set(ly);
-        lyricsCoverOnly.set(computeCoverOnly(ly));
-    }
-
-    /** Cover-only when there are no lyrics, or an instrumental marker ("纯音乐") with
-     *  fewer than 3 lines — a lone "纯音乐，请欣赏" placeholder centers the cover instead
-     *  of floating a single line beside it. */
-    private static boolean computeCoverOnly(List<LyricLine> ly) {
-        if (ly == null || ly.isEmpty()) return true;
-        if (ly.size() < 3) {
-            for (LyricLine l : ly) {
-                if (l == null) continue;
-                if (l.text().contains("纯音乐")) return true;
-                if (l.translation != null && l.translation.contains("纯音乐")) return true;
-            }
-        }
-        return false;
     }
 
     private void updateLyricIndex(long pos) {
@@ -693,6 +704,7 @@ public final class PlayerController {
         int cur = playIndex;
         queue.remove(i);
         queueTracks.set(new ArrayList<>(queue));
+        saveQueue();
         if (queue.isEmpty()) {
             playIndex = -1;
             index.set(-1);
@@ -763,6 +775,32 @@ public final class PlayerController {
 
     // --- Playback control -------------------------------------------------
 
+    /**
+     * Restore the last-played track from persisted state without starting playback.
+     * Sets all mini-player display properties so the UI looks correct on startup.
+     * The first {@link #toggle()} call after this triggers the full resolve+play flow.
+     */
+    public void restoreDisplay(Track t, long posMs) {
+        if (t == null) return;
+        queue.clear();
+        queue.add(t);
+        queueTracks.set(new ArrayList<>(queue));
+        playIndex = 0;
+        needsReplay = true;
+        post(() -> {
+            index.set(0);
+            title.set(orEmpty(t.title));
+            artist.set(orEmpty(t.artist));
+            album.set(orEmpty(t.album));
+            coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
+            durationMs.set(t.durationMs > 0 ? t.durationMs : 0L);
+            positionMs.set(posMs > 0 ? posMs : 0L);
+            currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
+            currentLikeable.set(t.neteaseId != 0);
+        });
+        updateCover(t, 0);
+    }
+
     /** Play local library starting at {@code i}. */
     public void play(int i) {
         if (i < 0 || i >= library.size()) return;
@@ -772,6 +810,101 @@ public final class PlayerController {
     /** Queue a netease song-list and start at {@code i}. */
     public void playSearchResult(int i) {
         playSongList(searchResults.peek(), i);
+    }
+
+    /** Play a track from the offline local-search results. */
+    public void playLocalSearchResult(int i) {
+        List<Track> r = localSearchResults.peek();
+        if (r == null || i < 0 || i >= r.size()) return;
+        playQueue(new ArrayList<>(r), i);
+    }
+
+    /** Search the local library for {@code keyword} and publish to {@link #localSearchResults}. */
+    public void localSearch(String keyword) {
+        String kl = keyword.trim().toLowerCase();
+        List<Track> matches = new ArrayList<>();
+        for (Track t : library) {
+            if (fieldContains(t.title, kl) || fieldContains(t.artist, kl) || fieldContains(t.album, kl)) {
+                matches.add(t);
+                if (matches.size() >= 30) break;
+            }
+        }
+        localSearchResults.set(matches);
+    }
+
+    private static boolean fieldContains(String field, String kl) {
+        return field != null && field.toLowerCase().contains(kl);
+    }
+
+    // --- Search history ---------------------------------------------------
+
+    public void addSearchHistory(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        String kw = keyword.trim();
+        synchronized (historyList) {
+            historyList.remove(kw);
+            historyList.add(0, kw);
+            if (historyList.size() > HISTORY_MAX) historyList.remove(historyList.size() - 1);
+            List<String> snap = new ArrayList<>(historyList);
+            post(() -> searchHistory.set(snap));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    public void removeSearchHistory(int i) {
+        synchronized (historyList) {
+            if (i < 0 || i >= historyList.size()) return;
+            historyList.remove(i);
+            List<String> snap = new ArrayList<>(historyList);
+            post(() -> searchHistory.set(snap));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    public void clearSearchHistory() {
+        synchronized (historyList) {
+            historyList.clear();
+            post(() -> searchHistory.set(Collections.<String>emptyList()));
+        }
+        worker.submit(this::saveSearchHistory);
+    }
+
+    private void saveSearchHistory() {
+        try {
+            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
+            f.getParentFile().mkdirs();
+            StringBuilder sb = new StringBuilder();
+            synchronized (historyList) {
+                for (String s : historyList) sb.append(s).append('\n');
+            }
+            java.nio.file.Files.write(f.toPath(),
+                    sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable e) {
+            Logger.warn("saveSearchHistory failed: {}", e.getMessage());
+        }
+    }
+
+    private void loadSearchHistory() {
+        try {
+            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
+            if (!f.exists()) return;
+            byte[] bytes = java.nio.file.Files.readAllBytes(f.toPath());
+            String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            synchronized (historyList) {
+                historyList.clear();
+                for (String line : content.split("\n")) {
+                    String t = line.trim();
+                    if (!t.isEmpty()) {
+                        historyList.add(t);
+                        if (historyList.size() >= HISTORY_MAX) break;
+                    }
+                }
+                List<String> snap = new ArrayList<>(historyList);
+                post(() -> searchHistory.set(snap));
+            }
+        } catch (Throwable e) {
+            Logger.warn("loadSearchHistory failed: {}", e.getMessage());
+        }
     }
 
     public void playRecommendation(int i) {
@@ -806,6 +939,7 @@ public final class PlayerController {
         queue.addAll(q);
         queueTracks.set(new ArrayList<>(queue));
         onMain(() -> playAt(start));
+        saveQueue();
     }
 
     // Runs on the main thread (via onMain). Updates the plain playIndex synchronously,
@@ -816,6 +950,7 @@ public final class PlayerController {
         playIndex = i;
         final int idx = i;
         final Track t = queue.get(i);
+        worker.submit(() -> recordToLocalRecent(t));
         post(() -> {
             index.set(idx);
             title.set(orEmpty(t.title));
@@ -826,6 +961,11 @@ public final class PlayerController {
             positionMs.set(0L);
             currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
             currentLikeable.set(t.neteaseId != 0);
+            // Clear previous track's lyrics immediately so the cover art shows
+            // while the new track's lyrics are loading.
+            lyrics.set(Collections.<LyricLine>emptyList());
+            hasLyrics.set(false);
+            lyricsCoverOnly.set(true);
         });
         updateCover(t, i);
 
@@ -1003,9 +1143,7 @@ public final class PlayerController {
                 return out.toByteArray();
             }
         } catch (Throwable e) {
-            // Shared by cover + ttml-lyric fetches; log the URL so the failing
-            // resource is clear instead of always blaming the cover.
-            Logger.warn("download failed for {}: {}", url, e.getMessage());
+            Logger.warn("cover fetch failed: {}", e.getMessage());
             return null;
         } finally {
             if (c != null) c.disconnect();
@@ -1047,6 +1185,11 @@ public final class PlayerController {
                 playingIntent = false;
                 post(() -> playing.set(false));
             } else {
+                if (needsReplay && playIndex >= 0) {
+                    needsReplay = false;
+                    playAt(playIndex);
+                    return;
+                }
                 backend.resume();
                 playingIntent = true;
                 post(() -> playing.set(true));
@@ -1150,7 +1293,7 @@ public final class PlayerController {
                 lines = neteaseLyricCacheFirst(songId);
             }
             final List<LyricLine> ly = lines;
-            post(() -> { if (playIndex == expectedIndex) applyLyrics(ly); });
+            post(() -> { if (playIndex == expectedIndex) { lyrics.set(ly); hasLyrics.set(!ly.isEmpty()); lyricsCoverOnly.set(computeCoverOnly(ly)); } });
         });
     }
 
@@ -1274,13 +1417,30 @@ public final class PlayerController {
     private void loadLocalLyrics(Track t) {
         if (t.lyricFilePath != null) {
             try {
-                applyLyrics(LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath));
+                List<LyricLine> parsed = LyricParser.parse(t.lyricFilePath, t.translationFilePath, t.romajiFilePath);
+                lyrics.set(parsed);
+                hasLyrics.set(!parsed.isEmpty());
+                lyricsCoverOnly.set(computeCoverOnly(parsed));
                 return;
             } catch (Throwable e) {
                 Logger.warn("lyric parse failed: {}", e.getMessage());
             }
         }
-        applyLyrics(Collections.<LyricLine>emptyList());
+        lyrics.set(Collections.<LyricLine>emptyList());
+        hasLyrics.set(false);
+        lyricsCoverOnly.set(true);
+    }
+
+    private static boolean computeCoverOnly(List<LyricLine> ly) {
+        if (ly == null || ly.isEmpty()) return true;
+        if (ly.size() < 3) {
+            for (LyricLine l : ly) {
+                if (l == null) continue;
+                if (l.text().contains("纯音乐")) return true;
+                if (l.translation != null && l.translation.contains("纯音乐")) return true;
+            }
+        }
+        return false;
     }
 
     private static Track toTrack(NeteaseSong s) {
@@ -1320,9 +1480,11 @@ public final class PlayerController {
     public void search(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
         final String key = keyword.trim().toLowerCase();
+        currentSearchKey = key;
         // Fast path: check cache on the calling (render) thread.
         CacheEntry entry = searchCache.get(key);
         if (entry != null && !entry.isExpired()) {
+            localSearchResults.set(Collections.<Track>emptyList());
             searchResults.set(entry.songs);
             resultCount.set(entry.songs.size());
             Logger.info("search cache hit: {}", key);
@@ -1335,24 +1497,38 @@ public final class PlayerController {
                 CacheEntry existing = searchCache.get(key);
                 if (existing != null && !existing.isExpired()) {
                     post(() -> {
+                        if (!key.equals(currentSearchKey)) return;
+                        localSearchResults.set(Collections.<Track>emptyList());
                         searchResults.set(existing.songs);
                         resultCount.set(existing.songs.size());
                     });
                     return;
                 }
                 List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
-                // Legacy /search/get omits album picUrl; batch-fetch details, then
-                // refresh the thumbnail URL for the rows whose cover we just filled
-                // (parseSong already set it for songs that had a cover).
                 fillMissingCovers(r);
                 buildSongThumbs(r, "128");
                 searchCache.put(key, new CacheEntry(r));
                 post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    localSearchResults.set(Collections.<Track>emptyList());
                     searchResults.set(r);
                     resultCount.set(r.size());
                 });
             } catch (Throwable e) {
-                Logger.warn("search failed: {}", e.getMessage());
+                Logger.warn("search failed (no network), falling back to cache+local: {}", e.getMessage());
+                CacheEntry stale = searchCache.get(key);
+                if (stale != null && !stale.songs.isEmpty()) {
+                    List<NeteaseSong> staleSongs = stale.songs;
+                    post(() -> {
+                        if (!key.equals(currentSearchKey)) return;
+                        searchResults.set(staleSongs);
+                        resultCount.set(staleSongs.size());
+                    });
+                } else {
+                    post(() -> {
+                        if (key.equals(currentSearchKey)) localSearch(key);
+                    });
+                }
             }
         });
     }
@@ -1458,6 +1634,8 @@ public final class PlayerController {
         // the icon stays hidden (loading) until then rather than flashing a wrong state.
         playlistSubscribed.set(false);
         playlistOwned.set(false);
+        currentPlaylistSubscribed.set(false);
+        currentPlaylistIsOwn.set(false);
         worker.submit(() -> {
             try {
                 NeteasePlaylist detail = netease.playlistDetail(playlistId);
@@ -1466,7 +1644,8 @@ public final class PlayerController {
                 buildSongThumbs(songs, "128");
                 String name = detail != null ? detail.name : "";
                 boolean subscribed = detail != null && detail.subscribed;
-                boolean owned = detail != null && uid != 0 && detail.creatorUid == uid;
+                boolean isOwn = detail != null && uid != 0 && detail.creatorUid == uid;
+                boolean owned = isOwn;
                 post(() -> {
                     if (currentPlaylistId != playlistId) return;   // a newer open won
                     playlistTitle.set(name == null ? "" : name);
@@ -1474,6 +1653,8 @@ public final class PlayerController {
                     playlistSubscribed.set(subscribed);
                     playlistOwned.set(owned);
                     playlistLoading.set(false);
+                    currentPlaylistSubscribed.set(subscribed);
+                    currentPlaylistIsOwn.set(isOwn);
                 });
             } catch (Throwable e) {
                 Logger.warn("open playlist {} failed: {}", playlistId, e.getMessage());
@@ -1490,6 +1671,7 @@ public final class PlayerController {
         if (id == 0) return;
         final boolean target = !playlistSubscribed.get();
         playlistSubscribed.set(target);
+        currentPlaylistSubscribed.set(target);
         worker.submit(() -> {
             boolean ok = false;
             try {
@@ -1505,6 +1687,7 @@ public final class PlayerController {
                     loadMyPlaylists();   // reflect the change in 我的
                 } else {
                     playlistSubscribed.set(!target);   // revert the optimistic flip
+                    currentPlaylistSubscribed.set(!target);
                 }
             });
         });
@@ -1528,7 +1711,13 @@ public final class PlayerController {
 
     /** Recently played (netease listen history). */
     public void loadRecent() {
-        if (uid == 0) return;
+        if (uid == 0) {
+            worker.submit(() -> {
+                List<NeteaseSong> local = new ArrayList<>(localRecentList);
+                post(() -> recentSongs.set(local));
+            });
+            return;
+        }
         worker.submit(() -> {
             try {
                 List<NeteaseSong> rec = netease.userRecord(uid, 0);
@@ -1744,4 +1933,186 @@ public final class PlayerController {
         refreshCacheSize();
         toast.set("缓存已清除");
     }
+
+    // --- Queue persistence ------------------------------------------------
+
+    private void saveQueue() {
+        List<Track> snapshot = new ArrayList<>(queue);
+        int idx = playIndex;
+        worker.submit(() -> {
+            try {
+                Files.createDirectories(Paths.get(AppDirs.base()));
+                JsonObject root = new JsonObject();
+                root.addProperty("playIndex", idx);
+                JsonArray arr = new JsonArray();
+                for (Track t : snapshot) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("source", t.source != null ? t.source.name() : "NETEASE");
+                    o.addProperty("neteaseId", t.neteaseId);
+                    o.addProperty("title", t.title != null ? t.title : "");
+                    o.addProperty("artist", t.artist != null ? t.artist : "");
+                    o.addProperty("album", t.album != null ? t.album : "");
+                    o.addProperty("coverUrl", t.coverUrl != null ? t.coverUrl : "");
+                    o.addProperty("coverThumbPath", t.coverThumbPath != null ? t.coverThumbPath : "");
+                    o.addProperty("durationMs", t.durationMs);
+                    if (t.filePath != null) o.addProperty("filePath", t.filePath);
+                    if (t.contentUri != null) o.addProperty("contentUri", t.contentUri);
+                    arr.add(o);
+                }
+                root.add("tracks", arr);
+                Files.write(Paths.get(AppDirs.base(), "queue.json"),
+                        root.toString().getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                Logger.warn("queue save failed: {}", e.getMessage());
+            }
+        });
+    }
+
+    private void loadQueue() {
+        Path p = Paths.get(AppDirs.base(), "queue.json");
+        try {
+            if (!Files.exists(p)) return;
+            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            JsonObject root = new JsonParser().parse(text).getAsJsonObject();
+            int savedIdx = root.has("playIndex") ? root.get("playIndex").getAsInt() : 0;
+            JsonArray arr = root.has("tracks") ? root.getAsJsonArray("tracks") : new JsonArray();
+            List<Track> loaded = new ArrayList<>();
+            for (JsonElement el : arr) {
+                if (!el.isJsonObject()) continue;
+                JsonObject o = el.getAsJsonObject();
+                Track t = new Track();
+                String sourceStr = o.has("source") ? o.get("source").getAsString() : "NETEASE";
+                t.source = "LOCAL".equals(sourceStr) ? Track.Source.LOCAL : Track.Source.NETEASE;
+                t.neteaseId = o.has("neteaseId") ? o.get("neteaseId").getAsLong() : 0;
+                t.title = o.has("title") ? o.get("title").getAsString() : "";
+                t.artist = o.has("artist") ? o.get("artist").getAsString() : "";
+                t.album = o.has("album") ? o.get("album").getAsString() : "";
+                t.coverUrl = o.has("coverUrl") ? o.get("coverUrl").getAsString() : "";
+                String thumb = o.has("coverThumbPath") ? o.get("coverThumbPath").getAsString() : "";
+                t.coverThumbPath = thumb.isEmpty() ? null : thumb;
+                t.durationMs = o.has("durationMs") ? o.get("durationMs").getAsLong() : 0;
+                if (t.source == Track.Source.LOCAL) {
+                    t.filePath = o.has("filePath") ? o.get("filePath").getAsString() : null;
+                    t.contentUri = o.has("contentUri") ? o.get("contentUri").getAsString() : null;
+                }
+                loaded.add(t);
+            }
+            if (!loaded.isEmpty()) {
+                queue.addAll(loaded);
+                queueTracks.set(new ArrayList<>(queue));
+                int idx = Math.max(0, Math.min(savedIdx, loaded.size() - 1));
+                playIndex = idx;
+                needsReplay = true;
+                index.set(idx);
+                Track cur = loaded.get(idx);
+                title.set(cur.title != null ? cur.title : "");
+                artist.set(cur.artist != null ? cur.artist : "");
+                album.set(cur.album != null ? cur.album : "");
+                coverUrl.set(thumbUrl(cur.coverUrl != null ? cur.coverUrl : "", "512"));
+                durationMs.set(cur.durationMs);
+            }
+        } catch (Exception e) {
+            Logger.warn("queue load failed: {}", e.getMessage());
+        }
+    }
+
+    // --- Add single track to queue ----------------------------------------
+
+    private void addToQueue(Track t) {
+        queue.add(t);
+        queueTracks.set(new ArrayList<>(queue));
+        saveQueue();
+        toast.set("已加入播放列表");
+    }
+
+    public void addSearchResultToQueue(int i) {
+        List<NeteaseSong> songs = searchResults.peek();
+        if (i >= 0 && i < songs.size()) addToQueue(toTrack(songs.get(i)));
+    }
+
+    public void addPlaylistTrackToQueue(int i) {
+        List<NeteaseSong> songs = playlistTracks.peek();
+        if (i >= 0 && i < songs.size()) addToQueue(toTrack(songs.get(i)));
+    }
+
+    public void addLocalTrackToQueue(int i) {
+        if (i >= 0 && i < library.size()) addToQueue(library.get(i));
+    }
+
+    public void addRecentSongToQueue(int i) {
+        List<NeteaseSong> songs = recentSongs.peek();
+        if (i >= 0 && i < songs.size()) addToQueue(toTrack(songs.get(i)));
+    }
+
+    // --- Local play history -----------------------------------------------
+
+    private void loadLocalRecent() {
+        Path p = Paths.get(AppDirs.base(), "recent_songs.json");
+        try {
+            if (!Files.exists(p)) return;
+            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            JsonElement el = new JsonParser().parse(text);
+            if (!el.isJsonArray()) return;
+            for (JsonElement item : el.getAsJsonArray()) {
+                if (!item.isJsonObject()) continue;
+                JsonObject o = item.getAsJsonObject();
+                NeteaseSong s = new NeteaseSong();
+                s.id = o.has("id") ? o.get("id").getAsLong() : 0;
+                s.name = o.has("name") ? o.get("name").getAsString() : "";
+                s.artist = o.has("artist") ? o.get("artist").getAsString() : "";
+                s.album = o.has("album") ? o.get("album").getAsString() : "";
+                s.coverUrl = o.has("coverUrl") ? o.get("coverUrl").getAsString() : "";
+                String thumb = o.has("coverThumbPath") ? o.get("coverThumbPath").getAsString() : "";
+                s.coverThumbPath = thumb.isEmpty() ? null : thumb;
+                s.durationMs = o.has("durationMs") ? o.get("durationMs").getAsLong() : 0;
+                localRecentList.add(s);
+            }
+        } catch (Exception e) {
+            Logger.warn("local recent load failed: {}", e.getMessage());
+        }
+    }
+
+    private void saveLocalRecent() {
+        try {
+            Files.createDirectories(Paths.get(AppDirs.base()));
+            JsonArray arr = new JsonArray();
+            for (NeteaseSong s : localRecentList) {
+                JsonObject o = new JsonObject();
+                o.addProperty("id", s.id);
+                o.addProperty("name", s.name != null ? s.name : "");
+                o.addProperty("artist", s.artist != null ? s.artist : "");
+                o.addProperty("album", s.album != null ? s.album : "");
+                o.addProperty("coverUrl", s.coverUrl != null ? s.coverUrl : "");
+                o.addProperty("coverThumbPath", s.coverThumbPath != null ? s.coverThumbPath : "");
+                o.addProperty("durationMs", s.durationMs);
+                arr.add(o);
+            }
+            Files.write(Paths.get(AppDirs.base(), "recent_songs.json"),
+                    arr.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Logger.warn("local recent save failed: {}", e.getMessage());
+        }
+    }
+
+    // Called on the worker thread whenever a track starts playing.
+    private void recordToLocalRecent(Track t) {
+        NeteaseSong s = new NeteaseSong();
+        s.id = t.neteaseId;
+        s.name = t.title != null ? t.title : "";
+        s.artist = t.artist != null ? t.artist : "";
+        s.album = t.album != null ? t.album : "";
+        s.coverUrl = t.coverUrl != null ? t.coverUrl : "";
+        s.coverThumbPath = t.coverThumbPath;
+        s.durationMs = t.durationMs;
+        final String name = s.name, artist = s.artist;
+        localRecentList.removeIf(e ->
+            (s.id > 0 && e.id == s.id)
+            || (s.id == 0 && name.equals(e.name != null ? e.name : "")
+                          && artist.equals(e.artist != null ? e.artist : "")));
+        localRecentList.add(0, s);
+        if (localRecentList.size() > RECENT_LOCAL_MAX)
+            localRecentList.subList(RECENT_LOCAL_MAX, localRecentList.size()).clear();
+        saveLocalRecent();
+    }
+
 }

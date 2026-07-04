@@ -125,6 +125,7 @@ Item {
             repeat: true
             onTriggered: {
                 wavyCanvas.phase = (wavyCanvas.phase + 0.1) % (Math.PI * 2)
+                wavyCanvas.requestPaint()
             }
         }
 

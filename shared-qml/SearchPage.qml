@@ -10,6 +10,13 @@ Item {
 
     Component.onCompleted: player.loadHotSearches()
 
+    Timer {
+        id: searchDebounce
+        interval: 350
+        repeat: false
+        onTriggered: { if (query.text.length > 0) player.search(query.text) }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -28,10 +35,11 @@ Item {
                 label: "搜索网易云歌曲"
                 // Real-time search on every keystroke (no history here — history only on explicit confirm)
                 onTextChanged: {
-                    if (text.length > 0) player.search(text)
-                    if (text.length === 0) page.historyExpanded = false
+                    if (text.length > 0) searchDebounce.restart()
+                    else { searchDebounce.stop(); page.historyExpanded = false }
                 }
                 onAccepted: {
+                    searchDebounce.stop()
                     player.search(query.text)
                     player.addSearchHistory(query.text)
                 }
@@ -40,6 +48,7 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 type: "filled"; icon: "search"
                 onClicked: {
+                    searchDebounce.stop()
                     player.search(query.text)
                     player.addSearchHistory(query.text)
                 }
@@ -125,7 +134,7 @@ Item {
                                     id: closeBtn
                                     width: 40
                                     height: parent.height
-                                    x: parent.width - width
+                                    x: parent.width - 40
                                     Text {
                                         anchors.centerIn: parent
                                         text: "close"
