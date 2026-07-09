@@ -109,6 +109,15 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 
 > macOS 的 `.dmg` 未签名,对外分发需自行 codesign + 公证,否则 Gatekeeper 会拦截。打 `v*` tag 时,`.github/workflows/release.yml` 会在三平台 CI 上自动完成上述构建并附到 GitHub Release。
 
+## 发版
+
+版本号在**两处**,bump 时都要改(保持一致):
+
+- `android-shell/app/build.gradle.kts` —— `versionCode`(整数,每次 +1)+ `versionName`(如 `0.8.4`)
+- `desktop-host/pom.xml` —— `<qplayer.app.version>`(桌面分发包版本)
+
+改完提交,再打并推 `v<versionName>` tag(如 `v0.8.4`)触发 `release.yml`:安卓签名 APK + 三平台桌面包自动构建并附到 GitHub Release。CI 会按 `build.gradle.kts` 里的 `qml4j-core` 版本从源码 clone 对应 `v*` tag 构建引擎,故发版前需先打好对应的 qml4j tag。
+
 ## AI 说明
 
 本项目(QPlayer 及其依赖的 [qml4j](https://github.com/TIMER-err/qml4j) 引擎)的大部分代码由 **Claude(Opus 4.8)** 通过 Claude Code 生成。这是一个效率上的取舍:本项目在业余时间开发,可投入的时间有限,vibe coding 让我在有限的时间里做出更多。所有代码在合入前都经过我本人逐行审查,并在发布前于真机测试;最终结果由我负责。多数提交带有 `Co-Authored-By: Claude`,贡献者列表中也因此出现 "Claude";这是有意保留的,用于标注 AI 在本项目中的参与程度。
