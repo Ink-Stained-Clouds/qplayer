@@ -54,6 +54,15 @@ Rectangle {
                 contentColor: player.playlistSubscribed ? Theme.color.primary : Theme.color.onSurfaceColor
                 onClicked: player.togglePlaylistSubscribe()
             }
+            // Delete — only your own playlists, and never the "我喜欢的音乐" default
+            // (the first playlist, which can't be removed). Confirms first.
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
+                visible: player.loggedIn && !player.playlistLoading && player.playlistDeletable
+                icon: "delete"
+                onClicked: deleteDialog.open()
+            }
         }
 
         Item {
@@ -68,6 +77,10 @@ Rectangle {
                 // QueuePage): an invisible detail otherwise keeps the whole
                 // playlist's SongRows alive after you return home.
                 list: page.visible ? player.playlistTracks : null
+                // Long-press a track → add to another playlist, and (in your own
+                // playlist) remove it from this one.
+                songMenu: player.loggedIn
+                ownedPlaylist: player.playlistOwned
                 onActivated: player.playPlaylistTrack(tracks.activatedIndex)
             }
 
@@ -78,6 +91,21 @@ Rectangle {
                 withContainer: true
                 size: 56
             }
+        }
+    }
+
+    // Delete confirmation. On accept the controller removes it and refreshes 我的;
+    // we drill back out since this playlist no longer exists.
+    Dialog {
+        id: deleteDialog
+        icon: "delete"
+        title: "删除歌单"
+        text: "确定删除歌单「" + player.playlistTitle + "」吗？此操作无法撤销。"
+        acceptText: "删除"
+        rejectText: "取消"
+        onAccepted: {
+            player.deletePlaylist(player.openPlaylistId)
+            page.back()
         }
     }
 }

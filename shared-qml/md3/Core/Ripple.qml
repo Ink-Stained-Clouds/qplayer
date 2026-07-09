@@ -14,6 +14,25 @@ MouseArea {
 
     hoverEnabled: true
 
+    // Opt-in long-press. When enabled, a stationary hold for `longPressMs` emits
+    // longPressed(); dragging (a scroll) past a small slop or releasing cancels it,
+    // so it never fires while flicking a list. Off by default → zero cost for the
+    // many Ripples on buttons/cards that don't want it. pressX/pressY hold the last
+    // press point (menus open there); the signal is param-less so it survives the
+    // cross-file handler path.
+    property bool longPressEnabled: false
+    property int longPressMs: 480
+    property real pressX: 0
+    property real pressY: 0
+    signal longPressed()
+
+    Timer {
+        id: holdTimer
+        interval: root.longPressMs
+        repeat: false
+        onTriggered: root.longPressed()
+    }
+
     // The wave currently held under the finger (fades once released).
     property var activeWave: null
     // Live wave count. The masked MultiEffect renders every frame it exists; idle
@@ -113,8 +132,19 @@ MouseArea {
     onPressed: (mouse) => {
         root.activeWave = waveComponent.createObject(rippleContent, { startX: mouse.x, startY: mouse.y })
         root.liveWaves = root.liveWaves + 1
+        if (root.longPressEnabled) { root.pressX = mouse.x; root.pressY = mouse.y; holdTimer.restart() }
     }
 
-    onReleased: { if (root.activeWave) { root.activeWave.held = false; root.activeWave = null } }
-    onCanceled: { if (root.activeWave) { root.activeWave.held = false; root.activeWave = null } }
+    // Cancel the pending long-press once the finger travels past a small slop — this
+    // is what a scroll drag looks like. Guarded on holdTimer.running so hover moves
+    // (hoverEnabled is on) don't pay for the math.
+    onPositionChanged: (mouse) => {
+        if (holdTimer.running) {
+            var dx = mouse.x - root.pressX, dy = mouse.y - root.pressY
+            if (dx * dx + dy * dy > 100) holdTimer.stop()
+        }
+    }
+
+    onReleased: { holdTimer.stop(); if (root.activeWave) { root.activeWave.held = false; root.activeWave = null } }
+    onCanceled: { holdTimer.stop(); if (root.activeWave) { root.activeWave.held = false; root.activeWave = null } }
 }

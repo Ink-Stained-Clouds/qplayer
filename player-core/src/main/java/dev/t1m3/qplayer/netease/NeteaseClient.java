@@ -1045,16 +1045,67 @@ public final class NeteaseClient {
     public boolean setFavorite(long uid, long songId, boolean add) throws IOException {
         long pid = favoritePlaylistId(uid);
         if (pid == 0L) return false;
+        return manipulatePlaylistTracks(pid, songId, add);
+    }
+
+    /**
+     * Add or remove a single track to/from an arbitrary playlist owned by the
+     * user via {@code playlist/manipulate/tracks}. Handles the server's code-512
+     * quirk: it rejects a trackIds list that (after its own de-dup against the
+     * playlist) collapses to one entry, so on 512 we retry with the id doubled —
+     * the same workaround api-enhanced uses.
+     */
+    public boolean manipulatePlaylistTracks(long pid, long songId, boolean add) throws IOException {
+        JsonObject obj = manipulateTracksOnce(pid, "[" + songId + "]", add);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code == 512) {
+            obj = manipulateTracksOnce(pid, "[" + songId + "," + songId + "]", add);
+            code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        }
+        if (code != 200) {
+            Logger.warn("playlist/manipulate/tracks failed pid={} track={} (add={}): {}",
+                    pid, songId, add, truncate(obj.toString(), 300));
+        }
+        return code == 200;
+    }
+
+    private JsonObject manipulateTracksOnce(long pid, String trackIdsJson, boolean add) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("op", add ? "add" : "del");
         body.put("pid", pid);
-        body.put("trackIds", "[" + songId + "]");
+        body.put("trackIds", trackIdsJson);
         body.put("imme", "true");
-        JsonObject obj = weapiJson("playlist/manipulate/tracks", body);
+        return weapiJson("playlist/manipulate/tracks", body);
+    }
+
+    /**
+     * Create a new playlist. {@code privacy} true makes it a "隐私歌单" (10),
+     * otherwise a normal public playlist (0). Returns the new playlist id, or
+     * {@code 0} on failure.
+     */
+    public long createPlaylist(String name, boolean privacy) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("name", name);
+        body.put("privacy", privacy ? "10" : "0");
+        body.put("type", "NORMAL");
+        JsonObject obj = weapiJson("playlist/create", body);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code != 200) return 0L;
+        if (obj.has("id") && !obj.get("id").isJsonNull()) return obj.get("id").getAsLong();
+        if (obj.has("playlist") && obj.getAsJsonObject("playlist").has("id")) {
+            return obj.getAsJsonObject("playlist").get("id").getAsLong();
+        }
+        return 0L;
+    }
+
+    /** Delete a playlist owned by the user via {@code playlist/remove}. */
+    public boolean deletePlaylist(long playlistId) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("ids", "[" + playlistId + "]");
+        JsonObject obj = weapiJson("playlist/remove", body);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
-            Logger.warn("playlist/manipulate/tracks failed for {} (add={}): {}",
-                    songId, add, truncate(obj.toString(), 300));
+            Logger.warn("playlist/remove failed id={}: {}", playlistId, truncate(obj.toString(), 300));
         }
         return code == 200;
     }

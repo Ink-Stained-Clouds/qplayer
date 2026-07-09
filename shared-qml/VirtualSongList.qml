@@ -23,6 +23,10 @@ Flickable {
     property var list
     property bool isLocal: false
     property bool removable: false
+    // Long-press menu opt-in for the rows (netease-backed lists set songMenu true).
+    // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
+    property bool songMenu: false
+    property bool ownedPlaylist: false
     property int rowH: 64
     property int activatedIndex: -1
     property int removeIndex: -1
@@ -74,6 +78,9 @@ Flickable {
                 flickHeight: view.height
                 highlighted: view.isLocal && index === player.index
                 removable: view.removable
+                song: view.songMenu ? modelData : null
+                menuEnabled: view.songMenu
+                inOwnedPlaylist: view.ownedPlaylist
                 onActivated: { view.activatedIndex = index; view.activated() }
                 onRemoveRequested: { view.removeIndex = index; view.removeRequested() }
             }
