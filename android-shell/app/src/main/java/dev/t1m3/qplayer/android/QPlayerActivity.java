@@ -2,6 +2,9 @@ package dev.t1m3.qplayer.android;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -88,6 +91,12 @@ public final class QPlayerActivity extends Activity {
             sharedController = controller;
         }
         controller.setColorExtractor(new AndroidColorExtractor());
+        // Copy-to-clipboard sink for the song menu's "复制链接". The QML action fires on
+        // the render thread; ClipboardManager wants the main thread, so hop there.
+        controller.setClipboard(text -> runOnUiThread(() -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("link", text));
+        }));
 
         // App update check: feed the running version + a url opener so the controller
         // can compare against the latest GitHub release and the dialog can launch the

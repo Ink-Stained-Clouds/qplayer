@@ -65,6 +65,7 @@ public final class PlayerController {
     private final MetadataReader metadataReader;
     private final NeteaseClient netease;
     private volatile ColorExtractor colorExtractor;
+    private volatile java.util.function.Consumer<String> clipboard;
     private volatile boolean monetEnabled = true;
     private static final String DEFAULT_SEED = "#6750A4";
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -322,6 +323,25 @@ public final class PlayerController {
     /** Platform color extractor for Monet seeds; set once at startup. */
     public void setColorExtractor(ColorExtractor extractor) {
         this.colorExtractor = extractor;
+    }
+
+    /** Platform clipboard sink (copies text to the system clipboard), set at startup.
+     *  The shell is responsible for putting the write on the right thread. */
+    public void setClipboard(java.util.function.Consumer<String> sink) {
+        this.clipboard = sink;
+    }
+
+    /** Copy a shareable netease link for the song to the system clipboard. */
+    public void copySongLink(long songId) {
+        if (songId == 0) return;
+        String url = "https://music.163.com/song?id=" + songId;
+        java.util.function.Consumer<String> c = clipboard;
+        if (c != null) {
+            c.accept(url);
+            toast.set("已复制链接");
+        } else {
+            toast.set(url);
+        }
     }
 
     // --- Frame pump (render thread) --------------------------------------
