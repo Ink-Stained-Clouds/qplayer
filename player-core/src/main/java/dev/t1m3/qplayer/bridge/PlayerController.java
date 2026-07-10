@@ -240,6 +240,9 @@ public final class PlayerController {
      *  page's collect icon. Resolved from playlist/detail, so it reflects the real state
      *  on open (no guessing). */
     public final Property<Boolean> playlistSubscribed = new Property<>(false);
+    /** Guards against stacking subscribe requests: a collect is heavily risk-controlled,
+     *  so a second tap while one is in flight is ignored rather than re-fired. */
+    private volatile boolean subscribeBusy;
     /** Whether the open playlist is the user's own (can't collect your own). */
     public final Property<Boolean> playlistOwned = new Property<>(false);
     /** Whether the open playlist can be deleted: owned AND not the "我喜欢的音乐"
@@ -1578,9 +1581,11 @@ public final class PlayerController {
      *  when signed out. Optimistically flips the icon, reverting if the server refuses. */
     public void togglePlaylistSubscribe() {
         if (!loggedIn.get() || playlistOwned.get()) return;
+        if (subscribeBusy) return;   // one in flight: ignore the tap, never stack/retry
         final long id = currentPlaylistId;
         if (id == 0) return;
         final boolean target = !playlistSubscribed.get();
+        subscribeBusy = true;
         playlistSubscribed.set(target);
         worker.submit(() -> {
             boolean ok = false;
@@ -1591,12 +1596,13 @@ public final class PlayerController {
             }
             final boolean done = ok;
             post(() -> {
+                subscribeBusy = false;
                 if (currentPlaylistId != id) return;
                 if (done) {
                     toast.set(target ? "已收藏歌单" : "已取消收藏");
                     loadMyPlaylists();   // reflect the change in 我的
                 } else {
-                    playlistSubscribed.set(!target);   // revert the optimistic flip
+                    playlistSubscribed.set(!target);   // revert the optimistic flip; no auto-retry
                 }
             });
         });

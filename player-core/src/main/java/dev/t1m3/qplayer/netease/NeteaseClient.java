@@ -198,6 +198,15 @@ public final class NeteaseClient {
      *  response body means the MUSIC_U session has expired server-side,
      *  so we wipe the local cookie jar to force a re-login. */
     public JsonObject weapiJson(String path, Map<String, Object> json) throws IOException {
+        return weapiJson(path, json, true);
+    }
+
+    /** {@code reportErrors=false} silences the failure toast — for an attempt inside a
+     *  fallback chain (e.g. radio/like tier 2, or the code-512 first try), where a later
+     *  tier may still succeed and a toast would be a false alarm ("网络环境有风险" even
+     *  though the song got favorited). Cookie-expiry handling still runs. */
+    public JsonObject weapiJson(String path, Map<String, Object> json, boolean reportErrors)
+            throws IOException {
         String resp = weapiCall(path, json);
         JsonElement el = new JsonParser().parse(resp);
         if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
@@ -206,7 +215,7 @@ public final class NeteaseClient {
         if (code == 301 && isLoggedIn() && !"login/qrcode/client/login".equals(path)) {
             Logger.warn("Netease: session expired (code 301) on /weapi/{} — clearing cookies", path);
             clearCookies();
-        } else if (code != 200 && !path.startsWith("login/")) {
+        } else if (code != 200 && !path.startsWith("login/") && reportErrors) {
             // Any failure that carries a server reason (a private playlist, risk control,
             // ...) surfaces as a toast. Skip the login/qrcode flow: its 800-803 codes are
             // poll states ("waiting"/"scanned"), not errors.
@@ -1022,13 +1031,14 @@ public final class NeteaseClient {
         } catch (IOException e) {
             Logger.warn("xeapi radio/like failed for {} (like={}): {}", songId, isLike, e.getMessage());
         }
-        // Tier 2: legacy weapi /radio/like.
+        // Tier 2: legacy weapi /radio/like. Quiet — toggleLike still has the playlist
+        // fallback (setFavorite) after this, so a failure here must not toast.
         Map<String, Object> body = new HashMap<>();
         body.put("trackId", songId);
         body.put("like", isLike);
         body.put("alg", "itembased");
         body.put("time", "3");
-        JsonObject obj = weapiJson("radio/like", body);
+        JsonObject obj = weapiJson("radio/like", body, false);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
             Logger.warn("netease radio/like failed for {} (like={}): {}",
@@ -1081,7 +1091,9 @@ public final class NeteaseClient {
         body.put("pid", pid);
         body.put("trackIds", trackIdsJson);
         body.put("imme", "true");
-        return weapiJson("playlist/manipulate/tracks", body);
+        // Quiet: manipulatePlaylistTracks retries on code 512, and setFavorite uses this
+        // as the fallback tier of toggleLike — an intermediate failure must not toast.
+        return weapiJson("playlist/manipulate/tracks", body, false);
     }
 
     /**
