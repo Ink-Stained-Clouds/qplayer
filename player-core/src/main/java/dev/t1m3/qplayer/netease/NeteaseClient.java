@@ -245,6 +245,11 @@ public final class NeteaseClient {
         header.put("channel", "distribution");
         header.put("requestId", System.currentTimeMillis() + "_" + String.format(java.util.Locale.ROOT,
                 "%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000)));
+        // api-enhanced puts the anti-cheat token in the header object, which becomes the
+        // Cookie (request.js). NOTE: this is a STATIC, shared token — the official client
+        // generates a valid device/session-bound one via its anti-cheat SDK, which we
+        // can't replicate, so subscribe is inherently rate-limited under repeated use.
+        if (checkToken) header.put("X-antiCheatToken", CHECK_TOKEN);
         if (!musicU.isEmpty()) header.put("MUSIC_U", musicU);
 
         Map<String, Object> body = json == null
@@ -274,9 +279,6 @@ public final class NeteaseClient {
             conn.setRequestProperty("Referer", BASE);
             conn.setRequestProperty("X-Real-IP", REAL_IP);
             conn.setRequestProperty("X-Forwarded-For", REAL_IP);
-            // api-enhanced sends the anti-cheat token as an HTTP header (request.js),
-            // not inside the eapi body/cookie — playlist/subscribe needs it present.
-            if (checkToken) conn.setRequestProperty("X-antiCheatToken", CHECK_TOKEN);
             conn.setRequestProperty("Cookie", headerCookie(header));
 
             try (OutputStream os = conn.getOutputStream()) {
