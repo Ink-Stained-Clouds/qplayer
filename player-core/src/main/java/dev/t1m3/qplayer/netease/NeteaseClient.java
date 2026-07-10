@@ -198,6 +198,15 @@ public final class NeteaseClient {
      *  response body means the MUSIC_U session has expired server-side,
      *  so we wipe the local cookie jar to force a re-login. */
     public JsonObject weapiJson(String path, Map<String, Object> json) throws IOException {
+        return weapiJson(path, json, true);
+    }
+
+    /** {@code reportErrors=false} silences the failure toast — for an attempt inside a
+     *  fallback chain (e.g. radio/like tier 2, or the code-512 first try), where a later
+     *  tier may still succeed and a toast would be a false alarm ("网络环境有风险" even
+     *  though the song got favorited). Cookie-expiry handling still runs. */
+    public JsonObject weapiJson(String path, Map<String, Object> json, boolean reportErrors)
+            throws IOException {
         String resp = weapiCall(path, json);
         JsonElement el = new JsonParser().parse(resp);
         if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
@@ -206,7 +215,7 @@ public final class NeteaseClient {
         if (code == 301 && isLoggedIn() && !"login/qrcode/client/login".equals(path)) {
             Logger.warn("Netease: session expired (code 301) on /weapi/{} — clearing cookies", path);
             clearCookies();
-        } else if (code != 200 && !path.startsWith("login/")) {
+        } else if (code != 200 && !path.startsWith("login/") && reportErrors) {
             // Any failure that carries a server reason (a private playlist, risk control,
             // ...) surfaces as a toast. Skip the login/qrcode flow: its 800-803 codes are
             // poll states ("waiting"/"scanned"), not errors.
@@ -245,6 +254,10 @@ public final class NeteaseClient {
         header.put("channel", "distribution");
         header.put("requestId", System.currentTimeMillis() + "_" + String.format(java.util.Locale.ROOT,
                 "%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000)));
+        // api-enhanced puts the anti-cheat token in the header object, which becomes the
+        // Cookie (request.js). NOTE: this is a STATIC, shared token — the official client
+        // generates a valid device/session-bound one via its anti-cheat SDK, which we
+        // can't replicate, so subscribe is inherently rate-limited under repeated use.
         if (checkToken) header.put("X-antiCheatToken", CHECK_TOKEN);
         if (!musicU.isEmpty()) header.put("MUSIC_U", musicU);
 
@@ -832,13 +845,15 @@ public final class NeteaseClient {
      * </ul>
      */
     public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
-        if (subscribe) {
-            JsonObject obj = xeapiJson("/api/playlist/subscribe", "id=" + playlistId);
-            return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
-        }
+        // Matches api-enhanced's playlist_subscribe.js: both directions go through eapi
+        // with the anti-cheat token forced on; subscribe also carries the token value in
+        // the body. (An earlier attempt used xeapi for subscribe, which the server now
+        // answers with "操作频繁".)
+        String path = subscribe ? "/api/playlist/subscribe" : "/api/playlist/unsubscribe";
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", playlistId);
-        JsonObject obj = eapiJson("/api/playlist/unsubscribe", body, false);
+        if (subscribe) body.put("checkToken", CHECK_TOKEN);
+        JsonObject obj = eapiJson(path, body, true);
         return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 
@@ -1016,13 +1031,14 @@ public final class NeteaseClient {
         } catch (IOException e) {
             Logger.warn("xeapi radio/like failed for {} (like={}): {}", songId, isLike, e.getMessage());
         }
-        // Tier 2: legacy weapi /radio/like.
+        // Tier 2: legacy weapi /radio/like. Quiet — toggleLike still has the playlist
+        // fallback (setFavorite) after this, so a failure here must not toast.
         Map<String, Object> body = new HashMap<>();
         body.put("trackId", songId);
         body.put("like", isLike);
         body.put("alg", "itembased");
         body.put("time", "3");
-        JsonObject obj = weapiJson("radio/like", body);
+        JsonObject obj = weapiJson("radio/like", body, false);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
             Logger.warn("netease radio/like failed for {} (like={}): {}",
@@ -1045,16 +1061,69 @@ public final class NeteaseClient {
     public boolean setFavorite(long uid, long songId, boolean add) throws IOException {
         long pid = favoritePlaylistId(uid);
         if (pid == 0L) return false;
+        return manipulatePlaylistTracks(pid, songId, add);
+    }
+
+    /**
+     * Add or remove a single track to/from an arbitrary playlist owned by the
+     * user via {@code playlist/manipulate/tracks}. Handles the server's code-512
+     * quirk: it rejects a trackIds list that (after its own de-dup against the
+     * playlist) collapses to one entry, so on 512 we retry with the id doubled —
+     * the same workaround api-enhanced uses.
+     */
+    public boolean manipulatePlaylistTracks(long pid, long songId, boolean add) throws IOException {
+        JsonObject obj = manipulateTracksOnce(pid, "[" + songId + "]", add);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code == 512) {
+            obj = manipulateTracksOnce(pid, "[" + songId + "," + songId + "]", add);
+            code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        }
+        if (code != 200) {
+            Logger.warn("playlist/manipulate/tracks failed pid={} track={} (add={}): {}",
+                    pid, songId, add, truncate(obj.toString(), 300));
+        }
+        return code == 200;
+    }
+
+    private JsonObject manipulateTracksOnce(long pid, String trackIdsJson, boolean add) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("op", add ? "add" : "del");
         body.put("pid", pid);
-        body.put("trackIds", "[" + songId + "]");
+        body.put("trackIds", trackIdsJson);
         body.put("imme", "true");
-        JsonObject obj = weapiJson("playlist/manipulate/tracks", body);
+        // Quiet: manipulatePlaylistTracks retries on code 512, and setFavorite uses this
+        // as the fallback tier of toggleLike — an intermediate failure must not toast.
+        return weapiJson("playlist/manipulate/tracks", body, false);
+    }
+
+    /**
+     * Create a new playlist. {@code privacy} true makes it a "隐私歌单" (10),
+     * otherwise a normal public playlist (0). Returns the new playlist id, or
+     * {@code 0} on failure.
+     */
+    public long createPlaylist(String name, boolean privacy) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("name", name);
+        body.put("privacy", privacy ? "10" : "0");
+        body.put("type", "NORMAL");
+        JsonObject obj = weapiJson("playlist/create", body);
+        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+        if (code != 200) return 0L;
+        if (obj.has("id") && !obj.get("id").isJsonNull()) return obj.get("id").getAsLong();
+        if (obj.has("playlist") && obj.getAsJsonObject("playlist").has("id")) {
+            return obj.getAsJsonObject("playlist").get("id").getAsLong();
+        }
+        return 0L;
+    }
+
+    /** Delete a playlist owned by the user via {@code playlist/remove}. */
+    public boolean deletePlaylist(long playlistId) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("ids", "[" + playlistId + "]");
+        JsonObject obj = weapiJson("playlist/remove", body);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
-            Logger.warn("playlist/manipulate/tracks failed for {} (add={}): {}",
-                    songId, add, truncate(obj.toString(), 300));
+            Logger.warn("playlist/remove failed id={}: {}", playlistId, truncate(obj.toString(), 300));
         }
         return code == 200;
     }

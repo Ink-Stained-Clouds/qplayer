@@ -3,6 +3,8 @@ package dev.t1m3.qplayer.lyric.skia;
 import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.DirectContext;
+import io.github.humbleui.skija.FilterTileMode;
+import io.github.humbleui.skija.ImageFilter;
 import io.github.humbleui.skija.Paint;
 import io.github.humbleui.skija.Shader;
 import io.github.humbleui.types.Rect;
@@ -73,6 +75,30 @@ public final class LyricCompositor {
     private Shader lyFadeShader;
     private final Paint lyMaskPaint = new Paint();
 
+    // Apple-Music progressive edge blur (opt-in). The column is drawn twice with two
+    // COMPLEMENTARY masks that never overlap: a blurred copy kept only at the edges, and a
+    // sharp copy kept only across a plateau around the active line. Neither is a solid base
+    // under the other, so the edges read as a real blur (no sharp glyphs bleeding through)
+    // and the active line stays perfectly clean (no blurred halo — that halo was the glow
+    // artefact). The masks ramp smoothly, so the sharp->blur transition is a continuous
+    // vertical gradient, not per-line steps. Peak blur scales with the font size; masks are
+    // cached by column geometry.
+    private static final float EDGE_BLUR_SIGMA_RATIO = 0.11f; // blur sigma = fontSize × this
+    // Crossfade stops as a fraction of column height, centred on the active line
+    // (ALIGN_POSITION 0.35): sharp across 0.26–0.44, blur toward both edges.
+    private static final float[] BAND_STOPS = {0f, 0.26f, 0.44f, 0.70f, 1f};
+    private final Paint blurBasePaint = new Paint();
+    private ImageFilter blurFilter;
+    private float blurSigmaApplied = -1f;
+    private Shader blurBandShader;  // opaque at edges, transparent in the focus band
+    private Shader sharpBandShader; // the complement — opaque in the focus band
+    private float bandShaderColH = -1f;
+    private float bandShaderTopY = -1f;
+    private float bandFracTop = -1f, bandFracBottom = -1f; // cached lit-band fractions
+    // Crossfade width beyond the lit band, as a fraction of column height: the sharp
+    // plateau covers the lit lines, then ramps to full blur over this distance.
+    private static final float BAND_RAMP = 0.24f;
+
     // Cached lyric-column rect + cover-key string (both were rebuilt every frame).
     private Rect lyColRect;
     private float lyColW = -1f, lyColH = -1f, lyColTopY = -1f, lyColLeft = -1f;
@@ -141,15 +167,14 @@ public final class LyricCompositor {
             renderedVersion = Property.changeVersion();
             canvas.restoreToCount(sc);
         } else if (Property.changeVersion() != renderedVersion) {
-            // Lyric page fully covers the main scene so we skip drawing it — but the
-            // chrome subtree (renderSubtree doesn't settle layout) relies on the main
-            // render's layout pass. When something changed, settle once so the chrome's
-            // anchors reflow; the draw is painted over by the fluid, so it stays hidden.
-            int sc = canvas.save();
-            canvas.scale(uiScale, uiScale);
-            renderer.render(canvas, view.root(), false);
+            // Lyric page fully covers the main scene: the fluid backdrop is opaque, so
+            // DRAWING the scene is pure waste. The chrome subtree (renderSubtree doesn't
+            // run layout) just needs its own anchors settled, so settle only that subtree
+            // — not the whole resident tree. The per-frame progress-bar tick bumps the
+            // change version, so this branch runs every frame; drawing the scene cost
+            // ~14 ms and settling the full tree ~5 ms, both wasted while covered.
+            renderer.layoutOnly(lyricChrome != null ? lyricChrome : view.root());
             renderedVersion = Property.changeVersion();
-            canvas.restoreToCount(sc);
         }
         drawLyricOverlay(canvas, controller, settings, ctx, uiScale, fbW, fbH);
         double slideNow = controller != null ? controller.lyricSlide.peek() : 0.0;
@@ -269,9 +294,14 @@ public final class LyricCompositor {
                 lyColH = colH;
             }
             Rect colRect = lyColRect;
+            long pos = controller.position();
             int lc = canvas.saveLayer(colRect, null);
             LyricSkia.setCanvas(canvas);
-            lyricRenderer.render(canvas, colLeft + pad, colTopY, colW, colH, controller.position());
+            if (Boolean.TRUE.equals(LyricConfig.instance.edgeBlur.getValue())) {
+                drawProgressiveBlurColumn(canvas, colRect, colLeft + pad, colTopY, colW, colH, pos);
+            } else {
+                lyricRenderer.render(canvas, colLeft + pad, colTopY, colW, colH, pos);
+            }
             lyMaskPaint.setShader(lyFadeShader);
             lyMaskPaint.setBlendMode(BlendMode.DST_IN);
             canvas.drawRect(colRect, lyMaskPaint);
@@ -280,6 +310,95 @@ public final class LyricCompositor {
         }
 
         canvas.restoreToCount(sc);
+    }
+
+    // Progressive edge blur: draw a uniformly blurred column, then overlay a sharp copy
+    // masked to a plateau around the active line. The mask ramps smoothly, so the
+    // sharp->blur transition is a continuous vertical gradient (Apple-Music depth of
+    // field) rather than the per-line steps a per-row blur produced. Two column renders +
+    // one blur pass — only on the opt-in path.
+    private void drawProgressiveBlurColumn(Canvas canvas, Rect colRect, float leftX,
+                                           float colTopY, float colW, float colH, long pos) {
+        float sigma = Math.max(1f, LyricConfig.instance.lyricFontSize.getValue() * EDGE_BLUR_SIGMA_RATIO);
+        ensureBlurFilter(sigma);
+
+        // Blurred copy, kept only at the edges.
+        int mb = canvas.saveLayer(colRect, null);
+        int b = canvas.saveLayer(colRect, blurBasePaint);
+        lyricRenderer.render(canvas, leftX, colTopY, colW, colH, pos);
+        canvas.restoreToCount(b);
+        // Build the band from THIS frame's lit lines (render just refreshed them), so
+        // the sharp plateau covers the whole active group rather than one anchor line.
+        ensureBandShaders(colTopY, colH, lyricRenderer.litBandBounds());
+        lyMaskPaint.setShader(blurBandShader);
+        lyMaskPaint.setBlendMode(BlendMode.DST_IN);
+        canvas.drawRect(colRect, lyMaskPaint);
+        lyMaskPaint.setShader(null);
+        canvas.restoreToCount(mb);
+
+        // Sharp copy, kept only across the focus band (complementary mask, no overlap).
+        int ms = canvas.saveLayer(colRect, null);
+        lyricRenderer.render(canvas, leftX, colTopY, colW, colH, pos);
+        lyMaskPaint.setShader(sharpBandShader);
+        lyMaskPaint.setBlendMode(BlendMode.DST_IN);
+        canvas.drawRect(colRect, lyMaskPaint);
+        lyMaskPaint.setShader(null);
+        canvas.restoreToCount(ms);
+    }
+
+    private void ensureBlurFilter(float sigma) {
+        if (sigma == blurSigmaApplied && blurFilter != null) return;
+        blurSigmaApplied = sigma;
+        if (blurFilter != null) blurFilter.close();
+        blurFilter = ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP);
+        blurBasePaint.setImageFilter(blurFilter);
+    }
+
+    // Build the crossfade masks so the sharp plateau spans the currently-lit lines
+    // (lit = screen-space {top, bottom}, or null → the fixed ALIGN-centred plateau).
+    // The plateau then ramps to full blur over BAND_RAMP on each side. This is what
+    // keeps every line of a multi-line active group sharp, not just the anchor line.
+    private void ensureBandShaders(float topY, float colH, float[] lit) {
+        float fTop, fBot;
+        if (lit != null && colH > 0f) {
+            fTop = (lit[0] - topY) / colH;
+            fBot = (lit[1] - topY) / colH;
+            if (fBot < fTop) { float m = fTop; fTop = fBot; fBot = m; }
+        } else {
+            fTop = BAND_STOPS[1];   // 0.26 — the original fixed plateau
+            fBot = BAND_STOPS[2];   // 0.44
+        }
+        if (topY == bandShaderTopY && colH == bandShaderColH && blurBandShader != null
+                && Math.abs(fTop - bandFracTop) < 0.004f && Math.abs(fBot - bandFracBottom) < 0.004f) {
+            return;
+        }
+        bandShaderTopY = topY;
+        bandShaderColH = colH;
+        bandFracTop = fTop;
+        bandFracBottom = fBot;
+        if (blurBandShader != null) blurBandShader.close();
+        if (sharpBandShader != null) sharpBandShader.close();
+        float[] stops = monotonic(fTop - BAND_RAMP, fTop, fBot, fBot + BAND_RAMP);
+        int o = 0xFFFFFFFF, t = 0x00FFFFFF;
+        blurBandShader = Shader.makeLinearGradient(0f, topY, 0f, topY + colH,
+                new int[]{o, t, t, o}, stops);   // blur kept outside the plateau
+        sharpBandShader = Shader.makeLinearGradient(0f, topY, 0f, topY + colH,
+                new int[]{t, o, o, t}, stops);   // sharp kept across the plateau
+    }
+
+    // Clamp four gradient stops into [0,1] and force them strictly increasing (Skija
+    // rejects equal/out-of-order positions).
+    private static float[] monotonic(float s0, float s1, float s2, float s3) {
+        float[] s = {s0, s1, s2, s3};
+        float eps = 1e-4f;
+        for (int i = 0; i < s.length; i++) {
+            if (s[i] < 0f) s[i] = 0f;
+            else if (s[i] > 1f) s[i] = 1f;
+        }
+        for (int i = 1; i < s.length; i++) {
+            if (s[i] <= s[i - 1]) s[i] = Math.min(1f, s[i - 1] + eps);
+        }
+        return s;
     }
 
     // Rebuild the cached lyric gradients only when the column top or height changes

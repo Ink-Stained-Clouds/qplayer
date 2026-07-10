@@ -8,6 +8,20 @@ Item {
     // API
     property var model: [] // Array of objects: { text, icon, trailingText, trailingIcon, type: "item"|"separator", action: func, enabled: bool, subItems: [] }
     property int menuPadding: 8
+    // Cap the popup width so a long item label (e.g. a playlist name in a submenu)
+    // can't stretch the menu nearly across the screen; the item text elides instead.
+    property real maxWidth: 280
+    // Cap the popup height; a longer list (many playlists) scrolls inside.
+    property real maxHeight: 360
+
+    // Anchor for the popup, in menuRoot coordinates. open() records the raw desired
+    // position; popupContainer.x/y then CLAMP it against menuRoot reactively, so the
+    // menu stays on-screen even when its size is still settling (the model was just
+    // rebuilt) at open() time — a one-shot clamp read stale/zero dimensions and let
+    // the grown popup overflow.
+    property var menuRoot: null
+    property real targetX: 0
+    property real targetY: 0
     
     // Theme Colors
     property var _colors: Theme.color
@@ -40,53 +54,48 @@ Item {
              overlayLayer.anchors.fill = undefined
         }
         
-        // Scrim
+        // Scrim. Dismiss on press (not just click) so the menu also closes the moment
+        // an outside scroll/flick begins — a click is press+move+release and never
+        // fires when the finger drags to scroll the content underneath.
         MouseArea {
             anchors.fill: parent
-            onClicked: overlayLayer.close()
+            onPressed: overlayLayer.close()
             z: -1
         }
         
         // Popup Container (This scales up/down, carrying shadow and content)
         Item {
             id: popupContainer
-            width: Math.max(112, contentColumn.implicitWidth)
-            height: contentColumn.implicitHeight + (control.menuPadding * 2)
+            width: Math.min(control.maxWidth, Math.max(112, contentColumn.implicitWidth))
+            height: Math.min(control.maxHeight, contentColumn.implicitHeight + (control.menuPadding * 2))
+            // Reactive on-screen clamp (see control.targetX/Y): recomputes whenever the
+            // popup's own width/height settle, so a menu opened before layout finished
+            // slides fully into view instead of overflowing.
+            x: control.menuRoot
+               ? Math.max(8, Math.min(control.targetX, control.menuRoot.width - width - 8))
+               : control.targetX
+            y: control.menuRoot
+               ? Math.max(8, Math.min(control.targetY, control.menuRoot.height - height - 8))
+               : control.targetY
             
-            // Animation Properties
+            // Animation. Explicit from/to ParallelAnimations (like Dialog) instead of a
+            // state toggle: setting state="closed" then "open" in one call could collapse
+            // to just "open" (no from-closed transition) and pop in with no animation.
             scale: 0.8
             opacity: 0
             transformOrigin: Item.TopLeft
-            
-            states: [
-                State {
-                    name: "open"
-                    PropertyChanges { target: popupContainer; scale: 1.0; opacity: 1.0 }
-                },
-                State {
-                    name: "closed"
-                    PropertyChanges { target: popupContainer; scale: 0.8; opacity: 0.0 }
-                }
-            ]
-            
-            transitions: [
-                Transition {
-                    from: "closed"; to: "open"
-                    NumberAnimation { properties: "scale"; duration: 200; easing.type: Easing.OutCubic }
-                    NumberAnimation { properties: "opacity"; duration: 150; easing.type: Easing.Linear }
-                },
-                Transition {
-                    from: "open"; to: "closed"
-                    NumberAnimation { properties: "opacity"; duration: 150; easing.type: Easing.Linear }
-                    NumberAnimation { properties: "scale"; duration: 150; easing.type: Easing.InCubic }
-                    onRunningChanged: {
-                        if (!running && popupContainer.state === "closed") {
-                             overlayLayer.forceClose()
-                             control.closed()
-                        }
-                    }
-                }
-            ]
+
+            ParallelAnimation {
+                id: enterAnim
+                NumberAnimation { target: popupContainer; property: "scale"; from: 0.8; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                NumberAnimation { target: popupContainer; property: "opacity"; from: 0.0; to: 1.0; duration: 150 }
+            }
+            ParallelAnimation {
+                id: exitAnim
+                onFinished: { overlayLayer.forceClose(); control.closed() }
+                NumberAnimation { target: popupContainer; property: "opacity"; from: 1.0; to: 0.0; duration: 150 }
+                NumberAnimation { target: popupContainer; property: "scale"; from: 1.0; to: 0.8; duration: 150; easing.type: Easing.InCubic }
+            }
 
             // Shadow Source
             Rectangle {
@@ -119,26 +128,31 @@ Item {
                 radius: _shape.cornerExtraSmall
                 clip: true
                 
-                ColumnLayout {
-                    id: contentColumn
-                    spacing: 0
-                    anchors.top: parent.top
+                Flickable {
+                    id: menuFlick
+                    anchors.fill: parent
                     anchors.topMargin: control.menuPadding
-                    anchors.bottom: parent.bottom
                     anchors.bottomMargin: control.menuPadding
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    
-                    Repeater {
-                        model: control.model
-                        delegate: Loader {
-                            Layout.fillWidth: true
-                            sourceComponent: modelData.type === "separator" ? separatorComponent : itemComponent
-                            
-                            property var itemData: modelData
-                            
-                            required property var modelData
-                            required property int index
+                    contentWidth: width
+                    contentHeight: contentColumn.implicitHeight
+                    clip: true
+
+                    ColumnLayout {
+                        id: contentColumn
+                        spacing: 0
+                        width: menuFlick.width
+
+                        Repeater {
+                            model: control.model
+                            delegate: Loader {
+                                Layout.fillWidth: true
+                                sourceComponent: modelData.type === "separator" ? separatorComponent : itemComponent
+
+                                property var itemData: modelData
+
+                                required property var modelData
+                                required property int index
+                            }
                         }
                     }
                 }
@@ -148,12 +162,13 @@ Item {
     
     // Animation Helpers
     function startEntranceAnimation() {
-        popupContainer.state = "closed" // Reset
-        popupContainer.state = "open"
+        exitAnim.stop()
+        enterAnim.restart()
     }
-    
+
     function startExitAnimation() {
-        popupContainer.state = "closed"
+        enterAnim.stop()
+        exitAnim.restart()
     }
 
     // Components
@@ -183,12 +198,14 @@ Item {
             property bool itemEnabled: itemData.enabled !== undefined ? itemData.enabled : true
             property bool hasSubMenu: !!itemData.subItems && itemData.subItems.length > 0
             
-            // Submenu Loader
+            // Submenu Loader. qml4j resolves Loader.source against the RESOURCE ROOT
+            // (assets/), not the defining file's directory as Qt does — so a bare
+            // "Menu.qml" fails to load (this file lives at md3/Core/) and the submenu
+            // silently never appears. Use the full module-relative path.
             Loader {
                 id: subMenuLoader
                 active: hasSubMenu
-                // Use local file reference for recursion
-                source: "Menu.qml" 
+                source: "md3/Core/Menu.qml"
                 onLoaded: {
                     item.model = itemData.subItems
                 }
@@ -200,15 +217,18 @@ Item {
                 color: _colors.onSurfaceColor
                 opacity: {
                     if (!itemEnabled) return 0
-                    if (mouseArea.pressed) return _state.pressedStateLayerOpacity
-                    if (mouseArea.containsMouse || (subMenuLoader.status === Loader.Ready && subMenuLoader.item.visible)) return _state.hoverStateLayerOpacity
+                    if (itemRipple.pressed) return _state.pressedStateLayerOpacity
+                    if (itemRipple.containsMouse) return _state.hoverStateLayerOpacity
                     return 0
                 }
                 Behavior on opacity { NumberAnimation { duration: 150 } }
             }
-            
-            // Ripple
+
+            // Ripple — the sole pointer handler. The desktop hover MouseArea that used
+            // to sit on top (submenu-on-hover) swallowed touch presses under qml4j, so
+            // taps never reached this Ripple; removed. Submenus open on tap below.
             Ripple {
+                id: itemRipple
                 anchors.fill: parent
                 enabled: itemEnabled
                 rippleColor: _colors.onSurfaceColor
@@ -285,32 +305,6 @@ Item {
                 }
             }
             
-            MouseArea {
-                id: mouseArea
-                anchors.fill: parent
-                enabled: itemEnabled
-                hoverEnabled: true
-                acceptedButtons: Qt.NoButton
-                
-                // Auto-open submenu on hover (desktop style)
-                Timer {
-                    id: hoverTimer
-                    interval: 200
-                    onTriggered: {
-                         if (hasSubMenu && mouseArea.containsMouse) {
-                              var sub = subMenuLoader.item
-                              if (sub) sub.open(menuItem, menuItem.width, -8)
-                         }
-                    }
-                }
-                
-                onEntered: {
-                    if (hasSubMenu) hoverTimer.start()
-                }
-                onExited: {
-                    hoverTimer.stop()
-                }
-            }
         }
     }
     
@@ -330,28 +324,12 @@ Item {
             overlayLayer.anchors.fill = root
             
             var targetPos = root.mapFromItem(target, 0, 0)
-            var finalX = targetPos.x + (xOffset !== undefined ? xOffset : 0)
-            var finalY = targetPos.y + (yOffset !== undefined ? yOffset : 0)
-            
-            // Bounds check
-            if (finalX + popupContainer.width > root.width) {
-                 finalX = root.width - popupContainer.width - 8
-                 popupContainer.transformOrigin = Item.TopRight // Animate from right if flipped
-            } else {
-                 popupContainer.transformOrigin = Item.TopLeft
-            }
-            
-            if (finalY + popupContainer.height > root.height) {
-                 finalY = root.height - popupContainer.height - 8
-                 popupContainer.transformOrigin = (popupContainer.transformOrigin === Item.TopRight) ? Item.BottomRight : Item.BottomLeft
-            }
-            
-            if (finalX < 8) finalX = 8
-            if (finalY < 8) finalY = 8
-            
-            popupContainer.x = finalX
-            popupContainer.y = finalY
-            
+            // Record the desired anchor; popupContainer.x/y clamp it reactively against
+            // menuRoot so the popup can't overflow even if its size settles after open().
+            control.menuRoot = root
+            control.targetX = targetPos.x + (xOffset !== undefined ? xOffset : 0)
+            control.targetY = targetPos.y + (yOffset !== undefined ? yOffset : 0)
+
             overlayLayer.visible = true
             startEntranceAnimation()
         }

@@ -19,6 +19,10 @@ public class NeteasePlaylist {
     public String creatorNickname;
     /** uid of the playlist creator — used to split owned vs subscribed in /user/playlist. */
     public long creatorUid;
+    /** Whether the signed-in user created this playlist (vs merely subscribed to it).
+     *  Set by the controller in loadMyPlaylists; gates "添加到歌单" (you can only add
+     *  tracks to your own playlists). */
+    public boolean owned;
     /** Whether the signed-in user has collected (subscribed to) this playlist. Populated
      *  by playlist/detail; meaningless for the user's own playlists. */
     public boolean subscribed;

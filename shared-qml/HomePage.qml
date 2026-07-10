@@ -87,6 +87,8 @@ Item {
                     rowTitle: modelData.name
                     rowArtist: modelData.artist
                     coverThumbPath: modelData.coverThumbPath || ""
+                    song: player.loggedIn ? modelData : null
+                    menuEnabled: player.loggedIn
                     onActivated: player.playRecommendation(index)
                 }
             }

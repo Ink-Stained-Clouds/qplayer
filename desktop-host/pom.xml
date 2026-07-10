@@ -30,13 +30,16 @@
              CI overrides per-runner (Linux/Windows ubuntu/windows-latest have 16GB,
              macos-14 has 7GB) via -Dnative.xmx=… on the mvn command line. -->
         <native.xmx>7g</native.xmx>
+        <!-- native-image builder parallelism. Lower it (-Dnative.threads=2) on a
+             memory-constrained host to cut peak memory; CI keeps the default. -->
+        <native.threads>4</native.threads>
         <log4j.version>2.25.4</log4j.version>
         <jna.version>5.14.0</jna.version>
         <!-- App version baked into version.properties (read by Main → the update
              check). Local dev default; the release workflow overrides it with the
              git tag (-Dqplayer.app.version=…) so release binaries match the tag
              without a committed bump, like the macOS/Windows packagers. -->
-        <qplayer.app.version>0.8.2</qplayer.app.version>
+        <qplayer.app.version>0.8.7</qplayer.app.version>
         <!-- exec:exec run knobs (override on the command line, e.g. -Dgfx=vulkan). -->
         <gfx>gl</gfx>
         <win.w>1100</win.w>
@@ -356,9 +359,13 @@
                         <configuration>
                             <imageName>qplayer</imageName>
                             <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
-                            <buildArgs>
+            <buildArgs>
                                 <buildArg>-J-Xmx${native.xmx}</buildArg>
-                                <buildArg>-H:NumberOfThreads=4</buildArg>
+                                <buildArg>-H:NumberOfThreads=${native.threads}</buildArg>
+                                <!-- Disable the no-activity watchdog: on a slow/low-memory
+                                     host (GC thrash) it false-positives a "deadlock" and
+                                     aborts a build that would otherwise finish. -->
+                                <buildArg>-H:DeadlockWatchdogInterval=0</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>

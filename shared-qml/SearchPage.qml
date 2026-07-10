@@ -272,6 +272,7 @@ Item {
             Layout.fillHeight: true
             visible: query.text.length > 0
             list: player.searchResults
+            songMenu: player.loggedIn
             onActivated: player.playSearchResult(results.activatedIndex)
         }
     }

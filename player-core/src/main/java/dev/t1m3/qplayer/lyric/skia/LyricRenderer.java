@@ -111,11 +111,14 @@ public class LyricRenderer {
      */
     private static final long LIFT_MIN_DURATION_MS = 1000L;
     /**
-     * Width of the gradient mask sweep band, in pixels. AMLL derives this
-     * from {@code wordHeight × wordFadeWidth}; for a 30px font that's
-     * ~30px. Wider = softer transition between lit and unlit text.
+     * Width of the gradient mask sweep band, in pixels — the lit→unlit feather that
+     * rides the sweep head across the active line. The head itself tracks the play
+     * head (no easing), so a wide feather is the ONLY thing that makes the per-字
+     * reveal read as slow: each glyph lingers half-lit while the whole band crosses
+     * it. AMLL/Apple use ~40 (feather 40.0); 16 keeps a soft edge (no aliasing) while
+     * lighting each character crisply as the head passes.
      */
-    private static final float SWEEP_FADE_PX = 40f; // Apple Specs.lineProgressionGradientFeather = 40.0
+    private static final float SWEEP_FADE_PX = 16f;
     /**
      * Mask alpha on the unlit side of the active line's sweep. Multiplies the
      * line's baseAlpha at composite, so the active line's not-yet-sung text is
@@ -255,6 +258,20 @@ public class LyricRenderer {
      */
     private int[] lineToGroup = new int[0];
     private int activeGroupIndex = -1;
+    // Screen-space [top, bottom] spanned by the currently-lit lines in the last
+    // render, accumulated from their actual drawn positions (so it tracks the spring
+    // animation, BG pop-out and user scroll exactly). The edge-blur compositor reads
+    // this to keep every lit line inside the sharp band, not just the anchor line.
+    private float litBandTop, litBandBottom;
+    private boolean litBandValid;
+    // Time-smoothed copy of the lit band. A line joins the band when its activeK
+    // crosses the 0.5 gate, which snaps the raw bottom down a whole line; easing the
+    // exposed bounds toward that target turns the snap into a continuous crossfade of
+    // the edge blur. Time-constant (seconds) sets how fast it catches up.
+    private static final float LIT_BAND_TAU = 0.14f;
+    private float litBandTopSmooth, litBandBottomSmooth;
+    private boolean litBandSmoothInit;
+    private long litBandSmoothNs;
     /**
      * Spring-driven vertical scroll. Stiffness/damping pair tuned to settle
      * a typical line jump in ~500ms with a barely-visible overshoot,
@@ -291,6 +308,7 @@ public class LyricRenderer {
     // layout key already covers, so cache them and the per-frame draw reads floats.
     private float[][] cachedSylWidths;
     private float[] lineTopsBuf = new float[0];
+    private float[] effHeightsBuf = new float[0];
     private float[] interludeBuf = new float[0];
     // Per-line scroll springs (cascade). lineCurTop/lineVelTop track each line's
     // drawn top + velocity; only the visible window is integrated, off-window lines
@@ -359,16 +377,31 @@ public class LyricRenderer {
     private Shader sweepShader;
     private float sweepShaderDark = Float.NaN;
     private final Rect sweepBigRect = Rect.makeLTRB(-100000f, -100000f, 100000f, 100000f);
-    // White glow behind active syllables (Apple Specs.glowColor/glowRadius). A blur
-    // mask filter built once (radius → sigma); only the active row pays for it.
-    private final io.github.humbleui.skija.Paint glowPaint = newGlowPaint();
+    // White glow behind active syllables (Apple Specs.glowColor/glowRadius). Drawn as
+    // one blurred saveLayer for the whole row, NOT a mask-filter blur per glyph: a
+    // per-glyph blur rasterizes a separate blur for every syllable, so a word-by-word
+    // line with N syllables paid N blurs every frame (and ~2N during a line change,
+    // when two rows are active) — the lyric-page scroll stutter. glowGlyphPaint draws
+    // the plain glyphs into glowLayerPaint's blur layer, which blurs the lot once.
+    private final io.github.humbleui.skija.Paint glowGlyphPaint = newGlowGlyphPaint();
+    private final io.github.humbleui.skija.Paint glowLayerPaint = newGlowLayerPaint();
+    // Per-syllable lift offset + glow alpha for the active row, filled once per row and
+    // reused by the glow pass and the text pass (avoids recomputing the spring twice).
+    private float[] liftBuf = new float[0];
+    private float[] glowAlphaBuf = new float[0];
 
-    private static io.github.humbleui.skija.Paint newGlowPaint() {
+    private static io.github.humbleui.skija.Paint newGlowGlyphPaint() {
         io.github.humbleui.skija.Paint p = new io.github.humbleui.skija.Paint();
         p.setAntiAlias(true);
-        // Apple glowRadius = 5.0; Skia blur sigma ≈ radius * 0.5.
-        p.setMaskFilter(io.github.humbleui.skija.MaskFilter.makeBlur(
-                io.github.humbleui.skija.FilterBlurMode.NORMAL, 2.5f));
+        return p;
+    }
+
+    private static io.github.humbleui.skija.Paint newGlowLayerPaint() {
+        io.github.humbleui.skija.Paint p = new io.github.humbleui.skija.Paint();
+        // Apple glowRadius = 5.0; Skia blur sigma ≈ radius * 0.5. One layer blur over
+        // the row replaces the old per-glyph mask-filter blur.
+        p.setImageFilter(io.github.humbleui.skija.ImageFilter.makeBlur(
+                2.5f, 2.5f, io.github.humbleui.skija.FilterTileMode.CLAMP));
         return p;
     }
 
@@ -562,6 +595,31 @@ public class LyricRenderer {
         return out;
     }
 
+    /** Screen-space {top, bottom} of the currently-lit lines from the last
+     *  {@link #render} call, eased over time so a line joining the lit set crossfades
+     *  the edge blur instead of snapping it; null if nothing is lit (interlude /
+     *  intro), letting the compositor fall back to its fixed plateau. Called once per
+     *  frame by the compositor. */
+    public float[] litBandBounds() {
+        if (!litBandValid) { litBandSmoothInit = false; return null; }
+        long now = System.nanoTime();
+        if (!litBandSmoothInit) {
+            litBandTopSmooth = litBandTop;
+            litBandBottomSmooth = litBandBottom;
+            litBandSmoothInit = true;
+        } else {
+            float dt = (now - litBandSmoothNs) / 1_000_000_000f;
+            if (dt > 0.05f) dt = 0.05f;
+            if (dt > 0f) {
+                float a = 1f - (float) Math.exp(-dt / LIT_BAND_TAU);
+                litBandTopSmooth += (litBandTop - litBandTopSmooth) * a;
+                litBandBottomSmooth += (litBandBottom - litBandBottomSmooth) * a;
+            }
+        }
+        litBandSmoothNs = now;
+        return new float[]{litBandTopSmooth, litBandBottomSmooth};
+    }
+
     public void render(Canvas canvas, float leftX, float topY,
                        float columnWidth, float columnHeight, long positionMs) {
         // Snapshot mutable state so a concurrent setLyrics() mid-frame can't
@@ -743,11 +801,27 @@ public class LyricRenderer {
         // line heights with the zoom, which made the target drift while the spring
         // chased it — the "bounce back".) Lines stack at their natural heights.
 
-        // Cumulative tops = stacked natural heights + the per-frame interlude slots.
+        // Per-frame effective heights: a BG line's slot collapses to nothing until its
+        // group is FOCUSED, then opens to full height. Driven by the group's activeK
+        // (focus), NOT the BG text's own pop — so the space is reserved the moment focus
+        // lands (Apple-Music), and an idle / upcoming / already-sung line shows no empty
+        // gap. The scroll compensation below turns each opening into the main line rising
+        // rather than the lines beneath being shoved down.
+        if (effHeightsBuf.length != n) effHeightsBuf = new float[n];
+        float[] effHeights = effHeightsBuf;
+        for (int i = 0; i < n; i++) {
+            float h = lineHeights[i];
+            if (isBackground(lines.get(i).vocalChannel)) {
+                h *= computeActiveK(positionMs, groups.get(lineToGroup[i]));
+            }
+            effHeights[i] = h;
+        }
+
+        // Cumulative tops = stacked effective heights + the per-frame interlude slots.
         if (lineTopsBuf.length != n) lineTopsBuf = new float[n];
         float[] lineTops = lineTopsBuf;
         for (int i = 0; i < n; i++) {
-            float prevBottom = i == 0 ? 0f : lineTops[i - 1] + lineHeights[i - 1];
+            float prevBottom = i == 0 ? 0f : lineTops[i - 1] + effHeights[i - 1];
             // First line of a group with a preceding interlude gets the dot-row slot
             // inserted above it.
             int gi = lineToGroup[i];
@@ -786,13 +860,12 @@ public class LyricRenderer {
         LineGroup activeGroup = (activeGroupIndex >= 0 && activeGroupIndex < groups.size())
                 ? groups.get(activeGroupIndex) : null;
 
-        // Scroll target = the active group's MAIN LINE centre (ignoring
-        // BG height). Putting the main centre at ALIGN_POSITION keeps the
-        // sung lyric pinned at 35% regardless of whether its BG is
-        // currently popped open, collapsed, or animating in-between.
-        // Using group centre instead would slide the main line up/down
-        // as the BG inflates, defeating the BG-doesn't-affect-scroll
-        // requirement.
+        // Scroll target = the active group's main-line centre, PLUS the group's
+        // currently-reserved BG height. The BG slot collapses when unfocused (above),
+        // so anchoring on the content just below it keeps the lines beneath still while
+        // the reservation grows; the main line eases up by that amount to open the gap
+        // for its BG — the Apple-Music "focus lands, line lifts, space appears" feel,
+        // carried by the per-line spring so the lines below barely stir.
         //
         // EXCEPTION: when the play head is in an interlude (gap between
         // active group's end and next group's start ≥ INTERLUDE_THRESHOLD_MS),
@@ -807,7 +880,11 @@ public class LyricRenderer {
             int mIdx = activeGroup.from;
             float mTop = lineTops[mIdx];
             float mBottom = mTop + lineHeights[mIdx];
-            targetScroll = (mTop + mBottom) * 0.5f;
+            float reservedBg = 0f;
+            for (int j = activeGroup.from + 1; j < activeGroup.to; j++) {
+                if (isBackground(lines.get(j).vocalChannel)) reservedBg += effHeights[j];
+            }
+            targetScroll = (mTop + mBottom) * 0.5f + reservedBg;
         }
 
         // Interlude detection covers THREE shapes:
@@ -864,7 +941,7 @@ public class LyricRenderer {
         // column bottom; the active line still centres (ALIGN_POSITION) once there is
         // enough lyric above/below it. Shorter-than-column lyrics don't scroll.
         if (n > 0) {
-            float contentEnd = lineTops[n - 1] + lineHeights[n - 1];
+            float contentEnd = lineTops[n - 1] + effHeights[n - 1];
             if (contentEnd > columnHeight) {
                 float pad = columnHeight * SCROLL_EDGE_PAD;
                 scrollMin = columnHeight * ALIGN_POSITION - pad;
@@ -1004,6 +1081,7 @@ public class LyricRenderer {
             }
         }
 
+        litBandValid = false;
         for (int i = start; i < end; i++) {
             LyricLine line = lines.get(i);
             LineGroup myGroup = groups.get(lineToGroup[i]);
@@ -1111,6 +1189,19 @@ public class LyricRenderer {
                 scale = 1f;
                 anchorY = lineYTop;
             }
+
+            // Grow the lit band to this line's drawn extent when it's clearly active,
+            // so a multi-line group (main + BG, or overlapping v1/v2) keeps ALL its
+            // lit lines in the edge-blur sharp band — not just the anchor line.
+            if (activeK >= 0.5f) {
+                float lt = lineYTop, lb = lineYTop + lineHeights[i];
+                if (!litBandValid) { litBandTop = lt; litBandBottom = lb; litBandValid = true; }
+                else {
+                    if (lt < litBandTop) litBandTop = lt;
+                    if (lb > litBandBottom) litBandBottom = lb;
+                }
+            }
+
             canvas.save();
             canvas.translate(anchorX, anchorY);
             canvas.scale(scale, scale);
@@ -1808,14 +1899,14 @@ public class LyricRenderer {
                 baselineY + descent + 8f,
                 layerPaint);
         try {
-            Paint textPaint = LyricSkia.scratchPaint();
-            textPaint.setColor(0xFFFFFFFF);
-            textPaint.setAlphaf(1f);
-            textPaint.setAntiAlias(true);
+            // Per-syllable lift + glow alpha, computed once (the spring is non-trivial)
+            // and reused by the glow pass and the text pass.
+            if (liftBuf.length < n) liftBuf = new float[n];
+            if (glowAlphaBuf.length < n) glowAlphaBuf = new float[n];
+            boolean anyGlow = false;
             for (int s = 0; s < n; s++) {
                 Syllable syl = syllables.get(from + s);
                 long sStart = syl.startMs;
-                long ownEnd = sStart + Math.max(0L, syl.durationMs);
 
                 // Lift progress k: a soft spring step (Apple liftSpring) when spring
                 // physics is on, else the fixed cubic ease-out over max(1s, dur).
@@ -1823,6 +1914,7 @@ public class LyricRenderer {
                 if (spring) {
                     k = liftSpringK((pos - sStart) / 1000.0);
                 } else {
+                    long ownEnd = sStart + Math.max(0L, syl.durationMs);
                     long effDur = Math.max(LIFT_MIN_DURATION_MS, ownEnd - sStart);
                     float t;
                     if (pos <= sStart) t = 0f;
@@ -1830,19 +1922,38 @@ public class LyricRenderer {
                     else t = (pos - sStart) / (float) effDur;
                     k = 1f - (1f - t) * (1f - t) * (1f - t);
                 }
-                float lift = enableLift ? -LIFT_PEAK_PX * k * activeK : 0f;
-                Font sylFont = fontForText(syl.text, font);
+                liftBuf[s] = enableLift ? -LIFT_PEAK_PX * k * activeK : 0f;
+                float ga = (enableLift && glowOn) ? activeK * k * GLOW_ALPHA : 0f;
+                glowAlphaBuf[s] = ga;
+                if (ga > 0.01f) anyGlow = true;
+            }
 
-                if (enableLift && glowOn) {
-                    float ga = activeK * k * GLOW_ALPHA;
-                    if (ga > 0.01f) {
-                        glowPaint.setColor(0xFFFFFFFF);
-                        glowPaint.setAlphaf(ga);
-                        canvas.drawString(syl.text, sylLeft[s], baselineY + lift, sylFont, glowPaint);
-                    }
+            // Glow pass: draw the sung glyphs into a single blurred layer for the whole
+            // row, so N syllables cost one blur instead of N.
+            if (anyGlow) {
+                canvas.saveLayer(
+                        startX - 8f,
+                        baselineY + ascent - LIFT_PEAK_PX - 8f,
+                        rowRightX + 8f,
+                        baselineY + descent + 8f,
+                        glowLayerPaint);
+                glowGlyphPaint.setColor(0xFFFFFFFF);
+                for (int s = 0; s < n; s++) {
+                    if (glowAlphaBuf[s] <= 0.01f) continue;
+                    String st = syllables.get(from + s).text;
+                    glowGlyphPaint.setAlphaf(glowAlphaBuf[s]);
+                    canvas.drawString(st, sylLeft[s], baselineY + liftBuf[s], fontForText(st, font), glowGlyphPaint);
                 }
+                canvas.restore();
+            }
 
-                canvas.drawString(syl.text, sylLeft[s], baselineY + lift, sylFont, textPaint);
+            Paint textPaint = LyricSkia.scratchPaint();
+            textPaint.setColor(0xFFFFFFFF);
+            textPaint.setAlphaf(1f);
+            textPaint.setAntiAlias(true);
+            for (int s = 0; s < n; s++) {
+                String st = syllables.get(from + s).text;
+                canvas.drawString(st, sylLeft[s], baselineY + liftBuf[s], fontForText(st, font), textPaint);
             }
 
             // Smooth horizontal sweep (DST_IN): bright on the sung side, dark on the

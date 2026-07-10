@@ -1,5 +1,6 @@
 import QtQuick
 import md3.Core
+import "."
 
 // One song/track row. Plain anchors — NOT nested RowLayout/ColumnLayout: the
 // Layout measure passes run for every visible row on every dirty frame (playback
@@ -19,6 +20,16 @@ Rectangle {
     property string coverThumbPath: ""
     property bool highlighted: false
     property bool removable: false
+    // Long-press context menu. `song` is the raw model item (needs `.id`); the
+    // menu only arms when `menuEnabled` (netease-backed lists opt in — local rows
+    // have no playlist-track id). `inOwnedPlaylist` + `ownerPlaylistId` unlock the
+    // "从此歌单移除" entry, set only by the owned-playlist detail list.
+    property var song: null
+    property bool menuEnabled: false
+    property bool inOwnedPlaylist: false
+    // Latched when a long-press fired, so the release's click doesn't also play the
+    // song; cleared when the menu closes (or on the guarded click).
+    property bool _menuArmed: false
     /** Enable lazy image loading based on viewport position. */
     property bool lazyLoad: false
     /** Parent Flickable's contentY (scroll offset). */
@@ -129,7 +140,32 @@ Rectangle {
         height: row.height - 8
         clipRadius: 12
         rippleColor: Theme.color.onSurfaceColor
-        onClicked: row.activated()
+        longPressEnabled: row.menuEnabled && row.song !== null
+        onClicked: {
+            if (row._menuArmed) { row._menuArmed = false; return }
+            row.activated()
+        }
+        onLongPressed: { row._menuArmed = true; row._openMenu() }
+    }
+
+    // Context menu, built only for rows that opt in (menuEnabled). Loaded eagerly
+    // for those rows — qml4j's Loader is async, so `item` isn't available the
+    // instant you flip `active`; instantiating up front guarantees it's ready when
+    // the long-press fires. Idle cost stays low: the menu's model is empty until
+    // rebuild() runs on open, so no submenu delegates exist until then.
+    Loader {
+        id: menuLoader
+        active: row.menuEnabled
+        sourceComponent: SongContextMenu {
+            song: row.song
+            inOwnedPlaylist: row.inOwnedPlaylist
+            onClosed: row._menuArmed = false
+        }
+    }
+    function _openMenu() {
+        if (row.song === null || menuLoader.item === null) return
+        menuLoader.item.rebuild()
+        menuLoader.item.open(ripple, ripple.pressX, ripple.pressY)
     }
 
     // Lightweight remove control: a glyph + MouseArea with explicit geometry.

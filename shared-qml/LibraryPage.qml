@@ -19,6 +19,36 @@ Item {
         onOpenPlaylist: { page.pendingPlaylist = grid.pendingPlaylist; page.openPlaylist() }
     }
 
+    // New-playlist entry point.
+    FAB {
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: 16
+        anchors.bottomMargin: 16
+        visible: player.loggedIn
+        type: "standard"
+        icon: "add"
+        onClicked: { nameField.text = ""; createDialog.open() }
+    }
+
+    Dialog {
+        id: createDialog
+        icon: "playlist_add"
+        title: "新建歌单"
+        acceptText: "创建"
+        rejectText: "取消"
+        onAccepted: player.createPlaylist(nameField.text)
+
+        TextField {
+            id: nameField
+            anchors.left: parent.left
+            anchors.right: parent.right
+            type: "outlined"
+            label: "歌单名称"
+            onAccepted: { createDialog.accepted(); createDialog.close() }
+        }
+    }
+
     ColumnLayout {
         anchors.centerIn: parent
         spacing: 12

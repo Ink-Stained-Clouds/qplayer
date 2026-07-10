@@ -247,8 +247,20 @@ public final class PlayerController {
      *  page's collect icon. Resolved from playlist/detail, so it reflects the real state
      *  on open (no guessing). */
     public final Property<Boolean> playlistSubscribed = new Property<>(false);
+    /** Guards against stacking subscribe requests: a collect is heavily risk-controlled,
+     *  so a second tap while one is in flight is ignored rather than re-fired. */
+    private volatile boolean subscribeBusy;
     /** Whether the open playlist is the user's own (can't collect your own). */
     public final Property<Boolean> playlistOwned = new Property<>(false);
+    /** Whether the open playlist can be deleted: owned AND not the "我喜欢的音乐"
+     *  default (netease forbids removing it). Drives the detail page's delete icon. */
+    public final Property<Boolean> playlistDeletable = new Property<>(false);
+    /** Id of the "我喜欢的音乐" playlist (the user's first/owned default), captured on
+     *  loadMyPlaylists; 0 until known. Compared in Java so QML needn't equate Longs. */
+    private volatile long favoritePid;
+    /** Id of the open playlist, mirrored to QML (the volatile above isn't exposed).
+     *  Lets the detail page pass the id back for delete / remove-track actions. */
+    public final Property<Long> openPlaylistId = new Property<>(0L);
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
     public final Property<List<Track>> queueTracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Boolean> queueOpen = new Property<>(false);
@@ -1646,6 +1658,7 @@ public final class PlayerController {
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.
         currentPlaylistId = playlistId;
+        openPlaylistId.set(playlistId);
         playlistLoading.set(true);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
         playlistTitle.set("");
@@ -1653,6 +1666,7 @@ public final class PlayerController {
         // the icon stays hidden (loading) until then rather than flashing a wrong state.
         playlistSubscribed.set(false);
         playlistOwned.set(false);
+        playlistDeletable.set(false);
         worker.submit(() -> {
             try {
                 NeteasePlaylist detail = netease.playlistDetail(playlistId);
@@ -1668,6 +1682,7 @@ public final class PlayerController {
                     playlistTracks.set(songs);
                     playlistSubscribed.set(subscribed);
                     playlistOwned.set(owned);
+                    playlistDeletable.set(owned && favoritePid != 0L && playlistId != favoritePid);
                     playlistLoading.set(false);
                 });
             } catch (Throwable e) {
@@ -1681,9 +1696,11 @@ public final class PlayerController {
      *  when signed out. Optimistically flips the icon, reverting if the server refuses. */
     public void togglePlaylistSubscribe() {
         if (!loggedIn.get() || playlistOwned.get()) return;
+        if (subscribeBusy) return;   // one in flight: ignore the tap, never stack/retry
         final long id = currentPlaylistId;
         if (id == 0) return;
         final boolean target = !playlistSubscribed.get();
+        subscribeBusy = true;
         playlistSubscribed.set(target);
         worker.submit(() -> {
             boolean ok = false;
@@ -1694,12 +1711,13 @@ public final class PlayerController {
             }
             final boolean done = ok;
             post(() -> {
+                subscribeBusy = false;
                 if (currentPlaylistId != id) return;
                 if (done) {
                     toast.set(target ? "已收藏歌单" : "已取消收藏");
                     loadMyPlaylists();   // reflect the change in 我的
                 } else {
-                    playlistSubscribed.set(!target);   // revert the optimistic flip
+                    playlistSubscribed.set(!target);   // revert the optimistic flip; no auto-retry
                 }
             });
         });
@@ -1711,12 +1729,98 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> pls = netease.userPlaylists(uid, 100);
+                long favPid = 0L;
                 for (NeteasePlaylist p : pls) {
                     p.coverThumbPath = thumbUrl(p.coverUrl, "512");
+                    p.owned = p.creatorUid == uid;
+                    // The "我喜欢的音乐" default is the first playlist the user owns.
+                    if (favPid == 0L && p.owned) favPid = p.id;
                 }
-                post(() -> myPlaylists.set(pls));
+                favoritePid = favPid;
+                post(() -> {
+                    myPlaylists.set(pls);
+                    playlistCount.set(pls.size());
+                });
             } catch (Throwable e) {
                 Logger.warn("user playlists failed: {}", e.getMessage());
+            }
+        });
+    }
+
+    /** Create a new (public) playlist named {@code name}, then refresh 我的. */
+    public void createPlaylist(String name) {
+        if (uid == 0 || name == null) return;
+        final String nm = name.trim();
+        if (nm.isEmpty()) return;
+        worker.submit(() -> {
+            try {
+                long id = netease.createPlaylist(nm, false);
+                if (id != 0) {
+                    post(() -> {
+                        toast.set("歌单已创建");
+                        loadMyPlaylists();
+                    });
+                } else {
+                    post(() -> toast.set("创建歌单失败"));
+                }
+            } catch (Throwable e) {
+                Logger.warn("create playlist failed: {}", e.getMessage());
+                post(() -> toast.set("创建歌单失败"));
+            }
+        });
+    }
+
+    /** Delete a playlist owned by the user, then refresh 我的. */
+    public void deletePlaylist(long playlistId) {
+        if (uid == 0 || playlistId == 0) return;
+        worker.submit(() -> {
+            try {
+                if (netease.deletePlaylist(playlistId)) {
+                    post(() -> {
+                        toast.set("歌单已删除");
+                        loadMyPlaylists();
+                    });
+                } else {
+                    post(() -> toast.set("删除歌单失败"));
+                }
+            } catch (Throwable e) {
+                Logger.warn("delete playlist {} failed: {}", playlistId, e.getMessage());
+                post(() -> toast.set("删除歌单失败"));
+            }
+        });
+    }
+
+    /** Add a track to one of the user's playlists (from a song's long-press menu). */
+    public void addToPlaylist(long playlistId, long songId) {
+        if (uid == 0 || playlistId == 0 || songId == 0) return;
+        worker.submit(() -> {
+            try {
+                boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, true);
+                post(() -> toast.set(ok ? "已添加到歌单" : "添加失败"));
+            } catch (Throwable e) {
+                Logger.warn("add track {} -> playlist {} failed: {}", songId, playlistId, e.getMessage());
+                post(() -> toast.set("添加失败"));
+            }
+        });
+    }
+
+    /** Remove a track from the currently open playlist (the "从此歌单移除" menu
+     *  entry only appears there), then refresh the detail view. Reads the open id
+     *  internally so QML needn't round-trip a 64-bit playlist id back through a
+     *  numeric property. */
+    public void removeFromCurrentPlaylist(long songId) {
+        final long playlistId = currentPlaylistId;
+        if (uid == 0 || playlistId == 0 || songId == 0) return;
+        worker.submit(() -> {
+            try {
+                boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, false);
+                post(() -> {
+                    toast.set(ok ? "已从歌单移除" : "移除失败");
+                    if (ok && currentPlaylistId == playlistId) openPlaylist(playlistId);
+                });
+            } catch (Throwable e) {
+                Logger.warn("remove track {} <- playlist {} failed: {}", songId, playlistId, e.getMessage());
+                post(() -> toast.set("移除失败"));
             }
         });
     }
