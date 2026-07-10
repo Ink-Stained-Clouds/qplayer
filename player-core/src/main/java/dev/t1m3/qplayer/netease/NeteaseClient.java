@@ -245,7 +245,6 @@ public final class NeteaseClient {
         header.put("channel", "distribution");
         header.put("requestId", System.currentTimeMillis() + "_" + String.format(java.util.Locale.ROOT,
                 "%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000)));
-        if (checkToken) header.put("X-antiCheatToken", CHECK_TOKEN);
         if (!musicU.isEmpty()) header.put("MUSIC_U", musicU);
 
         Map<String, Object> body = json == null
@@ -275,6 +274,9 @@ public final class NeteaseClient {
             conn.setRequestProperty("Referer", BASE);
             conn.setRequestProperty("X-Real-IP", REAL_IP);
             conn.setRequestProperty("X-Forwarded-For", REAL_IP);
+            // api-enhanced sends the anti-cheat token as an HTTP header (request.js),
+            // not inside the eapi body/cookie — playlist/subscribe needs it present.
+            if (checkToken) conn.setRequestProperty("X-antiCheatToken", CHECK_TOKEN);
             conn.setRequestProperty("Cookie", headerCookie(header));
 
             try (OutputStream os = conn.getOutputStream()) {
@@ -832,13 +834,15 @@ public final class NeteaseClient {
      * </ul>
      */
     public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
-        if (subscribe) {
-            JsonObject obj = xeapiJson("/api/playlist/subscribe", "id=" + playlistId);
-            return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
-        }
+        // Matches api-enhanced's playlist_subscribe.js: both directions go through eapi
+        // with the anti-cheat token forced on; subscribe also carries the token value in
+        // the body. (An earlier attempt used xeapi for subscribe, which the server now
+        // answers with "操作频繁".)
+        String path = subscribe ? "/api/playlist/subscribe" : "/api/playlist/unsubscribe";
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", playlistId);
-        JsonObject obj = eapiJson("/api/playlist/unsubscribe", body, false);
+        if (subscribe) body.put("checkToken", CHECK_TOKEN);
+        JsonObject obj = eapiJson(path, body, true);
         return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 
