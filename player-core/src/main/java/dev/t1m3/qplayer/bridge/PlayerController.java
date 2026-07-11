@@ -1021,7 +1021,7 @@ public final class PlayerController {
      *  one; "" when only a remote URL is available. */
     private String coverDiskPath(Track t) {
         String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
-        if (local != null && local.startsWith("/")) return local;
+        if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) return local;
         if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
             String cached = diskCache.getImage(t.coverUrl);
             if (cached != null) return cached;
@@ -1034,7 +1034,7 @@ public final class PlayerController {
     private byte[] loadCoverBytes(Track t) {
         if (t.coverBytes != null) return t.coverBytes;
         String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
-        if (local != null && local.startsWith("/")) {
+        if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) {
             byte[] d = readBytesFromFile(local);
             if (d != null && d.length > 0) return d;
         }
@@ -1047,7 +1047,7 @@ public final class PlayerController {
         }
         byte[] data = downloadBytes(url);
         if (data != null) {
-            String imgPath = DiskCache.imagePath(url);
+            String imgPath = diskCache.imagePath(url);
             if (imgPath != null) writeBytesToFile(data, imgPath);
         }
         return data;
