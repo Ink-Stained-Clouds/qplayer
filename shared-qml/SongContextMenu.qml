@@ -18,7 +18,8 @@ Menu {
     function rebuild() {
         var items = []
         var s = menu.song
-        if (s && player.loggedIn) {
+        if (!s) { menu.model = items; return }
+        if (player.loggedIn) {
             var pls = player.myPlaylists
             var n = pls ? pls.length : 0
             var subs = []
@@ -35,6 +36,8 @@ Menu {
                 items.push({ text: "从此歌单移除", icon: "playlist_remove", action: menu._removeAction(s.id) })
             }
         }
+        // Copy link works signed-out too — any netease song has a shareable URL.
+        items.push({ text: "复制链接", icon: "link", action: menu._copyAction(s.id) })
         menu.model = items
     }
 
@@ -49,5 +52,8 @@ Menu {
     }
     function _removeAction(songId) {
         return function() { player.removeFromCurrentPlaylist(songId) }
+    }
+    function _copyAction(songId) {
+        return function() { player.copySongLink(songId) }
     }
 }
