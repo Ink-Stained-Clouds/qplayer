@@ -1114,6 +1114,11 @@ public final class PlayerController {
         if (localCover != null && !localCover.startsWith("http://") && !localCover.startsWith("https://")) {
             byte[] data = readBytesFromFile(localCover);
             if (data != null && data.length > 0) {
+                // Keep the bytes on the current Track so the media session can read the
+                // cover off the render thread (see PlaybackService): the coverBytes
+                // Property is only committed on the render queue, which is paused while
+                // backgrounded, so a background track-switch would otherwise show stale art.
+                t.coverBytes = data;
                 final String path = localCover;
                 post(() -> { applyCover(data); coverPath.set(path); });
                 notifyPlayback();

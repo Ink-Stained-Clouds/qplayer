@@ -183,12 +183,14 @@ public final class PlaybackService extends Service {
             mb.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, nz(t.artist));
             mb.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, nz(t.album));
             if (dur > 0) mb.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, dur);
-            // Prefer the controller's loaded cover bytes (set for both netease
-            // downloads and local file-backed covers); local Tracks no longer carry
-            // coverBytes inline, so falling back to t.coverBytes alone left system
-            // media controls art-less.
-            byte[] coverData = c.coverBytes.peek();
-            if (coverData == null) coverData = t.coverBytes;
+            // Read the cover from the current Track's plain bytes, set synchronously by
+            // the loader before it fires the refresh (netease downloads, local
+            // file-backed and embedded covers all populate t.coverBytes). The coverBytes
+            // Property is only committed on the render queue, which is paused while
+            // backgrounded — reading it primary left a background track-switch showing the
+            // previous song's art. It stays as a fallback for any path that only sets it.
+            byte[] coverData = t.coverBytes;
+            if (coverData == null) coverData = c.coverBytes.peek();
             art = decode(coverData);
             if (art != null) mb.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art);
         }
