@@ -787,12 +787,12 @@ public final class PlayerController {
      *  opened from) to the custom playlist. */
     public void addToCustomPlaylist(long songId) {
         if (songId == 0 || isInCustomPlaylist(songId)) return;
-        NeteaseSong s = findLiveSong(songId);
-        if (s == null) {
+        Track t = findLiveTrack(songId);
+        if (t == null) {
             toast.set("添加失败");
             return;
         }
-        customPlaylist.add(toTrack(s));
+        customPlaylist.add(t);
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
         toast.set("已加入播放列表");
         worker.submit(this::saveCustomPlaylist);
@@ -824,6 +824,33 @@ public final class PlayerController {
     public void playCustomPlaylistIndex(int i) {
         if (i < 0 || i >= customPlaylist.size()) return;
         playQueue(new ArrayList<>(customPlaylist), i);
+    }
+
+    /** Resolve a netease song id to a fresh Track from whichever live list the
+     *  long-press menu was opened from: the queue / custom-playlist tabs already
+     *  hold Tracks (copied so playback mutations don't alias into the custom list),
+     *  while search-result / playlist rows come through as NeteaseSong. */
+    private Track findLiveTrack(long songId) {
+        for (Track t : queue) if (t.neteaseId == songId) return copyNeteaseTrack(t);
+        NeteaseSong s = findLiveSong(songId);
+        return s != null ? toTrack(s) : null;
+    }
+
+    /** Copy the persisted subset of a NETEASE Track (matches saveCustomPlaylist),
+     *  so a queue entry added to the custom list doesn't share the queue's Track
+     *  object (whose streamUrl/coverUrl the player mutates during playback). */
+    private static Track copyNeteaseTrack(Track src) {
+        Track t = new Track();
+        t.source = Track.Source.NETEASE;
+        t.neteaseId = src.neteaseId;
+        t.title = src.title;
+        t.artist = src.artist;
+        t.album = src.album;
+        t.coverUrl = src.coverUrl;
+        t.coverThumbPath = src.coverThumbPath != null ? src.coverThumbPath
+                : NeteaseClient.thumbUrl(src.coverUrl);
+        t.durationMs = src.durationMs;
+        return t;
     }
 
     /** Find a netease song by id among the currently-loaded search results and
@@ -1723,6 +1750,11 @@ public final class PlayerController {
                 if (t.source == Track.Source.LOCAL) {
                     t.filePath   = o.has("filePath")   && !o.get("filePath").isJsonNull()   ? o.get("filePath").getAsString()   : null;
                     t.contentUri = o.has("contentUri") && !o.get("contentUri").isJsonNull() ? o.get("contentUri").getAsString() : null;
+                } else if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
+                    // NETEASE row art is a CDN thumbnail URL derived from coverUrl; the
+                    // queue JSON only persists coverUrl, so rebuild it here (loadCustom-
+                    // Playlist does the same) — else restored queue rows show no cover.
+                    t.coverThumbPath = NeteaseClient.thumbUrl(t.coverUrl);
                 }
                 loaded.add(t);
             }
