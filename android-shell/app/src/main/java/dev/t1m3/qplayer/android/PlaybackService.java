@@ -145,7 +145,19 @@ public final class PlaybackService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         PlayerController c = controller;
-        if (c != null && c.isPlaying()) c.toggle();
+        if (c != null) {
+            // Unregister before toggle(): toggle() runs on the controller's main
+            // executor (a Handler.post on Android, i.e. deferred, not inline), so its
+            // notifyPlayback() callback lands *after* clearNotification() below has
+            // already run. Left wired to selfListener, that deferred callback calls
+            // refresh() -> startForeground(), which resurrects the notification right
+            // after it was cleared (the disappear-then-reappear bug). Left wired to
+            // bootstrapListener it's worse — that calls startForegroundService(),
+            // which can spin up a whole new service instance. Null makes the deferred
+            // callback a no-op; the next QPlayerActivity launch rewires the listener.
+            c.setPlaybackListener(null);
+            if (c.isPlaying()) c.toggle();
+        }
         clearNotification();
         stopSelf();
         super.onTaskRemoved(rootIntent);
