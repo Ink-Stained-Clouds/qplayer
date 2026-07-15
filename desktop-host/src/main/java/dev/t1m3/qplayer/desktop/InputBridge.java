@@ -108,6 +108,31 @@ final class InputBridge {
                 });
                 return;
             }
+            // Esc mirrors the mobile back gesture: pop the top-most overlay/page (lyric,
+            // queue, settings, detail, ...) and finally request exit, via the same backTick
+            // the Android back button drives (PlayerController.pressBack -> QML handleBack).
+            // Host-side on the main thread; ignore auto-repeat + release so a held Esc pops
+            // only once. Not routed through dispatchKey — QML has no Escape handler.
+            if (key == GLFW.GLFW_KEY_ESCAPE) {
+                if (action == GLFW.GLFW_PRESS) {
+                    PlayerController controller = win.controller();
+                    if (controller != null) controller.pressBack();
+                }
+                return;
+            }
+            // Space toggles play/pause, like a media player — but NOT while typing into a
+            // text field, where the char callback must insert a space instead. Focus lives
+            // on the render thread, so check it there; toggle() is safe to call from there
+            // (same context as a QML onClicked). Ignore auto-repeat + release.
+            if (action == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_SPACE) {
+                win.postRenderTask(() -> {
+                    QmlView v = win.view();
+                    if (v == null || v.focused() instanceof TextEditable) return;
+                    PlayerController controller = win.controller();
+                    if (controller != null) controller.toggle();
+                });
+                return;
+            }
             if (action == GLFW.GLFW_REPEAT) return;
             final boolean down = action == GLFW.GLFW_PRESS;
             final int code = mapKey(key, mods);
@@ -280,7 +305,8 @@ final class InputBridge {
             case GLFW.GLFW_KEY_DOWN: return QmlView.KEY_DOWN;
             case GLFW.GLFW_KEY_HOME: return QmlView.KEY_HOME;
             case GLFW.GLFW_KEY_END: return QmlView.KEY_END;
-            case GLFW.GLFW_KEY_ESCAPE: return QmlView.KEY_ESCAPE;
+            // Esc is intercepted in the key callback (routed to the back gesture), so it
+            // never reaches mapKey — no KEY_ESCAPE case here on purpose.
             case GLFW.GLFW_KEY_TAB:
                 return (mods & GLFW.GLFW_MOD_SHIFT) != 0 ? QmlView.KEY_BACKTAB : QmlView.KEY_TAB;
             default: return 0;
