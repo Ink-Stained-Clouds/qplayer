@@ -1221,10 +1221,11 @@ public class LyricRenderer {
                 int to = (r + 1 < starts.length) ? starts[r + 1] : line.syllables.size();
 
                 float rowWidth = sumWidths(lineSylW, from, to);
-                // A continuation row can start on the whitespace the source carried at
-                // the wrap point; drop it so the visible text lines up with the first
-                // row instead of sitting one space in.
-                float lead = (r > 0) ? leadingWsWidth(line.syllables, lineSylW, from, to, font) : 0f;
+                // Drop leading whitespace on every row: a continuation row inherits the
+                // space the source kept at the wrap point, and the first row can carry a
+                // leading space from the source line itself (common in JP lyrics) — both
+                // would sit the text one space in from the column's left edge.
+                float lead = leadingWsWidth(line.syllables, lineSylW, from, to, font);
                 float visWidth = rowWidth - lead;
                 float rowX = alignRight
                         ? Math.max(leftX, leftX + columnWidth - visWidth)
