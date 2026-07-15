@@ -47,6 +47,7 @@ public final class DesktopAudioBackend implements AudioBackend {
     private volatile float volume = 0.8f;
     private volatile Thread audioThread;
     private volatile Runnable onComplete;
+    private volatile Runnable onStarted;
     private volatile long positionMs = 0L;
     private volatile long durationMs = 0L;
 
@@ -111,6 +112,11 @@ public final class DesktopAudioBackend implements AudioBackend {
     @Override
     public void setOnComplete(Runnable callback) {
         this.onComplete = callback;
+    }
+
+    @Override
+    public void setOnStarted(Runnable callback) {
+        this.onStarted = callback;
     }
 
     @Override
@@ -183,7 +189,15 @@ public final class DesktopAudioBackend implements AudioBackend {
             seekBaseMs = startMs > 0 ? pcm.seek(startMs) : 0L;
             boolean primed = primeFromCurrent(pcm);
             boolean draining = !primed;
-            if (playing.get()) alSourcePlay(sourceId);
+            if (playing.get()) {
+                alSourcePlay(sourceId);
+                // Playback has actually begun now (open/decode/prime done). Fire onStarted
+                // so the controller clears its `loading` flag. The AudioBackend default is a
+                // no-op, so without this the desktop `loading` Property stays true forever —
+                // an endless indeterminate lyric progress bar and mini-player loading sweep.
+                Runnable started = onStarted;
+                if (started != null) started.run();
+            }
 
             while (!shuttingDown.get()) {
                 // A different track requested → bail so the loop reopens it.

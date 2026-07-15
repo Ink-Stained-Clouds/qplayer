@@ -42,6 +42,9 @@ Rectangle {
         anchors.top: parent.top
         height: 3
         color: Theme.color.surfaceContainerHighest
+        // The loading sweep slides in from x = -sweep.width; clip so its off-left
+        // portion is cut at this bar's edge instead of spilling onto the rail beside it.
+        clip: true
 
         Rectangle {
             anchors.left: parent.left
