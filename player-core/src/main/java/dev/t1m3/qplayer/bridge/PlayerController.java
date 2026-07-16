@@ -7,6 +7,7 @@ import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.LyricParser;
 import dev.t1m3.qplayer.lyric.TtmlParser;
+import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.netease.NeteaseClient;
 import dev.t1m3.qplayer.netease.dto.NeteaseLyric;
@@ -225,6 +226,11 @@ public final class PlayerController {
     public final Property<Integer> lyricIndex = new Property<>(-1);
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
     public final Property<Boolean> lyricsOpen = new Property<>(false);
+    /** Whether the lyric page's QML offset-adjust panel is open. The host-drawn lyric
+     *  column has no QML underneath it, so its own tap = seek / drag = scroll gesture
+     *  is normally recognized before any QML dispatch; while this is true the input
+     *  layer skips that recognition so taps land on the panel's QML controls instead. */
+    public final Property<Boolean> lyricOffsetPanelOpen = new Property<>(false);
     /** True from a track switch until the new source actually starts playing — the
      *  progress bars show a moving "loading" sweep while the (possibly async) source
      *  resolves. Cleared by the backend's onStarted, or on a failed/absent url. */
@@ -394,7 +400,7 @@ public final class PlayerController {
             if (backend.isPlaying()) {
                 long pos = backend.position();
                 positionMs.set(pos);
-                updateLyricIndex(pos);
+                updateLyricIndex(pos - LyricConfig.instance.offsetMs.getValue());
             }
         }
         // Rebuild the debug log text only while the overlay is open. Otherwise every
@@ -464,6 +470,14 @@ public final class PlayerController {
 
     public void setLyricsOpen(boolean open) {
         lyricsOpen.set(open);
+        // Closing the lyric page (Esc / Android back / the collapse button all funnel
+        // here) must also drop the offset panel's gesture-suppression flag — otherwise
+        // it stays stuck true and the lyric body's tap-to-seek never re-arms next time.
+        if (!open) lyricOffsetPanelOpen.set(false);
+    }
+
+    public void setLyricOffsetPanelOpen(boolean open) {
+        lyricOffsetPanelOpen.set(open);
     }
 
     public void setQueueOpen(boolean open) {

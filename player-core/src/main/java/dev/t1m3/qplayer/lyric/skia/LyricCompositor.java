@@ -51,6 +51,13 @@ public final class LyricCompositor {
     // nearly the full height. Kept in sync with LyricOverlay.qml and lyricsScrollable.
     private static final float L_LANDSCAPE_TOP = 24f;
     private static final float L_LANDSCAPE_BOTTOM = 24f;
+    // Carve-out for LyricOverlay's top-right offset-adjust icon button: in landscape
+    // the scrollable band starts only L_LANDSCAPE_TOP below the top, which clips the
+    // bottom of that button (a 40px IconButton anchored ~6px down). Without this the
+    // button's own pointer-down is intermittently swallowed by the tap-to-seek/drag-
+    // to-scroll gesture below instead of reaching the real QML control.
+    private static final float OFFSET_BTN_CORNER_W = 56f;
+    private static final float OFFSET_BTN_CORNER_H = 52f;
 
     private final LyricRenderer lyricRenderer = new LyricRenderer();
     private final FluidBackground fluidBg = new FluidBackground(System.nanoTime());
@@ -150,6 +157,9 @@ public final class LyricCompositor {
         if (lyricSlide < 0.99f || !lyricRenderer.hasLines()) return false;
         if (surfaceWLogical > surfaceHeightLogical) {
             if (coverOnlyCached) return false;
+            if (x >= surfaceWLogical - OFFSET_BTN_CORNER_W && y <= topInset + OFFSET_BTN_CORNER_H) {
+                return false;
+            }
             float topY = topInset + L_LANDSCAPE_TOP;
             float bottomY = surfaceHeightLogical - L_LANDSCAPE_BOTTOM;
             return x >= surfaceWLogical * 0.5f && y >= topY && y <= bottomY;
@@ -333,7 +343,7 @@ public final class LyricCompositor {
                 lyColH = colH;
             }
             Rect colRect = lyColRect;
-            long pos = controller.position();
+            long pos = controller.position() - LyricConfig.instance.offsetMs.getValue();
             // Alpha-composite the whole column at lyricShow, and zoom it 0.95 -> 1 about
             // its own centre — matching the QML cover's zoom on the opposite side.
             int alpha = Math.round(Math.max(0f, Math.min(1f, lyricShow)) * 255f);

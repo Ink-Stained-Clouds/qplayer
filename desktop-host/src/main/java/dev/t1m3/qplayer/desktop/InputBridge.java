@@ -6,6 +6,7 @@ import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
+import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
 import org.lwjgl.glfw.GLFW;
 
@@ -240,10 +241,14 @@ final class InputBridge {
         float surfaceWLogical = win.framebufferSize()[0] / scale;
         float surfaceHLogical = win.framebufferSize()[1] / scale;
         LyricCompositor c = win.compositor();
+        PlayerController controllerForGesture = win.controller();
+        boolean offsetPanelOpen = controllerForGesture != null
+                && Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek());
         // The lyric body (between the QML title and transport bands) is host-drawn
         // with no QML controls under it: a drag scrolls, a tap seeks. Wait for slop
-        // before engaging the scroll so a tap stays a tap.
-        if (c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset)) {
+        // before engaging the scroll so a tap stays a tap. Suppressed while the
+        // offset-adjust panel (real QML) is open over that same region.
+        if (!offsetPanelOpen && c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset)) {
             lyGrab = true;
             lyDownY = ly;
             lyMoved = false;
@@ -284,7 +289,9 @@ final class InputBridge {
                 c.lyricRenderer().scrollUp();
             } else {
                 long t = c.lyricRenderer().timeAtScreenY(lyDownY);
-                if (t >= 0L && controller != null) controller.seek(t);
+                if (t >= 0L && controller != null) {
+                    controller.seek(t + LyricConfig.instance.offsetMs.getValue());
+                }
             }
             return;
         }

@@ -32,6 +32,7 @@ import io.github.timer_err.qml4j.render.items.input.TextEditable;
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.android.AppSettings;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
+import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -129,7 +130,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         // host-drawn with no QML controls under it, so a touch there is
                         // ours: a drag scrolls the column, a tap seeks to that line. Don't
                         // engage the scroll yet -- wait for movement so a tap stays a tap.
-                        if (compositor.lyricsScrollable(x, y, surface.width() / uiScale, surface.height() / uiScale, insetTop())) {
+                        // Suppressed while the offset-adjust panel (real QML) is open over
+                        // that same region.
+                        boolean offsetPanelOpen = controller != null
+                                && Boolean.TRUE.equals(controller.lyricOffsetPanelOpen.peek());
+                        if (!offsetPanelOpen && compositor.lyricsScrollable(x, y, surface.width() / uiScale, surface.height() / uiScale, insetTop())) {
                             lyGrab = true;
                             lyDownY = y;
                             lyMoved = false;
@@ -171,7 +176,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                                 compositor.lyricRenderer().scrollUp();
                             } else if (action == MotionEvent.ACTION_UP) {
                                 long t = compositor.lyricRenderer().timeAtScreenY(lyDownY);
-                                if (t >= 0L && controller != null) controller.seek(t);
+                                if (t >= 0L && controller != null) {
+                                    controller.seek(t + LyricConfig.instance.offsetMs.getValue());
+                                }
                             }
                             return;
                         }

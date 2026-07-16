@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import md3.Core
 import "."
 
@@ -15,6 +16,16 @@ Item {
     // landscape all adopt it. coverOnly (no lyrics / instrumental) centers the cover.
     property bool landscape: overlay.width > overlay.height
     property bool coverOnly: player.lyricsCoverOnly
+    property bool offsetPanelOpen: false
+    onOffsetPanelOpenChanged: player.setLyricOffsetPanelOpen(offsetPanelOpen)
+    // The page can also close via Esc / Android back, which bypasses this QML
+    // entirely (PlayerController.pressBack), so mirror the other direction too. A
+    // plain binding + local onChanged, not Connections { target: player }: player is
+    // a PlayerController, not a QObject, and qml4j's Connections codegen requires a
+    // QObject target (a non-QObject target crashes with a ClassCastException at
+    // Property.fireListeners on load).
+    property bool lyricsOpenMirror: player.lyricsOpen
+    onLyricsOpenMirrorChanged: if (!lyricsOpenMirror) overlay.offsetPanelOpen = false
 
 
     function fmt(ms) {
@@ -67,6 +78,125 @@ Item {
         icon: "expand_more"
         contentColor: "#FFFFFFFF"
         onClicked: player.setLyricsOpen(false)
+    }
+
+    // Quick lyric-timing offset adjust: some LRC files don't quite line up with the
+    // audio, so this lets the offset be nudged without leaving the lyric page. A
+    // local panel, NOT an md3 Dialog: Dialog.open() reparents to the true QML root,
+    // but the host only re-renders THIS subtree (objectName "lyricChrome") while the
+    // lyric page fully covers the main scene — a reparented overlay would never draw.
+    //
+    // Top-right, mirroring backBtn's top-left: the host-drawn lyric column claims its
+    // own tap-to-seek/drag-to-scroll gesture over most of the body (LyricCompositor.
+    // lyricsScrollable) BEFORE QML ever sees the pointer event, so this corner is
+    // explicitly carved out there (OFFSET_BTN_CORNER_*) to keep the button itself
+    // reliably clickable; the panel's own content is exempted while open via
+    // lyricOffsetPanelOpen (see onOffsetPanelOpenChanged above).
+    IconButton {
+        id: offsetBtn
+        anchors.top: parent.top
+        anchors.topMargin: settings.topInset + 6
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        type: "standard"
+        icon: "sync"
+        contentColor: "#FFFFFFFF"
+        onClicked: overlay.offsetPanelOpen = !overlay.offsetPanelOpen
+    }
+
+    MouseArea {
+        id: offsetScrim
+        visible: overlay.offsetPanelOpen
+        anchors.fill: parent
+        z: 1
+        onClicked: overlay.offsetPanelOpen = false
+    }
+
+    // Plain anchored Items throughout, not Layout/ColumnLayout: nesting a wrapping
+    // Text inside this engine's Layout components silently drops the wrap (known
+    // qml4j limitation — Layout keeps reasserting the child's implicit/unwrapped
+    // width on relayout). Row (a positioner, not a Layout) is fine for the stepper.
+    Rectangle {
+        id: offsetPanel
+        visible: overlay.offsetPanelOpen
+        z: 2
+        anchors.top: offsetBtn.bottom
+        anchors.topMargin: 8
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        width: 260
+        height: resetBtn.y + resetBtn.height + 12
+        radius: 16
+        color: Theme.color.surfaceContainerHigh
+
+        MouseArea { anchors.fill: parent }
+
+        Text {
+            id: offsetTitle
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 12
+            text: "歌词偏移"
+            color: Theme.color.onSurfaceColor
+            font.family: Theme.typography.titleSmall.family
+            font.pixelSize: Theme.typography.titleSmall.size
+        }
+        Text {
+            id: offsetCaption
+            anchors.top: offsetTitle.bottom
+            anchors.topMargin: 4
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            // A literal line break, not just wrapMode: Text.WordWrap — automatic
+            // wrapping of a Text sized by anchors (not a Layout) still doesn't
+            // reliably re-wrap on width changes in this engine, so force the split.
+            text: "对不上时微调；\n数值越大歌词越慢，越小/负值越快"
+            color: Theme.color.onSurfaceVariantColor
+            font.family: Theme.typography.bodySmall.family
+            font.pixelSize: Theme.typography.bodySmall.size
+            wrapMode: Text.WordWrap
+        }
+        Row {
+            id: stepperRow
+            anchors.top: offsetCaption.bottom
+            anchors.topMargin: 10
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            spacing: 10
+            Button {
+                id: minusBtn
+                type: "outlined"; text: "−"
+                onClicked: settings.lyricOffsetMs = Math.max(-5000, settings.lyricOffsetMs - 50)
+            }
+            Text {
+                width: 72
+                // Row top-aligns children by default; a plain height binding to the
+                // row's own (child-derived) height is circular and doesn't land
+                // centered, so anchor directly to a sibling button's centre instead.
+                anchors.verticalCenter: minusBtn.verticalCenter
+                horizontalAlignment: Text.AlignHCenter
+                text: (settings.lyricOffsetMs > 0 ? "+" : "") + settings.lyricOffsetMs + " ms"
+                color: Theme.color.onSurfaceColor
+                font.family: Theme.typography.bodyLarge.family
+                font.pixelSize: Theme.typography.bodyLarge.size
+            }
+            Button {
+                type: "outlined"; text: "+"
+                onClicked: settings.lyricOffsetMs = Math.min(5000, settings.lyricOffsetMs + 50)
+            }
+        }
+        Button {
+            id: resetBtn
+            anchors.top: stepperRow.bottom
+            anchors.topMargin: 8
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            type: "text"; text: "重置"
+            onClicked: settings.lyricOffsetMs = 0
+        }
     }
 
     Text {

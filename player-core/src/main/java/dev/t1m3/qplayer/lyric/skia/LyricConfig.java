@@ -36,4 +36,9 @@ public final class LyricConfig {
     /** Apple-Music depth of field: blur lyric lines progressively toward the edges
      *  (the focused line stays sharp). Off by default — it adds a per-line blur layer. */
     public final Val<Boolean> edgeBlur = new Val<>(Boolean.FALSE);
+    /** Manual lyric-timing offset in ms, subtracted from the playback position before
+     *  it's compared against each line's timestamp: a larger value makes lyrics appear
+     *  later (slower), a smaller/negative value makes them appear earlier (faster).
+     *  Compensates for LRC files whose timestamps don't quite match the audio. */
+    public final Val<Integer> offsetMs = new Val<>(0);
 }

@@ -43,6 +43,8 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<Boolean> lyricGlow = new Property<>(Boolean.TRUE);
     public final Property<Boolean> lyricEdgeBlur = new Property<>(Boolean.FALSE);
     public final Property<Boolean> lyricBgStatic = new Property<>(Boolean.FALSE);
+    /** Manual lyric-timing offset in ms; see {@link LyricConfig#offsetMs}. */
+    public final Property<Object> lyricOffsetMs = new Property<>(0);
 
     public final Property<Object> maxCacheSizeMB = new Property<>(200);
 
@@ -145,6 +147,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         lyricGlow.set(getBool("lyricGlow", true));
         lyricEdgeBlur.set(getBool("lyricEdgeBlur", false));
         lyricBgStatic.set(getBool("lyricBgStatic", false));
+        lyricOffsetMs.set(getInt("lyricOffsetMs", 0));
         applyLyricConfig();
         lyricFontSize.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -184,6 +187,11 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         lyricBgStatic.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             put("lyricBgStatic", Boolean.TRUE.equals(p.peek()));
+        });
+        lyricOffsetMs.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(asInt(v));
+            put("lyricOffsetMs", asInt(p.peek()));
+            applyLyricConfig();
         });
 
         maxCacheSizeMB.set(getInt("maxCacheSizeMB", 200));
@@ -225,6 +233,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         c.scaleEmphasis.setValue(Boolean.TRUE.equals(lyricScale.peek()));
         c.glow.setValue(Boolean.TRUE.equals(lyricGlow.peek()));
         c.edgeBlur.setValue(Boolean.TRUE.equals(lyricEdgeBlur.peek()));
+        c.offsetMs.setValue(asInt(lyricOffsetMs.peek()));
     }
 
     private void recompute() {

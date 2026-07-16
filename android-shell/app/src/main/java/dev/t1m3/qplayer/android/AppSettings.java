@@ -55,6 +55,8 @@ public final class AppSettings extends QObject
     public final Property<Boolean> lyricEdgeBlur = new Property<>(Boolean.FALSE);
     /** Static fluid background (render once + cache) vs. animated. */
     public final Property<Boolean> lyricBgStatic = new Property<>(Boolean.FALSE);
+    /** Manual lyric-timing offset in ms; see {@link LyricConfig#offsetMs}. */
+    public final Property<Object> lyricOffsetMs = new Property<>(0);
 
     // Cache settings (Object-typed: QML numeric writes arrive as Long).
     /** Maximum disk cache size in MB (audio + lyrics + images). 0 = unlimited. */
@@ -188,6 +190,7 @@ public final class AppSettings extends QObject
         lyricGlow.set(prefs.getBoolean("lyricGlow", true));
         lyricEdgeBlur.set(prefs.getBoolean("lyricEdgeBlur", false));
         lyricBgStatic.set(prefs.getBoolean("lyricBgStatic", false));
+        lyricOffsetMs.set(prefs.getInt("lyricOffsetMs", 0));
         applyLyricConfig();
         lyricFontSize.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -228,6 +231,11 @@ public final class AppSettings extends QObject
             p.setBypassInterceptor(v);
             prefs.edit().putBoolean("lyricBgStatic", Boolean.TRUE.equals(p.peek())).apply();
         });
+        lyricOffsetMs.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(asInt(v));
+            prefs.edit().putInt("lyricOffsetMs", asInt(p.peek())).apply();
+            applyLyricConfig();
+        });
 
         // Cache settings.
         maxCacheSizeMB.set(prefs.getInt("maxCacheSizeMB", 200));
@@ -251,6 +259,7 @@ public final class AppSettings extends QObject
         c.scaleEmphasis.setValue(Boolean.TRUE.equals(lyricScale.peek()));
         c.glow.setValue(Boolean.TRUE.equals(lyricGlow.peek()));
         c.edgeBlur.setValue(Boolean.TRUE.equals(lyricEdgeBlur.peek()));
+        c.offsetMs.setValue(asInt(lyricOffsetMs.peek()));
     }
 
     /** System night mode changed; call on the render thread. */
