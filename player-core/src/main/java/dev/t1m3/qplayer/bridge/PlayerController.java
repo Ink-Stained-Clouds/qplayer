@@ -3,6 +3,9 @@ package dev.t1m3.qplayer.bridge;
 import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.audio.MetadataReader;
 import dev.t1m3.qplayer.cache.DiskCache;
+import dev.t1m3.qplayer.customapi.CustomApiClient;
+import dev.t1m3.qplayer.customapi.CustomApiConfig;
+import dev.t1m3.qplayer.customapi.CustomSong;
 import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.LyricParser;
@@ -71,6 +74,18 @@ public final class PlayerController {
     private static final String DEFAULT_SEED = "#6750A4";
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "qplayer-net");
+        t.setDaemon(true);
+        return t;
+    });
+    // Custom-API search/resolve get their own single-threaded queue, separate from
+    // `worker` above: netease's background calls (covers, lyrics, login refresh)
+    // share `worker` and can each take a long time to time out on a slow/unreachable
+    // connection, which head-of-line-blocks anything queued behind them — a custom
+    // source search or play-url resolve could sit stuck for minutes behind an
+    // unrelated stalled netease request, looking exactly like "does nothing" even
+    // though it eventually succeeds. See dev.t1m3.qplayer.customapi.
+    private final ExecutorService customWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "qplayer-custom-api");
         t.setDaemon(true);
         return t;
     });
@@ -175,6 +190,11 @@ public final class PlayerController {
     // Guards against stale async search results: set to the trimmed key before
     // each search(); async workers check equality before publishing results.
     private volatile String currentSearchKey = "";
+    // Same guard, for searchCustom() against dev.t1m3.qplayer.customapi.CustomApiClient.
+    private volatile String currentCustomSearchKey = "";
+    // User-configured third-party music API (independent of the netease source
+    // above); pushed in from Settings via setCustomApiConfig(). Never null.
+    private volatile CustomApiConfig customApiConfig = new CustomApiConfig();
 
     // True after loadQueue() restores a previous session's track — toggle() will
     // call playAt() instead of resume() so the URL is freshly resolved.
@@ -258,6 +278,15 @@ public final class PlayerController {
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
+    /** Search results from the user-configured custom API source (independent of
+     *  {@link #searchResults}'s netease source), shown in their own SearchPage.qml
+     *  section. Empty when the custom source isn't configured/enabled. */
+    public final Property<List<CustomSong>> customSearchResults = new Property<>(Collections.<CustomSong>emptyList());
+    /** Unified view over {@link #searchResults} + {@link #localSearchResults} +
+     *  {@link #customSearchResults} (netease, then local, then custom) for
+     *  SearchPage.qml's single results list. Rebuilt by {@link #rebuildSearchRows()}
+     *  whenever any of the three source lists changes. */
+    public final Property<List<SearchRow>> searchRows = new Property<>(Collections.<SearchRow>emptyList());
     /** Local-library matches for the same query text, shown alongside searchResults. */
     public final Property<List<Track>> localSearchResults = new Property<>(Collections.<Track>emptyList());
     /** Hot search keywords shown when search input is empty. */
@@ -1050,6 +1079,16 @@ public final class PlayerController {
         playQueue(q, i);
     }
 
+    /** Queue the custom-API-source search results and start at {@code i} — the
+     *  CUSTOM_API counterpart to {@link #playSearchResult(int)}. */
+    public void playCustomSearchResult(int i) {
+        List<CustomSong> songs = customSearchResults.peek();
+        if (songs == null || i < 0 || i >= songs.size()) return;
+        List<Track> q = new ArrayList<>(songs.size());
+        for (CustomSong s : songs) q.add(toTrackCustom(s));
+        playQueue(q, i);
+    }
+
     private void playQueue(List<Track> q, int start) {
         queue.clear();
         queue.addAll(q);
@@ -1131,6 +1170,16 @@ public final class PlayerController {
                 cacheAudioAsync(t);
             } else {
                 resolveAndPlayNetease(t, i, resumeMs);
+            }
+        } else if (t.source == Track.Source.CUSTOM_API) {
+            if (t.streamUrl != null) {
+                Logger.info("play custom-api (cached url): {}", t.title);
+                backend.play(t.playable(), resumeMs);
+                playingIntent = true;
+                post(() -> playing.set(true));
+                notifyPlayback();
+            } else {
+                resolveAndPlayCustom(t, i, resumeMs);
             }
         }
         // Current track's fetches are now queued; warm next/prev behind them.
@@ -1491,6 +1540,13 @@ public final class PlayerController {
         this.unblockEnabled = enabled;
     }
 
+    /** Push the current custom-API-source configuration in from Settings; called
+     *  once at startup and again on every field edit (see the Settings twins'
+     *  rebuildCustomApiConfig()). {@code null} resets to an unusable default. */
+    public void setCustomApiConfig(CustomApiConfig cfg) {
+        this.customApiConfig = cfg != null ? cfg : new CustomApiConfig();
+    }
+
     /** Load a netease track's lyrics off-thread (AMLL TTML mirror, else Netease's
      *  own). tryAmllTtml hits the disk cache first, so a previously-played song shows
      *  its lyrics with no network. Called on every netease play — including the
@@ -1642,6 +1698,48 @@ public final class PlayerController {
         });
     }
 
+    /** CUSTOM_API counterpart to {@link #resolveAndPlayNetease}, deliberately much
+     *  simpler: no unblock fallback, no disk audio cache (keyed by neteaseId, which
+     *  a custom-API track doesn't have), no lyrics (no agreed-upon lyric endpoint
+     *  shape) — MVP scope, not an oversight. */
+    private void resolveAndPlayCustom(Track t, int expectedIndex, long resumeMs) {
+        String id = t.customId;
+        CustomApiConfig cfg = customApiConfig;
+        customWorker.submit(() -> {
+            try {
+                String url = CustomApiClient.resolveUrl(cfg, id);
+                onMain(() -> {
+                    if (playIndex != expectedIndex) return; // user moved on
+                    if (url == null) {
+                        Logger.warn("custom-api song {} has no url", id);
+                        post(() -> {
+                            loading.set(false);
+                            toast.set("无法播放：自定义源解析失败");
+                        });
+                        return;
+                    }
+                    t.streamUrl = url;
+                    post(() -> {
+                        title.set(orEmpty(t.title));
+                        artist.set(orEmpty(t.artist));
+                        album.set(orEmpty(t.album));
+                        coverUrl.set(orEmpty(t.coverUrl));
+                        durationMs.set(t.durationMs);
+                    });
+                    updateCover(t, expectedIndex);
+                    Logger.info("play custom-api: {} — {}", t.title, url);
+                    backend.play(url, resumeMs);
+                    playingIntent = true;
+                    post(() -> playing.set(true));
+                    notifyPlayback();
+                });
+            } catch (Throwable e) {
+                Logger.warn("custom-api resolve failed for {}: {}", id, e.getMessage());
+                post(() -> toast.set("播放失败：" + e.getMessage()));
+            }
+        });
+    }
+
     private void loadLocalLyrics(Track t) {
         if (t.lyricFilePath != null) {
             try {
@@ -1663,6 +1761,19 @@ public final class PlayerController {
         t.album = s.album;
         t.coverUrl = s.coverUrl;
         t.coverThumbPath = s.coverThumbPath != null ? s.coverThumbPath : NeteaseClient.thumbUrl(s.coverUrl);
+        t.durationMs = s.durationMs;
+        return t;
+    }
+
+    private static Track toTrackCustom(CustomSong s) {
+        Track t = new Track();
+        t.source = Track.Source.CUSTOM_API;
+        t.customId = s.id;
+        t.title = s.name;
+        t.artist = s.artist;
+        t.album = s.album;
+        t.coverUrl = s.coverUrl;
+        t.coverThumbPath = s.coverThumbPath;
         t.durationMs = s.durationMs;
         return t;
     }
@@ -1764,6 +1875,7 @@ public final class PlayerController {
                 if (i > 0) sb.append(',');
                 sb.append("{\"source\":\"").append(t.source).append('"');
                 if (t.neteaseId != 0) sb.append(",\"neteaseId\":").append(t.neteaseId);
+                if (t.customId != null) sb.append(",\"customId\":").append(jsonStr(t.customId));
                 sb.append(",\"title\":").append(jsonStr(t.title));
                 sb.append(",\"artist\":").append(jsonStr(t.artist));
                 sb.append(",\"album\":").append(jsonStr(t.album));
@@ -1804,8 +1916,11 @@ public final class PlayerController {
                 com.google.gson.JsonObject o = el.getAsJsonObject();
                 Track t = new Track();
                 String src = o.has("source") ? o.get("source").getAsString() : "NETEASE";
-                t.source = "LOCAL".equals(src) ? Track.Source.LOCAL : Track.Source.NETEASE;
+                t.source = "LOCAL".equals(src) ? Track.Source.LOCAL
+                        : "CUSTOM_API".equals(src) ? Track.Source.CUSTOM_API
+                        : Track.Source.NETEASE;
                 t.neteaseId = o.has("neteaseId") ? o.get("neteaseId").getAsLong() : 0;
+                t.customId  = o.has("customId")  && !o.get("customId").isJsonNull()  ? o.get("customId").getAsString()  : null;
                 t.title     = o.has("title")     && !o.get("title").isJsonNull()     ? o.get("title").getAsString()     : "";
                 t.artist    = o.has("artist")    && !o.get("artist").isJsonNull()    ? o.get("artist").getAsString()    : "";
                 t.album     = o.has("album")     && !o.get("album").isJsonNull()     ? o.get("album").getAsString()     : "";
@@ -1814,6 +1929,10 @@ public final class PlayerController {
                 if (t.source == Track.Source.LOCAL) {
                     t.filePath   = o.has("filePath")   && !o.get("filePath").isJsonNull()   ? o.get("filePath").getAsString()   : null;
                     t.contentUri = o.has("contentUri") && !o.get("contentUri").isJsonNull() ? o.get("contentUri").getAsString() : null;
+                } else if (t.source == Track.Source.CUSTOM_API) {
+                    // No netease-CDN thumbnail convention for a custom source — the
+                    // cover url doubles as its own thumbnail (matches CustomApiClient).
+                    t.coverThumbPath = t.coverUrl;
                 } else if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
                     // NETEASE row art is a CDN thumbnail URL derived from coverUrl; the
                     // queue JSON only persists coverUrl, so rebuild it here (loadCustom-
@@ -1887,6 +2006,7 @@ public final class PlayerController {
         if (entry != null && !entry.isExpired()) {
             searchResults.set(entry.songs);
             resultCount.set(entry.songs.size());
+            rebuildSearchRows();
             Logger.info("search cache hit: {}", key);
             return;
         }
@@ -1902,6 +2022,7 @@ public final class PlayerController {
                         if (!key.equals(currentSearchKey)) return;
                         searchResults.set(existing.songs);
                         resultCount.set(existing.songs.size());
+                        rebuildSearchRows();
                     });
                     return;
                 }
@@ -1917,9 +2038,44 @@ public final class PlayerController {
                     if (!key.equals(currentSearchKey)) return;
                     searchResults.set(r);
                     resultCount.set(r.size());
+                    rebuildSearchRows();
                 });
             } catch (Throwable e) {
                 Logger.warn("search failed: {}", e.getMessage());
+            }
+        });
+    }
+
+    /** Search the user-configured custom API source and publish to
+     *  {@link #customSearchResults}. Independent of {@link #search(String)} — no
+     *  cache layer (a self-hosted proxy is typically low-latency), and silently
+     *  publishes an empty list when the source isn't configured/enabled. */
+    public void searchCustom(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            customSearchResults.set(Collections.<CustomSong>emptyList());
+            rebuildSearchRows();
+            return;
+        }
+        final CustomApiConfig cfg = customApiConfig;
+        if (!cfg.isUsable()) {
+            customSearchResults.set(Collections.<CustomSong>emptyList());
+            rebuildSearchRows();
+            return;
+        }
+        final String key = keyword.trim();
+        currentCustomSearchKey = key;
+        customWorker.submit(() -> {
+            try {
+                List<CustomSong> r = CustomApiClient.search(cfg, key);
+                if (!key.equals(currentCustomSearchKey)) return;
+                post(() -> {
+                    if (key.equals(currentCustomSearchKey)) {
+                        customSearchResults.set(r);
+                        rebuildSearchRows();
+                    }
+                });
+            } catch (Throwable e) {
+                Logger.warn("custom search failed: {}", e.getMessage());
             }
         });
     }
@@ -1931,6 +2087,7 @@ public final class PlayerController {
         String q = keyword == null ? "" : keyword.trim().toLowerCase();
         if (q.isEmpty()) {
             localSearchResults.set(Collections.<Track>emptyList());
+            rebuildSearchRows();
             return;
         }
         List<Track> matches = new ArrayList<>();
@@ -1941,6 +2098,70 @@ public final class PlayerController {
             }
         }
         localSearchResults.set(matches);
+        rebuildSearchRows();
+    }
+
+    /** Flatten {@link #searchResults} (netease), {@link #localSearchResults} and
+     *  {@link #customSearchResults} into {@link #searchRows}, in that display
+     *  order — SearchPage.qml renders one unified list instead of three
+     *  independently-scrolling ones (which fought over layout space; see
+     *  SearchPage.qml). Must run on the render thread (Property write). */
+    private void rebuildSearchRows() {
+        List<SearchRow> rows = new ArrayList<>();
+        List<NeteaseSong> ns = searchResults.peek();
+        if (ns != null) {
+            for (int i = 0; i < ns.size(); i++) {
+                NeteaseSong s = ns.get(i);
+                SearchRow row = new SearchRow();
+                row.kind = "netease";
+                row.index = i;
+                row.name = s.name;
+                row.artist = s.artist;
+                row.coverThumbPath = s.coverThumbPath;
+                rows.add(row);
+            }
+        }
+        List<Track> ls = localSearchResults.peek();
+        if (ls != null) {
+            for (int i = 0; i < ls.size(); i++) {
+                Track t = ls.get(i);
+                SearchRow row = new SearchRow();
+                row.kind = "local";
+                row.index = i;
+                row.name = t.title;
+                row.artist = t.artist;
+                row.coverThumbPath = t.coverThumbPath;
+                rows.add(row);
+            }
+        }
+        List<CustomSong> cs = customSearchResults.peek();
+        if (cs != null) {
+            for (int i = 0; i < cs.size(); i++) {
+                CustomSong s = cs.get(i);
+                SearchRow row = new SearchRow();
+                row.kind = "custom";
+                row.index = i;
+                row.name = s.name;
+                row.artist = s.artist;
+                row.coverThumbPath = s.coverThumbPath;
+                rows.add(row);
+            }
+        }
+        searchRows.set(rows);
+    }
+
+    /** Route a click on the unified search list (SearchPage.qml) back to the
+     *  right source-specific play method by {@link SearchRow#kind}. */
+    public void playSearchRow(int rowIndex) {
+        List<SearchRow> rows = searchRows.peek();
+        if (rows == null || rowIndex < 0 || rowIndex >= rows.size()) return;
+        SearchRow row = rows.get(rowIndex);
+        switch (row.kind) {
+            case "netease": playSearchResult(row.index); break;
+            case "local": playLocalSearchResult(row.index); break;
+            case "custom": playCustomSearchResult(row.index); break;
+            default: break;
+        }
     }
 
     private static boolean containsIgnoreCase(String s, String needleLower) {
@@ -2504,6 +2725,7 @@ public final class PlayerController {
         saveSessionState();
         backend.release();
         worker.shutdownNow();
+        customWorker.shutdownNow();
     }
 
     // --- Disk cache management (called from QML settings page) -------------

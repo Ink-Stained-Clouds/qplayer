@@ -143,6 +143,7 @@ public final class Main {
         settings.setUnblockListener(controller::setUnblockEnabled);
         settings.setMirrorListener(controller::setUpdateMirror);
         settings.setCacheSizeListener(controller::setCacheMaxSizeMB);
+        settings.setCustomApiListener(controller::setCustomApiConfig);
         settings.load();
 
         // Fonts for the host-drawn lyric renderer (the QML scene fonts are set on the

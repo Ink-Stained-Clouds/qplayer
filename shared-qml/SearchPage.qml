@@ -30,12 +30,13 @@ Item {
                 // in-memory filter (no network round-trip to debounce), so it's safe
                 // to run on every keystroke unlike the netease search() call.
                 onTextChanged: {
-                    if (text.length > 0) { player.search(text); player.searchLocal(text) }
+                    if (text.length > 0) { player.search(text); player.searchLocal(text); player.searchCustom(text) }
                     else page.historyExpanded = false
                 }
                 onAccepted: {
                     if (query.text.length > 0) {
                         player.search(query.text)
+                        player.searchCustom(query.text)
                         player.addSearchHistory(query.text)
                     }
                 }
@@ -46,6 +47,7 @@ Item {
                 onClicked: {
                     if (query.text.length > 0) {
                         player.search(query.text)
+                        player.searchCustom(query.text)
                         player.addSearchHistory(query.text)
                     }
                 }
@@ -171,6 +173,7 @@ Item {
                                         if (kw.length > 0) {
                                             query.text = kw
                                             player.search(kw)
+                                            player.searchCustom(kw)
                                             player.addSearchHistory(kw)
                                         }
                                     }
@@ -258,6 +261,7 @@ Item {
                                 onClicked: {
                                     query.text = modelData
                                     player.search(modelData)
+                                    player.searchCustom(modelData)
                                     player.addSearchHistory(modelData)
                                 }
                             }
@@ -268,51 +272,26 @@ Item {
         }
 
         // --- Search results (shown when input is not empty) ---
-        // Local matches (instant, in-memory) above the netease ones. Local's own
-        // VirtualSongList is height-capped to a few rows rather than fillHeight —
-        // two independently-scrolling Flickables can't both freely fill the
-        // remaining space, and local matches are usually few — so it scrolls
-        // internally past that cap while netease results take the rest.
-        Text {
-            Layout.leftMargin: 16
-            Layout.topMargin: 8
-            Layout.bottomMargin: 4
-            visible: query.text.length > 0 && localResults.count > 0
-            text: "本地"
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-            color: Theme.color.onSurfaceVariantColor
-        }
+        // One unified, always-scrollable list (网易云 first, then 本地, then
+        // 自定义源 — player.searchRows is built in that order by
+        // PlayerController.rebuildSearchRows()) instead of three independently
+        // height-managed VirtualSongLists: those fought each other for space in
+        // qml4j's ColumnLayout (which hands a fillHeight child whatever room is
+        // left after already-placed siblings rather than pre-reserving room for
+        // every sibling like real Qt does), squeezing whichever section came
+        // after the fillHeight one down to nothing under a short window.
+        //
+        // No per-row context menu here ("加入播放列表/复制链接" are built around
+        // neteaseId) — this list mixes netease/local/custom rows, so it drops
+        // the menu uniformly rather than threading per-kind eligibility through
+        // VirtualSongList/SongRow. Still available via Home/Playlist pages.
         VirtualSongList {
-            id: localResults
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(count, 3) * rowH
-            visible: query.text.length > 0 && count > 0
-            list: player.localSearchResults
-            isLocal: true
-            onActivated: player.playLocalSearchResult(localResults.activatedIndex)
-        }
-        Text {
-            Layout.leftMargin: 16
-            Layout.topMargin: 8
-            Layout.bottomMargin: 4
-            visible: query.text.length > 0 && localResults.count > 0 && results.count > 0
-            text: "网易云"
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-            color: Theme.color.onSurfaceVariantColor
-        }
-        VirtualSongList {
-            id: results
+            id: unifiedResults
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: query.text.length > 0
-            list: player.searchResults
-            // Not login-gated: the menu's "加入播放列表" (local list) and "复制链接" both
-            // work signed-out; only the "添加到歌单" submenu (inside the menu itself)
-            // needs an account.
-            songMenu: true
-            onActivated: player.playSearchResult(results.activatedIndex)
+            list: player.searchRows
+            onActivated: player.playSearchRow(unifiedResults.activatedIndex)
         }
     }
 }

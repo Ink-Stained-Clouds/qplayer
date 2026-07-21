@@ -239,6 +239,12 @@ Rectangle {
                     }
                 }
 
+                // See CustomApiSettingsCard.qml — factored into its own file because
+                // qml4j compiles each QML file's root to one JVM constructor, and this
+                // card's markup inline here pushed SettingsPage's generated method past
+                // the JVM's 64KB bytecode limit (MethodTooLargeException at runtime).
+                CustomApiSettingsCard {}
+
                 Text {
                     Layout.leftMargin: 20
                     Layout.topMargin: 6

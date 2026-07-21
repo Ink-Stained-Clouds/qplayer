@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
+import dev.t1m3.qplayer.customapi.CustomApiConfig;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.store.AppDirs;
@@ -62,6 +63,21 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     // settings.cacheFolder !== 'undefined'" QML guard applies.
     public final Property<String> cacheFolder = new Property<>("");
 
+    // User-configured third-party "custom API" music source (independent of the
+    // built-in netease source) — see dev.t1m3.qplayer.customapi.CustomApiConfig
+    // for the URL-template + JSON-path-mapping adapter this feeds.
+    public final Property<Boolean> customApiEnabled = new Property<>(Boolean.FALSE);
+    public final Property<String> customApiSearchUrl = new Property<>("");
+    public final Property<String> customApiSearchListPath = new Property<>("");
+    public final Property<String> customApiIdPath = new Property<>("");
+    public final Property<String> customApiNamePath = new Property<>("");
+    public final Property<String> customApiArtistPath = new Property<>("");
+    public final Property<String> customApiAlbumPath = new Property<>("");
+    public final Property<String> customApiCoverPath = new Property<>("");
+    public final Property<String> customApiUrlUrl = new Property<>("");
+    public final Property<String> customApiUrlResultPath = new Property<>("");
+    public final Property<String> customApiHeaders = new Property<>("");
+
     public interface DarkListener { void onDark(boolean dark); }
     public interface MonetListener { void onMonet(boolean enabled); }
     public interface UnblockListener { void onUnblock(boolean enabled); }
@@ -69,6 +85,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public interface CacheSizeListener { void onCacheMaxSizeMB(long mb); }
     public interface MusicFolderListener { void onMusicFolder(String path); }
     public interface CacheFolderListener { void onCacheFolder(String path); }
+    public interface CustomApiListener { void onCustomApiConfig(CustomApiConfig cfg); }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -82,6 +99,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     private CacheSizeListener cacheSizeListener;
     private MusicFolderListener musicFolderListener;
     private CacheFolderListener cacheFolderListener;
+    private CustomApiListener customApiListener;
 
     public void setDarkListener(DarkListener l) { this.darkListener = l; }
     public void setMonetListener(MonetListener l) { this.monetListener = l; }
@@ -90,6 +108,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public void setCacheSizeListener(CacheSizeListener l) { this.cacheSizeListener = l; }
     public void setMusicFolderListener(MusicFolderListener l) { this.musicFolderListener = l; }
     public void setCacheFolderListener(CacheFolderListener l) { this.cacheFolderListener = l; }
+    public void setCustomApiListener(CustomApiListener l) { this.customApiListener = l; }
 
     public boolean resolvedDarkValue() { return Boolean.TRUE.equals(resolvedDark.peek()); }
 
@@ -221,6 +240,98 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             put("cacheFolder", val);
             if (cacheFolderListener != null) cacheFolderListener.onCacheFolder(val);
         });
+
+        customApiEnabled.set(getBool("customApiEnabled", false));
+        customApiSearchUrl.set(getString("customApiSearchUrl", ""));
+        customApiSearchListPath.set(getString("customApiSearchListPath", ""));
+        customApiIdPath.set(getString("customApiIdPath", ""));
+        customApiNamePath.set(getString("customApiNamePath", ""));
+        customApiArtistPath.set(getString("customApiArtistPath", ""));
+        customApiAlbumPath.set(getString("customApiAlbumPath", ""));
+        customApiCoverPath.set(getString("customApiCoverPath", ""));
+        customApiUrlUrl.set(getString("customApiUrlUrl", ""));
+        customApiUrlResultPath.set(getString("customApiUrlResultPath", ""));
+        customApiHeaders.set(getString("customApiHeaders", ""));
+        rebuildCustomApiConfig();
+        customApiEnabled.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiEnabled", Boolean.TRUE.equals(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiSearchUrl.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiSearchUrl", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiSearchListPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiSearchListPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiIdPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiIdPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiNamePath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiNamePath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiArtistPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiArtistPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiAlbumPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiAlbumPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiCoverPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiCoverPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiUrlUrl.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiUrlUrl", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiUrlResultPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiUrlResultPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiHeaders.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiHeaders", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+    }
+
+    /** Rebuild a {@link CustomApiConfig} from the current field values and push it
+     *  to the listener — called once after load() seeds all fields, and again from
+     *  every field's interceptor so a live edit takes effect without a restart. */
+    private void rebuildCustomApiConfig() {
+        if (customApiListener == null) return;
+        CustomApiConfig cfg = new CustomApiConfig();
+        cfg.enabled = Boolean.TRUE.equals(customApiEnabled.peek());
+        cfg.searchUrl = asStr(customApiSearchUrl.peek());
+        cfg.searchListPath = asStr(customApiSearchListPath.peek());
+        cfg.idPath = asStr(customApiIdPath.peek());
+        cfg.namePath = asStr(customApiNamePath.peek());
+        cfg.artistPath = asStr(customApiArtistPath.peek());
+        cfg.albumPath = asStr(customApiAlbumPath.peek());
+        cfg.coverPath = asStr(customApiCoverPath.peek());
+        cfg.urlUrl = asStr(customApiUrlUrl.peek());
+        cfg.urlResultPath = asStr(customApiUrlResultPath.peek());
+        cfg.extraHeaders = asStr(customApiHeaders.peek());
+        customApiListener.onCustomApiConfig(cfg);
+    }
+
+    private static String asStr(Object v) {
+        return v instanceof String ? (String) v : "";
     }
 
     private void applyLyricConfig() {

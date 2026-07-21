@@ -7,23 +7,27 @@ package dev.t1m3.qplayer.model;
  */
 public class Track {
 
-    public enum Source { LOCAL, NETEASE }
+    public enum Source { LOCAL, NETEASE, CUSTOM_API }
 
     public Source source = Source.LOCAL;
 
-    /** Local file path (LOCAL source); null for NETEASE. */
+    /** Local file path (LOCAL source); null for NETEASE/CUSTOM_API. */
     public String filePath;
     /** Content URI (LOCAL source on Android 13+). Preferred over filePath because
      *  Scoped Storage blocks direct file-path access to /storage/emulated/0/. */
     public String contentUri;
-    /** Direct HTTP CDN url (NETEASE source) — fetched lazily, may be null. */
+    /** Direct HTTP CDN url (NETEASE or CUSTOM_API source) — fetched lazily, may be null. */
     public String streamUrl;
     /** True when {@link #streamUrl} is only a trial/preview clip (not the full
      *  track) — such a clip must never be written to the audio disk cache. */
     public boolean trial;
-    /** Netease song id (NETEASE source); 0 for LOCAL. Lets the controller
+    /** Netease song id (NETEASE source); 0 for LOCAL/CUSTOM_API. Lets the controller
      *  refetch {@link #streamUrl} when the previous one expires. */
     public long neteaseId;
+    /** External id from a user-configured custom API (CUSTOM_API source); null
+     *  otherwise. String rather than long since third-party ids aren't guaranteed
+     *  numeric — see {@code dev.t1m3.qplayer.customapi}. */
+    public String customId;
 
     public String title;
     public String artist;
@@ -54,7 +58,7 @@ public class Track {
 
     /** The source string the audio backend should open: content URI, file path, or stream url. */
     public String playable() {
-        if (source == Source.NETEASE) return streamUrl;
+        if (source == Source.NETEASE || source == Source.CUSTOM_API) return streamUrl;
         return contentUri != null ? contentUri : filePath;
     }
 
