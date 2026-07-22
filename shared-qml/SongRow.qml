@@ -147,7 +147,16 @@ Rectangle {
         fontSize: 12
     }
 
-    // Small source badge (see `tag` above), pinned to the right edge.
+    // Small source badge (see `tag` above), pinned to the right edge. Sized off
+    // row.tag's own length rather than tagText.implicitWidth: this row is one of
+    // VirtualSongList's windowed delegates, which get REUSED across different
+    // model rows as the list scrolls (index/modelData rewritten in place, not
+    // recreated) — a recycled Text's implicitWidth didn't reliably recompute when
+    // its text changed afterward, so a delegate that first showed a short tag
+    // (e.g. "本地") then got recycled for a longer one (e.g. "自定义源") kept the
+    // old, too-narrow pill width and the label overflowed outside it. `row.tag`
+    // itself already updates correctly on reuse (rowTitle/rowArtist prove that),
+    // so deriving width from the string directly sidesteps the whole thing.
     Rectangle {
         id: tagPill
         visible: row.tag !== ""
@@ -156,13 +165,14 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         radius: 8
         color: Theme.color.surfaceContainerHighest
-        width: tagText.implicitWidth + 16
+        width: Math.max(36, row.tag.length * 12 + 16)
         height: 20
 
         Text {
             id: tagText
             anchors.centerIn: parent
             text: row.tag
+            elide: Text.ElideRight
             fontSize: 11
             color: Theme.color.onSurfaceVariantColor
         }
