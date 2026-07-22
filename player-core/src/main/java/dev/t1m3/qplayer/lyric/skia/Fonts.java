@@ -129,9 +129,21 @@ public final class Fonts {
         }
         if (systemFontActive) {
             FontMgr mgr = FontMgr.getDefault();
-            // null family name asks Skia for the platform's default face, same
-            // convention already used by matchFamilyStyleCharacter below.
+            // Desktop's Skija backends (DirectWrite/CoreText/Fontconfig) treat a
+            // null family name as "give me the platform's default UI face" — but
+            // Android's SkFontMgr_android binding needs an actual family name (a
+            // bare null lookup returns null there), the same reason korean()/
+            // thai()/japanese() below never risk a null-family query either. Try
+            // the null-family shortcut first (desktop's common case, zero
+            // candidate-list guessing), then fall back to naming known system
+            // families explicitly before giving up to the bundled face.
             Typeface sys = mgr != null ? mgr.matchFamilyStyle(null, FontStyle.NORMAL) : null;
+            if (sys == null && mgr != null) {
+                for (String name : SYSTEM_DEFAULT_CANDIDATES) {
+                    Typeface t = mgr.matchFamilyStyle(name, FontStyle.NORMAL);
+                    if (t != null) { sys = t; break; }
+                }
+            }
             if (sys != null) {
                 for (int i = 0; i < faces.length; i++) faces[i] = sys;
                 cache.clear();
@@ -141,6 +153,15 @@ public final class Fonts {
         applyBundledFaces();
         cache.clear();
     }
+
+    // Android's SkFontMgr_android has no "system default" concept reachable via a
+    // null family name — these are its actual shipped UI/CJK families (AOSP's
+    // fonts.xml), tried in order until one resolves. Harmless no-ops on desktop
+    // (that path already succeeded via the null-family lookup above and never
+    // reaches here).
+    private static final String[] SYSTEM_DEFAULT_CANDIDATES = {
+        "sans-serif", "Roboto", "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback"
+    };
 
     private static void applyBundledFaces() {
         FontMgr mgr = FontMgr.getDefault();
