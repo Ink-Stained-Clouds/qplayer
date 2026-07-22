@@ -48,6 +48,14 @@ public final class CustomApiClient {
                 s.album = notBlank(cfg.albumPath) ? JsonPath.resolveString(item, cfg.albumPath) : null;
                 s.coverUrl = notBlank(cfg.coverPath) ? JsonPath.resolveString(item, cfg.coverPath) : null;
                 s.coverThumbPath = s.coverUrl;
+                if (notBlank(cfg.durationPath)) {
+                    String secStr = JsonPath.resolveString(item, cfg.durationPath);
+                    try {
+                        if (secStr != null && !secStr.isEmpty()) s.durationMs = Long.parseLong(secStr.trim()) * 1000L;
+                    } catch (NumberFormatException ignored) {
+                        // Leave durationMs at 0 (unknown) rather than fail the whole row.
+                    }
+                }
                 if (s.id != null && !s.id.isEmpty() && s.name != null && !s.name.isEmpty()) out.add(s);
             }
             return out;
@@ -70,6 +78,25 @@ public final class CustomApiClient {
             return (resolved != null && !resolved.isEmpty()) ? resolved : null;
         } catch (Exception e) {
             Logger.warn("custom-api url parse failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Fetch plain LRC lyric text for {@code id} against {@code cfg.lyricUrl}; null
+     *  if not configured, on any failure, or if {@code cfg} isn't otherwise usable.
+     *  Lyrics are optional even when the rest of the config is set up. */
+    public static String resolveLyric(CustomApiConfig cfg, String id) {
+        if (cfg == null || !cfg.isUsable() || id == null || id.isEmpty()) return null;
+        if (!notBlank(cfg.lyricUrl) || !notBlank(cfg.lyricResultPath)) return null;
+        String url = fillTemplate(cfg.lyricUrl, "id", id);
+        String body = get(url, parseHeaders(cfg.extraHeaders));
+        if (body == null) return null;
+        try {
+            JsonElement root = JsonParser.parseString(body);
+            String lrc = JsonPath.resolveString(root, cfg.lyricResultPath);
+            return (lrc != null && !lrc.isEmpty()) ? lrc : null;
+        } catch (Exception e) {
+            Logger.warn("custom-api lyric parse failed: {}", e.getMessage());
             return null;
         }
     }

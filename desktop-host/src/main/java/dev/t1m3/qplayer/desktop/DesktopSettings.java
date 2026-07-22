@@ -8,6 +8,7 @@ import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
 import dev.t1m3.qplayer.customapi.CustomApiConfig;
+import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.store.AppDirs;
@@ -35,6 +36,13 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<Boolean> resolvedDark = new Property<>(Boolean.FALSE);
     public final Property<Boolean> unblockEnabled = new Property<>(Boolean.TRUE);
     public final Property<Boolean> mirrorEnabled = new Property<>(Boolean.TRUE);
+    /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
+     *  lyric page (Fonts.setUseSystemFont, Skija FontMgr — works on every platform);
+     *  QML's own UI text (buttons/labels/settings) only re-reads this at the next
+     *  app launch (DesktopWindow.ensureView → loadFonts), and only actually changes
+     *  on Windows (qml4j's uiTypefaces needs raw font-file bytes, not a Typeface
+     *  object, so that half is a best-effort disk read of a system font file). */
+    public final Property<Boolean> useSystemFont = new Property<>(Boolean.FALSE);
 
     public final Property<Object> lyricFontSize = new Property<>(28);
     public final Property<Object> lyricFontWeight = new Property<>(2);
@@ -74,8 +82,11 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<String> customApiArtistPath = new Property<>("");
     public final Property<String> customApiAlbumPath = new Property<>("");
     public final Property<String> customApiCoverPath = new Property<>("");
+    public final Property<String> customApiDurationPath = new Property<>("");
     public final Property<String> customApiUrlUrl = new Property<>("");
     public final Property<String> customApiUrlResultPath = new Property<>("");
+    public final Property<String> customApiLyricUrl = new Property<>("");
+    public final Property<String> customApiLyricResultPath = new Property<>("");
     public final Property<String> customApiHeaders = new Property<>("");
 
     public interface DarkListener { void onDark(boolean dark); }
@@ -156,6 +167,18 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             boolean on = Boolean.TRUE.equals(p.peek());
             put("mirror", on);
             if (mirrorListener != null) mirrorListener.onMirror(on);
+        });
+
+        useSystemFont.set(getBool("useSystemFont", false));
+        Fonts.setUseSystemFont(Boolean.TRUE.equals(useSystemFont.peek()));
+        useSystemFont.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            put("useSystemFont", on);
+            // Live for the host-drawn lyric page; QML's own text needs a restart
+            // (DesktopWindow re-reads this Property only at the next loadFonts()
+            // call, in ensureView() — see the Property's own doc comment above).
+            Fonts.setUseSystemFont(on);
         });
 
         lyricFontSize.set(getInt("lyricFontSize", 28));
@@ -249,8 +272,11 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         customApiArtistPath.set(getString("customApiArtistPath", ""));
         customApiAlbumPath.set(getString("customApiAlbumPath", ""));
         customApiCoverPath.set(getString("customApiCoverPath", ""));
+        customApiDurationPath.set(getString("customApiDurationPath", ""));
         customApiUrlUrl.set(getString("customApiUrlUrl", ""));
         customApiUrlResultPath.set(getString("customApiUrlResultPath", ""));
+        customApiLyricUrl.set(getString("customApiLyricUrl", ""));
+        customApiLyricResultPath.set(getString("customApiLyricResultPath", ""));
         customApiHeaders.set(getString("customApiHeaders", ""));
         rebuildCustomApiConfig();
         customApiEnabled.setInterceptor((p, v) -> {
@@ -293,6 +319,11 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             put("customApiCoverPath", asStr(p.peek()));
             rebuildCustomApiConfig();
         });
+        customApiDurationPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiDurationPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
         customApiUrlUrl.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             put("customApiUrlUrl", asStr(p.peek()));
@@ -301,6 +332,16 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         customApiUrlResultPath.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             put("customApiUrlResultPath", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiLyricUrl.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiLyricUrl", asStr(p.peek()));
+            rebuildCustomApiConfig();
+        });
+        customApiLyricResultPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            put("customApiLyricResultPath", asStr(p.peek()));
             rebuildCustomApiConfig();
         });
         customApiHeaders.setInterceptor((p, v) -> {
@@ -324,8 +365,11 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         cfg.artistPath = asStr(customApiArtistPath.peek());
         cfg.albumPath = asStr(customApiAlbumPath.peek());
         cfg.coverPath = asStr(customApiCoverPath.peek());
+        cfg.durationPath = asStr(customApiDurationPath.peek());
         cfg.urlUrl = asStr(customApiUrlUrl.peek());
         cfg.urlResultPath = asStr(customApiUrlResultPath.peek());
+        cfg.lyricUrl = asStr(customApiLyricUrl.peek());
+        cfg.lyricResultPath = asStr(customApiLyricResultPath.peek());
         cfg.extraHeaders = asStr(customApiHeaders.peek());
         customApiListener.onCustomApiConfig(cfg);
     }

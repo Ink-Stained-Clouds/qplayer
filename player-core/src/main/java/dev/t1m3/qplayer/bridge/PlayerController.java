@@ -109,6 +109,14 @@ public final class PlayerController {
                     return size() > LYRIC_MEM_MAX;
                 }
             });
+    // Same idea as lyricMem, keyed by the custom-API source's String id instead
+    // of a netease long songId — kept separate since the key types differ.
+    private final Map<String, List<LyricLine>> customLyricMem = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<String, List<LyricLine>>(16, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, List<LyricLine>> e) {
+                    return size() > LYRIC_MEM_MAX;
+                }
+            });
     private final Queue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> likedSet = new HashSet<>();
     private final Random rng = new Random();
@@ -248,6 +256,13 @@ public final class PlayerController {
      *  (centers the cover) and the host compositor (drops the side lyric column in
      *  landscape) read it. */
     public final Property<Boolean> lyricsCoverOnly = new Property<>(Boolean.TRUE);
+    /** User-toggled cover view (LyricOverlay.qml's "switch to cover" button / tapping
+     *  the cover to switch back) — independent of {@link #lyricsCoverOnly}'s automatic
+     *  no-lyrics detection. The two are OR'd together wherever the effective cover-only
+     *  state is needed (see LyricCompositor.drawLyricOverlay and LyricOverlay.qml's
+     *  own `coverOnly`), so this only ever ADDS cover time, never hides a track that
+     *  genuinely has lyrics against the user's wishes. */
+    public final Property<Boolean> coverModeManual = new Property<>(Boolean.FALSE);
     /** Index of the current lyric line for player.positionMs, or -1. */
     public final Property<Integer> lyricIndex = new Property<>(-1);
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
@@ -469,6 +484,14 @@ public final class PlayerController {
     private void applyLyrics(List<LyricLine> ly) {
         lyrics.set(ly);
         lyricsCoverOnly.set(computeCoverOnly(ly));
+        // Sync the highlighted line to wherever the transport already sits. Normally
+        // redundant — pump() re-derives lyricIndex from backend.position() every ~200ms
+        // while playing — but it's the ONLY thing that sets it when not playing yet,
+        // e.g. right after a session restore: positionMs is set correctly, but
+        // pump()'s own updateLyricIndex call is gated on backend.isPlaying(), which
+        // isn't true until the user actually presses play.
+        Long pos = positionMs.peek();
+        updateLyricIndex((pos != null ? pos : 0L) - LyricConfig.instance.offsetMs.getValue());
     }
 
     /** Cover-only when there are no lyrics, or an instrumental marker ("纯音乐") with
@@ -515,6 +538,11 @@ public final class PlayerController {
 
     public void setLyricOffsetPanelOpen(boolean open) {
         lyricOffsetPanelOpen.set(open);
+    }
+
+    /** LyricOverlay.qml's manual lyrics/cover switch — see {@link #coverModeManual}. */
+    public void setCoverMode(boolean on) {
+        coverModeManual.set(on);
     }
 
     public void setQueueOpen(boolean open) {
@@ -1178,6 +1206,9 @@ public final class PlayerController {
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
+                // The cached-url fast path skips resolveAndPlayCustom, so load lyrics
+                // here too — mirrors loadNeteaseLyrics's cached-audio fast path above.
+                loadCustomLyrics(t, i);
             } else {
                 resolveAndPlayCustom(t, i, resumeMs);
             }
@@ -1567,6 +1598,35 @@ public final class PlayerController {
         });
     }
 
+    /** CUSTOM_API counterpart to {@link #loadNeteaseLyrics}: only fetches when the
+     *  user configured a lyric endpoint (optional — plenty of custom sources don't
+     *  have one). Runs on {@link #customWorker}, not {@link #worker}, for the same
+     *  head-of-line-blocking reason resolveAndPlayCustom does. */
+    private void loadCustomLyrics(Track t, int expectedIndex) {
+        final String id = t.customId;
+        if (id == null || id.isEmpty()) return;
+        List<LyricLine> mem = customLyricMem.get(id);
+        if (mem != null) {
+            post(() -> { if (playIndex == expectedIndex) applyLyrics(mem); });
+            return;
+        }
+        final CustomApiConfig cfg = customApiConfig;
+        customWorker.submit(() -> {
+            List<LyricLine> ly = Collections.emptyList();
+            try {
+                String lrc = CustomApiClient.resolveLyric(cfg, id);
+                if (lrc != null) {
+                    ly = LyricParser.fromNeteaseStrings(null, lrc, null, null);
+                    if (!ly.isEmpty()) customLyricMem.put(id, ly);
+                }
+            } catch (Throwable e) {
+                Logger.warn("custom-api lyric fetch failed for {}: {}", id, e.getMessage());
+            }
+            final List<LyricLine> lines = ly;
+            post(() -> { if (playIndex == expectedIndex) applyLyrics(lines); });
+        });
+    }
+
     /** Resolve a song's lyrics (mem cache -> AMLL TTML -> netease), caching non-empty
      *  results in memory. Blocking; call on the worker thread. */
     private List<LyricLine> fetchNeteaseLyrics(long songId) {
@@ -1698,10 +1758,11 @@ public final class PlayerController {
         });
     }
 
-    /** CUSTOM_API counterpart to {@link #resolveAndPlayNetease}, deliberately much
-     *  simpler: no unblock fallback, no disk audio cache (keyed by neteaseId, which
-     *  a custom-API track doesn't have), no lyrics (no agreed-upon lyric endpoint
-     *  shape) — MVP scope, not an oversight. */
+    /** CUSTOM_API counterpart to {@link #resolveAndPlayNetease}, still simpler: no
+     *  unblock fallback, no disk audio cache (keyed by neteaseId, which a
+     *  custom-API track doesn't have) — deliberate MVP scope, not an oversight.
+     *  Lyrics ARE fetched (see {@link #loadCustomLyrics}), but only when the user
+     *  configured a lyric endpoint. */
     private void resolveAndPlayCustom(Track t, int expectedIndex, long resumeMs) {
         String id = t.customId;
         CustomApiConfig cfg = customApiConfig;
@@ -1727,6 +1788,7 @@ public final class PlayerController {
                         durationMs.set(t.durationMs);
                     });
                     updateCover(t, expectedIndex);
+                    loadCustomLyrics(t, expectedIndex);
                     Logger.info("play custom-api: {} — {}", t.title, url);
                     backend.play(url, resumeMs);
                     playingIntent = true;
@@ -1973,6 +2035,8 @@ public final class PlayerController {
                     loadLocalLyrics(cur);
                 } else if (cur.source == Track.Source.NETEASE) {
                     loadNeteaseLyrics(cur, idx);
+                } else if (cur.source == Track.Source.CUSTOM_API) {
+                    loadCustomLyrics(cur, idx);
                 }
             }
         } catch (Throwable e) {
@@ -2114,6 +2178,7 @@ public final class PlayerController {
                 NeteaseSong s = ns.get(i);
                 SearchRow row = new SearchRow();
                 row.kind = "netease";
+                row.kindLabel = "网易云";
                 row.index = i;
                 row.name = s.name;
                 row.artist = s.artist;
@@ -2127,6 +2192,7 @@ public final class PlayerController {
                 Track t = ls.get(i);
                 SearchRow row = new SearchRow();
                 row.kind = "local";
+                row.kindLabel = "本地";
                 row.index = i;
                 row.name = t.title;
                 row.artist = t.artist;
@@ -2140,6 +2206,7 @@ public final class PlayerController {
                 CustomSong s = cs.get(i);
                 SearchRow row = new SearchRow();
                 row.kind = "custom";
+                row.kindLabel = "自定义源";
                 row.index = i;
                 row.name = s.name;
                 row.artist = s.artist;

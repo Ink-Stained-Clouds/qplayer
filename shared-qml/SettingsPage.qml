@@ -146,6 +146,53 @@ Rectangle {
                     }
                 }
 
+                // Bundled PingFang SC vs the OS's own default font (issue #15).
+                // Takes effect immediately on the lyric page; other UI text (buttons,
+                // this settings page, etc.) needs an app restart to pick it up, and
+                // only actually changes on Windows — noted in the subtitle so it
+                // isn't a silent surprise.
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    radius: 18
+                    color: Theme.color.surfaceContainerHighest
+                    implicitHeight: fontRow.implicitHeight + 32
+
+                    RowLayout {
+                        id: fontRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+                            Text {
+                                text: "使用系统默认字体"
+                                color: Theme.color.onSurfaceColor
+                                font.family: Theme.typography.bodyLarge.family
+                                font.pixelSize: Theme.typography.bodyLarge.size
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "歌词页立即生效；其余界面文字需要重启软件，且目前只有 Windows 上会真正切换"
+                                color: Theme.color.onSurfaceVariantColor
+                                font.family: Theme.typography.bodySmall.family
+                                font.pixelSize: Theme.typography.bodySmall.size
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        Switch {
+                            checked: settings.useSystemFont
+                            onClicked: settings.useSystemFont = checked
+                        }
+                    }
+                }
+
                 Text {
                     Layout.leftMargin: 20
                     Layout.topMargin: 6

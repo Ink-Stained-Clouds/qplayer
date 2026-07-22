@@ -15,7 +15,9 @@ Item {
     // half (host-drawn). Driven by aspect so a desktop window, tablet, or phone in
     // landscape all adopt it. coverOnly (no lyrics / instrumental) centers the cover.
     property bool landscape: overlay.width > overlay.height
-    property bool coverOnly: player.lyricsCoverOnly
+    // OR of the automatic no-lyrics/instrumental detection and the user's manual
+    // lyrics<->cover toggle (the button below / tapping the cover to return).
+    property bool coverOnly: player.lyricsCoverOnly || player.coverModeManual
     property bool offsetPanelOpen: false
     onOffsetPanelOpenChanged: player.setLyricOffsetPanelOpen(offsetPanelOpen)
     // The page can also close via Esc / Android back, which bypasses this QML
@@ -65,6 +67,14 @@ Item {
         scale: shown ? 1 : 0.95
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+
+        // Tap the cover to switch back to lyrics. A no-op when lyricsCoverOnly (no
+        // lyrics for this track) is what's actually forcing cover view — there's
+        // nothing to switch back to, so coverOnly just stays true either way.
+        MouseArea {
+            anchors.fill: parent
+            onClicked: player.setCoverMode(false)
+        }
     }
 
     // --- top: dismiss + title + artist ---------------------------------
@@ -102,6 +112,23 @@ Item {
         icon: "sync"
         contentColor: "#FFFFFFFF"
         onClicked: overlay.offsetPanelOpen = !overlay.offsetPanelOpen
+    }
+
+    // Switch to cover view (issue #15: quick lyrics<->cover switching, à la 网易云).
+    // Hidden once already in cover view — tap the cover itself to come back. Same
+    // top row as offsetBtn, to its left — NOT stacked below (offsetPanel drops down
+    // from there and would overlap a button placed underneath).
+    IconButton {
+        id: coverModeBtn
+        visible: !overlay.coverOnly
+        anchors.top: parent.top
+        anchors.topMargin: settings.topInset + 6
+        anchors.right: offsetBtn.left
+        anchors.rightMargin: 6
+        type: "standard"
+        icon: "image"
+        contentColor: "#FFFFFFFF"
+        onClicked: player.setCoverMode(true)
     }
 
     MouseArea {
@@ -366,6 +393,13 @@ Item {
                 iconSize: 64
                 fadeIn: true
                 source: player.coverPath
+
+                // Same tap-to-return as the portrait cover above; harmless (no-op)
+                // when already showing lyrics.
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: player.setCoverMode(false)
+                }
             }
             Text {
                 id: lTitle

@@ -18,6 +18,10 @@ Rectangle {
     property string rowTitle: ""
     property string rowArtist: ""
     property string coverThumbPath: ""
+    // Small per-row source badge (e.g. "网易云"/"本地"/"自定义源") for lists that
+    // mix rows from more than one source — see SearchPage.qml. Empty (default)
+    // shows nothing, so every other VirtualSongList caller is unaffected.
+    property string tag: ""
     property bool highlighted: false
     property bool removable: false
     // Long-press context menu. `song` is the raw model item (needs `.id`); the
@@ -112,11 +116,16 @@ Rectangle {
         }
     }
 
+    // How much room the title/artist lines leave on the right: the remove "×"
+    // and the source tag are mutually exclusive in practice (no caller sets
+    // both), but sizing for whichever is present keeps text from sliding under it.
+    property int _rightReserve: row.removable ? 52 : (row.tag !== "" ? (tagPill.width + 24) : 16)
+
     Text {
         anchors.left: leading.right
         anchors.leftMargin: 14
         anchors.right: parent.right
-        anchors.rightMargin: row.removable ? 52 : 16
+        anchors.rightMargin: row._rightReserve
         anchors.bottom: parent.verticalCenter
         anchors.bottomMargin: 1
         text: row.rowTitle
@@ -129,13 +138,34 @@ Rectangle {
         anchors.left: leading.right
         anchors.leftMargin: 14
         anchors.right: parent.right
-        anchors.rightMargin: row.removable ? 52 : 16
+        anchors.rightMargin: row._rightReserve
         anchors.top: parent.verticalCenter
         anchors.topMargin: 2
         text: row.rowArtist
         elide: Text.ElideRight
         color: Theme.color.onSurfaceVariantColor
         fontSize: 12
+    }
+
+    // Small source badge (see `tag` above), pinned to the right edge.
+    Rectangle {
+        id: tagPill
+        visible: row.tag !== ""
+        anchors.right: parent.right
+        anchors.rightMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        radius: 8
+        color: Theme.color.surfaceContainerHighest
+        width: tagText.implicitWidth + 16
+        height: 20
+
+        Text {
+            id: tagText
+            anchors.centerIn: parent
+            text: row.tag
+            fontSize: 11
+            color: Theme.color.onSurfaceVariantColor
+        }
     }
 
     // Tap + Material ripple, clipped to the inset pill shape. Idle cost is nil

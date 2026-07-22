@@ -8,6 +8,7 @@ import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
 import dev.t1m3.qplayer.customapi.CustomApiConfig;
+import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
 /**
@@ -38,6 +39,12 @@ public final class AppSettings extends QObject
     /** Route GitHub release (update) downloads through the gh-proxy mirror. Default on
      *  for Simplified-Chinese systems, where github.com downloads are slow/blocked. */
     public final Property<Boolean> mirrorEnabled = new Property<>(Boolean.TRUE);
+    /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
+     *  lyric page (Fonts.setUseSystemFont, Skija FontMgr). Unlike desktop, QML's own
+     *  UI text (buttons/labels) does NOT follow this yet — Android's font loading in
+     *  QmlGLSurfaceView/QPlayerActivity is a separate, independent path not wired up
+     *  here; only the Skija-side lyric-page half is implemented on this platform. */
+    public final Property<Boolean> useSystemFont = new Property<>(Boolean.FALSE);
 
     // Lyric-page typography (Object-typed: QML numeric writes arrive as Long).
     /** Lyric main font size in px (14–40). */
@@ -79,8 +86,11 @@ public final class AppSettings extends QObject
     public final Property<String> customApiArtistPath = new Property<>("");
     public final Property<String> customApiAlbumPath = new Property<>("");
     public final Property<String> customApiCoverPath = new Property<>("");
+    public final Property<String> customApiDurationPath = new Property<>("");
     public final Property<String> customApiUrlUrl = new Property<>("");
     public final Property<String> customApiUrlResultPath = new Property<>("");
+    public final Property<String> customApiLyricUrl = new Property<>("");
+    public final Property<String> customApiLyricResultPath = new Property<>("");
     public final Property<String> customApiHeaders = new Property<>("");
 
     /** Set the system-bar insets (render thread). */
@@ -208,6 +218,15 @@ public final class AppSettings extends QObject
             if (mirrorListener != null) mirrorListener.onMirror(on);
         });
 
+        useSystemFont.set(prefs.getBoolean("useSystemFont", false));
+        Fonts.setUseSystemFont(Boolean.TRUE.equals(useSystemFont.peek()));
+        useSystemFont.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            prefs.edit().putBoolean("useSystemFont", on).apply();
+            Fonts.setUseSystemFont(on);
+        });
+
         lyricFontSize.set(prefs.getInt("lyricFontSize", 28));
         lyricFontWeight.set(prefs.getInt("lyricFontWeight", 2));
         lyricLineSpacing.set(prefs.getInt("lyricLineSpacing", 200));
@@ -281,8 +300,11 @@ public final class AppSettings extends QObject
         customApiArtistPath.set(prefs.getString("customApiArtistPath", ""));
         customApiAlbumPath.set(prefs.getString("customApiAlbumPath", ""));
         customApiCoverPath.set(prefs.getString("customApiCoverPath", ""));
+        customApiDurationPath.set(prefs.getString("customApiDurationPath", ""));
         customApiUrlUrl.set(prefs.getString("customApiUrlUrl", ""));
         customApiUrlResultPath.set(prefs.getString("customApiUrlResultPath", ""));
+        customApiLyricUrl.set(prefs.getString("customApiLyricUrl", ""));
+        customApiLyricResultPath.set(prefs.getString("customApiLyricResultPath", ""));
         customApiHeaders.set(prefs.getString("customApiHeaders", ""));
         rebuildCustomApiConfig();
         customApiEnabled.setInterceptor((p, v) -> {
@@ -325,6 +347,11 @@ public final class AppSettings extends QObject
             prefs.edit().putString("customApiCoverPath", asStr(p.peek())).apply();
             rebuildCustomApiConfig();
         });
+        customApiDurationPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            prefs.edit().putString("customApiDurationPath", asStr(p.peek())).apply();
+            rebuildCustomApiConfig();
+        });
         customApiUrlUrl.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             prefs.edit().putString("customApiUrlUrl", asStr(p.peek())).apply();
@@ -333,6 +360,16 @@ public final class AppSettings extends QObject
         customApiUrlResultPath.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
             prefs.edit().putString("customApiUrlResultPath", asStr(p.peek())).apply();
+            rebuildCustomApiConfig();
+        });
+        customApiLyricUrl.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            prefs.edit().putString("customApiLyricUrl", asStr(p.peek())).apply();
+            rebuildCustomApiConfig();
+        });
+        customApiLyricResultPath.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            prefs.edit().putString("customApiLyricResultPath", asStr(p.peek())).apply();
             rebuildCustomApiConfig();
         });
         customApiHeaders.setInterceptor((p, v) -> {
@@ -356,8 +393,11 @@ public final class AppSettings extends QObject
         cfg.artistPath = asStr(customApiArtistPath.peek());
         cfg.albumPath = asStr(customApiAlbumPath.peek());
         cfg.coverPath = asStr(customApiCoverPath.peek());
+        cfg.durationPath = asStr(customApiDurationPath.peek());
         cfg.urlUrl = asStr(customApiUrlUrl.peek());
         cfg.urlResultPath = asStr(customApiUrlResultPath.peek());
+        cfg.lyricUrl = asStr(customApiLyricUrl.peek());
+        cfg.lyricResultPath = asStr(customApiLyricResultPath.peek());
         cfg.extraHeaders = asStr(customApiHeaders.peek());
         customApiListener.onCustomApiConfig(cfg);
     }

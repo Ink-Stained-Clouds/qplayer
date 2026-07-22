@@ -24,6 +24,10 @@ public final class Fonts {
     public enum Weight { THIN, LIGHT, REGULAR, MEDIUM }
 
     private static final Typeface[] faces = new Typeface[Weight.values().length];
+    // The four bundled OTF weights, kept around (not just consumed once by init())
+    // so setUseSystemFont(false) can restore them without re-reading resources.
+    private static final byte[][] bundledBytes = new byte[Weight.values().length][];
+    private static boolean systemFontActive = false;
     private static Typeface icon;
     private static final Map<Long, Font> cache = new HashMap<>();
     private static final Map<Long, Font> iconCache = new HashMap<>();
@@ -41,12 +45,46 @@ public final class Fonts {
 
     /** Load the four bundled PingFang weights (any may be null → falls back to Regular). */
     public static void init(byte[] thin, byte[] light, byte[] regular, byte[] medium) {
+        bundledBytes[Weight.THIN.ordinal()] = thin;
+        bundledBytes[Weight.LIGHT.ordinal()] = light;
+        bundledBytes[Weight.REGULAR.ordinal()] = regular;
+        bundledBytes[Weight.MEDIUM.ordinal()] = medium;
+        if (!systemFontActive) applyBundledFaces();
+    }
+
+    /** Settings-driven toggle (issue #15's "内置字体 / 系统默认字体" option): switch the
+     *  lyric-page text between the bundled PingFang SC faces and whatever the OS
+     *  reports as its default UI font (via Skija's FontMgr — no file path guessing,
+     *  works the same on every platform). Safe to call before or after {@link #init}.
+     *  Live: the next {@link #get} call (and thus the next lyric repaint) picks up
+     *  the change — no cache invalidation needed elsewhere since callers don't hold
+     *  onto {@link Font} instances across a toggle. */
+    public static void setUseSystemFont(boolean useSystem) {
+        if (systemFontActive == useSystem) return;
+        systemFontActive = useSystem;
+        if (useSystem) {
+            FontMgr mgr = FontMgr.getDefault();
+            // null family name asks Skia for the platform's default face, same
+            // convention already used by matchFamilyStyleCharacter below.
+            Typeface sys = mgr != null ? mgr.matchFamilyStyle(null, FontStyle.NORMAL) : null;
+            if (sys != null) {
+                for (int i = 0; i < faces.length; i++) faces[i] = sys;
+            } else {
+                systemFontActive = false; // no system match — stay on bundled rather than blank
+            }
+        } else {
+            applyBundledFaces();
+        }
+        cache.clear();
+    }
+
+    private static void applyBundledFaces() {
         FontMgr mgr = FontMgr.getDefault();
         if (mgr == null) return;
-        faces[Weight.THIN.ordinal()] = make(mgr, thin);
-        faces[Weight.LIGHT.ordinal()] = make(mgr, light);
-        faces[Weight.REGULAR.ordinal()] = make(mgr, regular);
-        faces[Weight.MEDIUM.ordinal()] = make(mgr, medium);
+        faces[Weight.THIN.ordinal()] = make(mgr, bundledBytes[Weight.THIN.ordinal()]);
+        faces[Weight.LIGHT.ordinal()] = make(mgr, bundledBytes[Weight.LIGHT.ordinal()]);
+        faces[Weight.REGULAR.ordinal()] = make(mgr, bundledBytes[Weight.REGULAR.ordinal()]);
+        faces[Weight.MEDIUM.ordinal()] = make(mgr, bundledBytes[Weight.MEDIUM.ordinal()]);
     }
 
     private static Typeface make(FontMgr mgr, byte[] bytes) {

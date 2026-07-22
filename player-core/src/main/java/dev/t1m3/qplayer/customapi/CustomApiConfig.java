@@ -25,11 +25,22 @@ public final class CustomApiConfig {
     public String albumPath;
     /** Optional dot-path to a cover image URL. */
     public String coverPath;
+    /** Optional dot-path to the track length, in whole seconds (not ms) — matches
+     *  the common convention among the simple JSON music APIs this adapter
+     *  targets. Left unset, the progress bar just shows no duration. */
+    public String durationPath;
 
     /** Playback-url endpoint URL; must contain the literal {@code {id}} placeholder. */
     public String urlUrl;
     /** Dot-path (from the response root) to the resolved playback URL string. */
     public String urlResultPath;
+
+    /** Optional lyric endpoint URL; must contain the literal {@code {id}} placeholder.
+     *  Left unset, custom-API tracks simply play without lyrics. */
+    public String lyricUrl;
+    /** Dot-path (from the response root) to the lyric text (plain LRC — timestamped
+     *  lines like {@code [00:12.34]text}). */
+    public String lyricResultPath;
 
     /** Optional extra request headers, {@code Key: Value} pairs separated by
      *  {@code ;} — a single-line QML TextField can't carry embedded newlines, so

@@ -59,7 +59,7 @@ public final class AotCompile {
         QmlView view = QmlView.withStockTypes(engine).resources(resources);
         view.context("player", controller);
         view.context("settings", settings);
-        DesktopWindow.loadFonts(view, resources);
+        DesktopWindow.loadFonts(view, resources, false); // AOT dump: font choice doesn't matter here
 
         try {
             view.load(qml);

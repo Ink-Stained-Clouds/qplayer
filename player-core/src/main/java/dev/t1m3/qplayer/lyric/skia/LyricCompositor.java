@@ -51,12 +51,14 @@ public final class LyricCompositor {
     // nearly the full height. Kept in sync with LyricOverlay.qml and lyricsScrollable.
     private static final float L_LANDSCAPE_TOP = 24f;
     private static final float L_LANDSCAPE_BOTTOM = 24f;
-    // Carve-out for LyricOverlay's top-right offset-adjust icon button: in landscape
-    // the scrollable band starts only L_LANDSCAPE_TOP below the top, which clips the
-    // bottom of that button (a 40px IconButton anchored ~6px down). Without this the
-    // button's own pointer-down is intermittently swallowed by the tap-to-seek/drag-
-    // to-scroll gesture below instead of reaching the real QML control.
-    private static final float OFFSET_BTN_CORNER_W = 56f;
+    // Carve-out for LyricOverlay's top-right icon button row (offset-adjust +
+    // cover-mode toggle, two 40px IconButtons side by side with ~6px gaps/margins):
+    // in landscape the scrollable band starts only L_LANDSCAPE_TOP below the top,
+    // which clips the bottom of that row. Without this the buttons' own pointer-down
+    // is intermittently swallowed by the tap-to-seek/drag-to-scroll gesture below
+    // instead of reaching the real QML controls. Widened from 56 (one button) to 108
+    // to also cover the cover-mode button added to its left.
+    private static final float OFFSET_BTN_CORNER_W = 108f;
     private static final float OFFSET_BTN_CORNER_H = 52f;
 
     private final LyricRenderer lyricRenderer = new LyricRenderer();
@@ -164,6 +166,12 @@ public final class LyricCompositor {
             float bottomY = surfaceHeightLogical - L_LANDSCAPE_BOTTOM;
             return x >= surfaceWLogical * 0.5f && y >= topY && y <= bottomY;
         }
+        // Portrait's counterpart to the landscape branch's coverOnlyCached check
+        // above: a cover-only track/view has no lyric column here either, and
+        // without this the tap-to-seek gesture claimed the whole band regardless,
+        // swallowing taps on LyricOverlay.qml's centred cover (and the pointer-down
+        // was read as a seek, moving playback position) before QML ever saw them.
+        if (coverOnlyCached) return false;
         float topY = lyricTopY(topInset);
         float bottomY = surfaceHeightLogical - L_TRANSPORT_H;
         return y >= topY && y <= bottomY;
@@ -245,8 +253,19 @@ public final class LyricCompositor {
         // is coarse (~5 Hz), so extrapolate from the last change with wall-clock time;
         // resync when the backend jumps (seek) or play/pause toggles.
         long durMs = controller.durationMs.peek();
-        long raw = controller.position();
         boolean playing = Boolean.TRUE.equals(controller.playing.peek());
+        // While paused, backend.position() reads whatever the audio backend's last
+        // actual playback was — 0 if it has never been told to play anything yet,
+        // e.g. right after a session restore (positionMs.set() ran, but playAt()
+        // itself only fires on the user's first tap). Fall back to the UI's
+        // positionMs Property there instead, which session-restore does set correctly.
+        long raw;
+        if (playing) {
+            raw = controller.position();
+        } else {
+            Long posProp = controller.positionMs.peek();
+            raw = posProp != null ? posProp : 0L;
+        }
         long nowN = System.nanoTime();
         if (raw != lyRawLast || playing != lyPlayingLast) {
             lyRawLast = raw;
@@ -275,7 +294,10 @@ public final class LyricCompositor {
         // (no lyrics / instrumental) drops the side column in landscape so the cover
         // can center. Kept in sync with LyricOverlay.qml and lyricsScrollable.
         boolean landscape = w > h;
-        boolean coverOnly = Boolean.TRUE.equals(controller.lyricsCoverOnly.peek());
+        // OR'd with the user's manual lyrics/cover toggle (LyricOverlay.qml's cover
+        // button / tap-cover-to-return) — see PlayerController.coverModeManual.
+        boolean coverOnly = Boolean.TRUE.equals(controller.lyricsCoverOnly.peek())
+                || Boolean.TRUE.equals(controller.coverModeManual.peek());
         coverOnlyCached = coverOnly;
         float pad = 28f;
         float colLeft, colTopY, colW, colH;
@@ -343,7 +365,12 @@ public final class LyricCompositor {
                 lyColH = colH;
             }
             Rect colRect = lyColRect;
-            long pos = controller.position() - LyricConfig.instance.offsetMs.getValue();
+            // Reuse predMs (computed above for the QML progress bar), NOT
+            // controller.position() directly — that's raw backend.position(), which
+            // is 0 while paused/not-yet-resumed (e.g. right after a session restore)
+            // even though positionMs correctly holds the restored position. Using it
+            // here left the lyric column always rendering from the very start.
+            long pos = predMs - LyricConfig.instance.offsetMs.getValue();
             // Alpha-composite the whole column at lyricShow, and zoom it 0.95 -> 1 about
             // its own centre — matching the QML cover's zoom on the opposite side.
             int alpha = Math.round(Math.max(0f, Math.min(1f, lyricShow)) * 255f);

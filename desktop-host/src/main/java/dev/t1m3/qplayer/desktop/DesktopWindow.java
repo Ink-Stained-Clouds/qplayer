@@ -175,18 +175,48 @@ public final class DesktopWindow {
         v.setClipboard(new GlfwClipboard(this));
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);
-        loadFonts(v, resources);
+        boolean useSystemFont = settings != null && Boolean.TRUE.equals(settings.useSystemFont.peek());
+        loadFonts(v, resources, useSystemFont);
         v.load(qmlSource);
         view = v;
         return v;
     }
 
-    public static void loadFonts(QmlView v, ResourceLoader resources) {
-        byte[] reg = resources.load("fonts/PingFangSC-Regular.otf");
-        byte[] med = resources.load("fonts/PingFangSC-Medium.otf");
+    // Windows system UI font candidates for the "系统默认字体" setting (QML's own
+    // text, via QmlView.uiTypefaces — that API only takes raw font-file bytes, no
+    // Typeface-object overload, so unlike Fonts.setUseSystemFont (Skija FontMgr,
+    // works on every platform) this part is best-effort and Windows-only: reads an
+    // actual font file off disk, falling back to the bundled OTF on any failure
+    // (missing file, unreadable, wrong platform). Microsoft YaHei ships on every
+    // modern Windows install regardless of display language.
+    private static final String[] WIN_REGULAR_FONT_CANDIDATES = {"msyh.ttc", "simsun.ttc", "simhei.ttf"};
+    private static final String[] WIN_BOLD_FONT_CANDIDATES = {"msyhbd.ttc", "simhei.ttf"};
+
+    public static void loadFonts(QmlView v, ResourceLoader resources, boolean useSystemFont) {
+        byte[] reg = null, med = null;
+        if (useSystemFont) {
+            reg = readWindowsSystemFont(WIN_REGULAR_FONT_CANDIDATES);
+            med = readWindowsSystemFont(WIN_BOLD_FONT_CANDIDATES);
+        }
+        if (reg == null) reg = resources.load("fonts/PingFangSC-Regular.otf");
+        if (med == null) med = resources.load("fonts/PingFangSC-Medium.otf");
         if (reg != null || med != null) v.uiTypefaces(reg, med);
         byte[] iconFont = resources.load("fonts/MaterialSymbolsRounded.ttf");
         if (iconFont != null) v.iconTypeface(iconFont);
+    }
+
+    private static byte[] readWindowsSystemFont(String[] fileNameCandidates) {
+        String winDir = System.getenv("WINDIR");
+        if (winDir == null || winDir.isEmpty()) return null; // not Windows — skip entirely
+        for (String name : fileNameCandidates) {
+            try {
+                java.io.File f = new java.io.File(winDir + "\\Fonts\\" + name);
+                if (f.isFile()) return java.nio.file.Files.readAllBytes(f.toPath());
+            } catch (Throwable ignored) {
+                // Fall through to the next candidate / the bundled-font fallback above.
+            }
+        }
+        return null;
     }
 
     boolean markViewLive() {

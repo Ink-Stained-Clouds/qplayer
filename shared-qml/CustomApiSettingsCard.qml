@@ -69,6 +69,26 @@ ColumnLayout {
                 }
             }
 
+            // Collapsed (animated) while the source is disabled — nothing below
+            // matters until it's turned on. Plain Item wrapper (not a Layout) so
+            // its height can be a normal animatable property; the inner
+            // ColumnLayout sizes itself to parent.width directly since
+            // Layout.fillWidth only does anything on a Layout's immediate child.
+            Item {
+                id: advancedFieldsWrapper
+                Layout.fillWidth: true
+                Layout.preferredHeight: height
+                clip: true
+                height: settings.customApiEnabled ? advancedFields.implicitHeight : 0
+                opacity: settings.customApiEnabled ? 1 : 0
+                Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+
+            ColumnLayout {
+                id: advancedFields
+                width: parent.width
+                spacing: 12
+
             Text {
                 Layout.fillWidth: true
                 text: "URL 模板用 {keyword}/{id} 占位符；字段填 JSON 路径，如 data.list、name、artists[].name（数组转字符串用 / 拼接多个值）"
@@ -180,6 +200,20 @@ ColumnLayout {
                 Button { type: "tonal"; text: "应用"; onClicked: settings.customApiCoverPath = customApiCoverPathField.text }
             }
 
+            Text { text: "时长字段路径（可选，单位：秒）"; color: Theme.color.onSurfaceColor; font.pixelSize: 13 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                TextField {
+                    id: customApiDurationPathField
+                    Layout.fillWidth: true
+                    type: "outlined"
+                    label: "如 duration"
+                    text: settings.customApiDurationPath
+                    onAccepted: settings.customApiDurationPath = text
+                }
+                Button { type: "tonal"; text: "应用"; onClicked: settings.customApiDurationPath = customApiDurationPathField.text }
+            }
+
             Text { text: "播放地址 URL 模板"; color: Theme.color.onSurfaceColor; font.pixelSize: 13 }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
@@ -208,6 +242,34 @@ ColumnLayout {
                 Button { type: "tonal"; text: "应用"; onClicked: settings.customApiUrlResultPath = customApiUrlResultPathField.text }
             }
 
+            Text { text: "歌词接口 URL 模板（可选）"; color: Theme.color.onSurfaceColor; font.pixelSize: 13 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                TextField {
+                    id: customApiLyricUrlField
+                    Layout.fillWidth: true
+                    type: "outlined"
+                    label: "https://host/lyric?id={id}"
+                    text: settings.customApiLyricUrl
+                    onAccepted: settings.customApiLyricUrl = text
+                }
+                Button { type: "tonal"; text: "应用"; onClicked: settings.customApiLyricUrl = customApiLyricUrlField.text }
+            }
+
+            Text { text: "歌词结果路径（可选，纯 LRC 文本）"; color: Theme.color.onSurfaceColor; font.pixelSize: 13 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                TextField {
+                    id: customApiLyricResultPathField
+                    Layout.fillWidth: true
+                    type: "outlined"
+                    label: "如 data.lyric"
+                    text: settings.customApiLyricResultPath
+                    onAccepted: settings.customApiLyricResultPath = text
+                }
+                Button { type: "tonal"; text: "应用"; onClicked: settings.customApiLyricResultPath = customApiLyricResultPathField.text }
+            }
+
             Text { text: "请求头（可选，多个用 ; 分隔）"; color: Theme.color.onSurfaceColor; font.pixelSize: 13 }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
@@ -221,6 +283,8 @@ ColumnLayout {
                 }
                 Button { type: "tonal"; text: "应用"; onClicked: settings.customApiHeaders = customApiHeadersField.text }
             }
+            } // advancedFields (ColumnLayout)
+            } // advancedFieldsWrapper (Item)
         }
     }
 }
