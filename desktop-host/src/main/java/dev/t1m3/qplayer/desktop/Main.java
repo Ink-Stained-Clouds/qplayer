@@ -194,7 +194,17 @@ public final class Main {
         // Must be wired after window.init() so postRenderTask() is available.
         Object rawFolder = settings.musicFolder.peek();
         String initialFolder = rawFolder instanceof String ? (String) rawFolder : "";
-        settings.setMusicFolderListener(folder -> startLibraryScan(controller, reader, window, folder));
+        // Watches the folder tree so adding/removing files is picked up on its own —
+        // without this, a rescan only ever ran when the user re-touched the Settings
+        // folder field or restarted the app. Each rescan the watcher triggers reuses
+        // LibraryScanner's per-file cache, so it stays cheap even on a large library.
+        LibraryWatcher watcher = new LibraryWatcher(
+                () -> startLibraryScan(controller, reader, window, settings.musicFolder.peek() instanceof String
+                        ? (String) settings.musicFolder.peek() : ""));
+        settings.setMusicFolderListener(folder -> {
+            startLibraryScan(controller, reader, window, folder);
+            watcher.start(folder);
+        });
 
         // Cache root (local-library covers/lyrics + netease audio/image/lyric cache).
         // controller.diskCache was already constructed against the AppDirs default
@@ -217,6 +227,7 @@ public final class Main {
         // Initial content + a background scan of the local music folder.
         controller.loadHome();
         startLibraryScan(controller, reader, window, initialFolder);
+        watcher.start(initialFolder);
 
         // Tray init on a daemon thread so a GTK/AppIndicator hang can't freeze the app.
         // (-Dqplayer.tray=false disables it, e.g. for headless rendering checks.)
@@ -227,6 +238,7 @@ public final class Main {
 
         window.runEventLoop(); // blocks on the main thread until quit
 
+        watcher.stop();
         tray.shutdown();
         try {
             controller.shutdown();
