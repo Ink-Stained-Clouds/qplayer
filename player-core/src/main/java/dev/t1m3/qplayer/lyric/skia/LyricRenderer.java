@@ -2003,7 +2003,19 @@ public class LyricRenderer {
                     k = 1f - (1f - t) * (1f - t) * (1f - t);
                 }
                 liftBuf[s] = enableLift ? -LIFT_PEAK_PX * k * activeK : 0f;
-                float ga = (enableLift && glowOn) ? activeK * k * GLOW_ALPHA : 0f;
+                // Per-syllable timing sources ramp glow in with that syllable's own
+                // lift progress k; plain LRC has no real per-character progress to
+                // derive from, so the whole line just glows uniformly with the
+                // line's own activeK instead of going dark (glowOn users always get
+                // glow on the active line, not just per-syllable sources).
+                float ga;
+                if (!glowOn) {
+                    ga = 0f;
+                } else if (enableLift) {
+                    ga = activeK * k * GLOW_ALPHA;
+                } else {
+                    ga = activeK * GLOW_ALPHA;
+                }
                 glowAlphaBuf[s] = ga;
                 if (ga > 0.01f) anyGlow = true;
             }
