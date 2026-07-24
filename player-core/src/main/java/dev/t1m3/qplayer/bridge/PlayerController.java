@@ -2190,15 +2190,20 @@ public final class PlayerController {
                 // DiskCache alone only knows bare ids, no title/artist to show, so
                 // this is the only source offline search has to work with.
                 List<NeteaseSong> offline = songMetaIndex.search(key, 30);
-                if (!offline.isEmpty() && key.equals(currentSearchKey)) {
-                    post(() -> {
-                        if (!key.equals(currentSearchKey)) return;
-                        searchResults.set(offline);
-                        resultCount.set(offline.size());
-                        rebuildSearchRows();
-                        toast.set("当前无网络，显示本地缓存结果");
-                    });
-                }
+                if (!key.equals(currentSearchKey)) return;
+                post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    searchResults.set(offline);
+                    resultCount.set(offline.size());
+                    rebuildSearchRows();
+                    // Give feedback either way -- an empty offline list used to
+                    // leave the page blank with zero explanation (looked stuck,
+                    // not "no matches"); this covers both "no network + found
+                    // some cached matches" and "no network + nothing matched".
+                    toast.set(offline.isEmpty()
+                        ? "当前无网络，且没有找到本地缓存结果"
+                        : "当前无网络，显示本地缓存结果");
+                });
             }
         });
     }

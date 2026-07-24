@@ -36,6 +36,7 @@ Item {
                 onAccepted: {
                     if (query.text.length > 0) {
                         player.search(query.text)
+                        player.searchLocal(query.text)
                         player.searchCustom(query.text)
                         player.addSearchHistory(query.text)
                     }
@@ -47,6 +48,7 @@ Item {
                 onClicked: {
                     if (query.text.length > 0) {
                         player.search(query.text)
+                        player.searchLocal(query.text)
                         player.searchCustom(query.text)
                         player.addSearchHistory(query.text)
                     }
@@ -173,6 +175,7 @@ Item {
                                         if (kw.length > 0) {
                                             query.text = kw
                                             player.search(kw)
+                                            player.searchLocal(kw)
                                             player.searchCustom(kw)
                                             player.addSearchHistory(kw)
                                         }
@@ -261,6 +264,7 @@ Item {
                                 onClicked: {
                                     query.text = modelData
                                     player.search(modelData)
+                                    player.searchLocal(modelData)
                                     player.searchCustom(modelData)
                                     player.addSearchHistory(modelData)
                                 }
