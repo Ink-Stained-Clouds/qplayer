@@ -159,6 +159,22 @@ public final class Fonts {
                     if (t != null && covers(t, '中')) { sys = t; break; }
                 }
             }
+            // Last resort, same as korean()/thai()/japanese() below: ask the font
+            // manager for ANY installed font that covers this codepoint, instead of
+            // guessing family names. Some OEM Android skins (e.g. HarmonyOS) don't
+            // expose their CJK system font under any of the names above, so the
+            // named-candidate loop never matches even though the device clearly has
+            // a working CJK font — matchFamilyStyleCharacter finds it regardless of
+            // what it's actually called.
+            if (sys == null && mgr != null) {
+                try {
+                    Typeface t = mgr.matchFamilyStyleCharacter(
+                        null, FontStyle.NORMAL, new String[]{"zh", "zh-CN"}, '中');
+                    if (t != null && covers(t, '中')) sys = t;
+                } catch (Throwable ignored) {
+                    // fall through
+                }
+            }
             if (sys != null) {
                 for (int i = 0; i < faces.length; i++) faces[i] = sys;
                 cache.clear();
