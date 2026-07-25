@@ -1416,8 +1416,15 @@ public final class PlayerController {
             }
         }
         post(() -> { applyCover(null); coverPath.set(""); });
-        final String url = t.coverUrl;
-        if (url == null || url.isEmpty()) return;
+        if (t.coverUrl == null || t.coverUrl.isEmpty()) return;
+        // The original (netease covers are commonly 1000-3000px+) was being fetched
+        // uncapped for the fluid lyric backdrop -- on a slow connection that routinely
+        // missed the fixed download timeout below while the UI's own 512px thumbnail
+        // (see the coverUrl Property, thumbUrl(t.coverUrl, "512")) came in fine, so the
+        // lyric page sat on its gray placeholder even though a perfectly good cover was
+        // already showing elsewhere. A blurred full-screen backdrop doesn't need more
+        // detail than this anyway.
+        final String url = thumbUrl(t.coverUrl, "1024");
 
         // Check disk cache first.
         String cachedImg = diskCache.getImage(url);
@@ -1493,8 +1500,9 @@ public final class PlayerController {
             byte[] d = readBytesFromFile(local);
             if (d != null && d.length > 0) return d;
         }
-        String url = t.coverUrl;
-        if (url == null || url.isEmpty()) return null;
+        if (t.coverUrl == null || t.coverUrl.isEmpty()) return null;
+        // Same 1024px cap as updateCover() -- see its comment for why.
+        String url = thumbUrl(t.coverUrl, "1024");
         String cachedImg = diskCache.getImage(url);
         if (cachedImg != null) {
             byte[] d = readBytesFromFile(cachedImg);
