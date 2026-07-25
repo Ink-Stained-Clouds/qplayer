@@ -36,6 +36,10 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<Boolean> resolvedDark = new Property<>(Boolean.FALSE);
     public final Property<Boolean> unblockEnabled = new Property<>(Boolean.TRUE);
     public final Property<Boolean> mirrorEnabled = new Property<>(Boolean.TRUE);
+    /** Fade the volume in at the start of a track and out approaching its
+     *  natural end, instead of a hard cut. Off by default — a playback
+     *  behavior change, opt-in rather than surprising existing users. */
+    public final Property<Boolean> fadeEnabled = new Property<>(Boolean.FALSE);
     /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
      *  lyric page (Fonts.setUseSystemFont, Skija FontMgr — works on every platform);
      *  QML's own UI text (buttons/labels/settings) only re-reads this at the next
@@ -109,6 +113,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public interface MonetListener { void onMonet(boolean enabled); }
     public interface UnblockListener { void onUnblock(boolean enabled); }
     public interface MirrorListener { void onMirror(boolean enabled); }
+    public interface FadeListener { void onFade(boolean enabled); }
     public interface CacheSizeListener { void onCacheMaxSizeMB(long mb); }
     public interface MusicFolderListener { void onMusicFolder(String path); }
     public interface CacheFolderListener { void onCacheFolder(String path); }
@@ -123,6 +128,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     private MonetListener monetListener;
     private UnblockListener unblockListener;
     private MirrorListener mirrorListener;
+    private FadeListener fadeListener;
     private CacheSizeListener cacheSizeListener;
     private MusicFolderListener musicFolderListener;
     private CacheFolderListener cacheFolderListener;
@@ -132,6 +138,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public void setMonetListener(MonetListener l) { this.monetListener = l; }
     public void setUnblockListener(UnblockListener l) { this.unblockListener = l; }
     public void setMirrorListener(MirrorListener l) { this.mirrorListener = l; }
+    public void setFadeListener(FadeListener l) { this.fadeListener = l; }
     public void setCacheSizeListener(CacheSizeListener l) { this.cacheSizeListener = l; }
     public void setMusicFolderListener(MusicFolderListener l) { this.musicFolderListener = l; }
     public void setCacheFolderListener(CacheFolderListener l) { this.cacheFolderListener = l; }
@@ -156,10 +163,12 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         monetEnabled.set(getBool("monet", true));
         unblockEnabled.set(getBool("unblock", true));
         mirrorEnabled.set(getBool("mirror", isSimplifiedChinese()));
+        fadeEnabled.set(getBool("fade", false));
         recompute();
         if (monetListener != null) monetListener.onMonet(Boolean.TRUE.equals(monetEnabled.peek()));
         if (unblockListener != null) unblockListener.onUnblock(Boolean.TRUE.equals(unblockEnabled.peek()));
         if (mirrorListener != null) mirrorListener.onMirror(Boolean.TRUE.equals(mirrorEnabled.peek()));
+        if (fadeListener != null) fadeListener.onFade(Boolean.TRUE.equals(fadeEnabled.peek()));
 
         darkMode.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -183,6 +192,12 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             boolean on = Boolean.TRUE.equals(p.peek());
             put("mirror", on);
             if (mirrorListener != null) mirrorListener.onMirror(on);
+        });
+        fadeEnabled.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            put("fade", on);
+            if (fadeListener != null) fadeListener.onFade(on);
         });
 
         useSystemFont.set(getBool("useSystemFont", false));

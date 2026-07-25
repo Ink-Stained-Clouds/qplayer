@@ -39,6 +39,10 @@ public final class AppSettings extends QObject
     /** Route GitHub release (update) downloads through the gh-proxy mirror. Default on
      *  for Simplified-Chinese systems, where github.com downloads are slow/blocked. */
     public final Property<Boolean> mirrorEnabled = new Property<>(Boolean.TRUE);
+    /** Fade the volume in at the start of a track and out approaching its
+     *  natural end, instead of a hard cut. Off by default — a playback
+     *  behavior change, opt-in rather than surprising existing users. */
+    public final Property<Boolean> fadeEnabled = new Property<>(Boolean.FALSE);
     /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
      *  lyric page (Fonts.setUseSystemFont, Skija FontMgr). Unlike desktop, QML's own
      *  UI text (buttons/labels) does NOT follow this yet — Android's font loading in
@@ -137,6 +141,11 @@ public final class AppSettings extends QObject
         void onMirror(boolean enabled);
     }
 
+    /** Notified when the volume fade in/out toggle changes. */
+    public interface FadeListener {
+        void onFade(boolean enabled);
+    }
+
     /** Notified when max cache size changes. */
     public interface CacheSizeListener {
         void onCacheMaxSizeMB(long mb);
@@ -153,6 +162,7 @@ public final class AppSettings extends QObject
     private MonetListener monetListener;
     private UnblockListener unblockListener;
     private MirrorListener mirrorListener;
+    private FadeListener fadeListener;
     private CacheSizeListener cacheSizeListener;
     private CustomApiListener customApiListener;
 
@@ -170,6 +180,10 @@ public final class AppSettings extends QObject
 
     public void setMirrorListener(MirrorListener l) {
         this.mirrorListener = l;
+    }
+
+    public void setFadeListener(FadeListener l) {
+        this.fadeListener = l;
     }
 
     public void setCacheSizeListener(CacheSizeListener l) {
@@ -193,10 +207,12 @@ public final class AppSettings extends QObject
         monetEnabled.set(prefs.getBoolean("monet", true));
         unblockEnabled.set(prefs.getBoolean("unblock", true));
         mirrorEnabled.set(prefs.getBoolean("mirror", isSimplifiedChinese()));
+        fadeEnabled.set(prefs.getBoolean("fade", false));
         recompute();
         if (monetListener != null) monetListener.onMonet(Boolean.TRUE.equals(monetEnabled.peek()));
         if (unblockListener != null) unblockListener.onUnblock(Boolean.TRUE.equals(unblockEnabled.peek()));
         if (mirrorListener != null) mirrorListener.onMirror(Boolean.TRUE.equals(mirrorEnabled.peek()));
+        if (fadeListener != null) fadeListener.onFade(Boolean.TRUE.equals(fadeEnabled.peek()));
         darkMode.setInterceptor((p, v) -> {
             // Normalize to Integer (QML hands us a Long) so reads compare as ints.
             p.setBypassInterceptor(asInt(v));
@@ -220,6 +236,12 @@ public final class AppSettings extends QObject
             boolean on = Boolean.TRUE.equals(p.peek());
             prefs.edit().putBoolean("mirror", on).apply();
             if (mirrorListener != null) mirrorListener.onMirror(on);
+        });
+        fadeEnabled.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            prefs.edit().putBoolean("fade", on).apply();
+            if (fadeListener != null) fadeListener.onFade(on);
         });
 
         useSystemFont.set(prefs.getBoolean("useSystemFont", false));

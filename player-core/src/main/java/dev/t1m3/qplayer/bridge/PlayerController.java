@@ -221,6 +221,26 @@ public final class PlayerController {
     private volatile int pendingResumeIndex = -1;
     private volatile String playLevel = "exhigh";
     private volatile boolean unblockEnabled = true;
+    // --- Volume fade in/out (Settings toggle) ------------------------------
+    // Drives backend.setVolume() directly, never the public volume Property/
+    // setVolume(float) (those are the user's own slider — a fade must not
+    // overwrite what it displays). Ticked from pump(), which already runs
+    // every frame on both platforms, so no separate timer is needed.
+    private volatile boolean fadeEnabled = false;
+    private static final long FADE_IN_MS = 700;
+    private static final long FADE_OUT_MS = 900;
+    // 0 = no fade in flight. A real epoch ms timestamp otherwise; pump() reads
+    // wall-clock elapsed against it each tick, so a fade started just before a
+    // pause naturally "catches up" to done (gain 0) rather than resuming
+    // stale — see setFadeEnabled/toggle().
+    private volatile long fadeStartAt = 0L;
+    private volatile long fadeDurationMs = FADE_IN_MS;
+    private volatile float fadeFromGain = 1f;
+    private volatile float fadeToGain = 1f;
+    // Set once a fade-out has been STARTED for the CURRENT track, so pump()'s
+    // near-the-end check doesn't keep re-triggering it every tick for the
+    // remainder of playback.
+    private volatile boolean fadeOutDoneForTrack = false;
     private volatile long uid;
     // neteaseId of the track we last re-resolved after a playback error; cleared
     // when a track actually starts. Stops a persistently-failing track from looping
@@ -390,7 +410,12 @@ public final class PlayerController {
         backend.setOnComplete(() -> onMain(this::autoAdvance));
         // Re-baseline the media session's position once audio actually starts (the
         // backend prepares asynchronously, so the position at play() time is stale).
-        backend.setOnStarted(() -> { errorRetryId = -1; post(() -> loading.set(false)); notifyPlayback(); });
+        backend.setOnStarted(() -> {
+            errorRetryId = -1;
+            post(() -> loading.set(false));
+            notifyPlayback();
+            startFadeIn();
+        });
         // Audio-focus driven pause/resume (phone call, another player): keep the
         // intended-play state, the UI, and the media session in sync.
         backend.setOnPaused(() -> {
@@ -441,6 +466,50 @@ public final class PlayerController {
         }
     }
 
+    // --- Volume fade in/out -------------------------------------------------
+
+    /** Start a fade-in from silence to the user's set volume. Called from the
+     *  backend's onStarted, i.e. once playback of the (possibly async-resolved)
+     *  source has actually begun -- not from playAt() itself, so the ramp's
+     *  full duration is real audible time regardless of how long resolving
+     *  the source took. */
+    private void startFadeIn() {
+        fadeOutDoneForTrack = false;
+        if (!fadeEnabled) { backend.setVolume(volume.peek()); return; }
+        fadeFromGain = 0f;
+        fadeToGain = 1f;
+        fadeDurationMs = FADE_IN_MS;
+        fadeStartAt = System.currentTimeMillis();
+    }
+
+    /** Advance any in-flight ramp, or notice the current track is within
+     *  {@link #FADE_OUT_MS} of its natural end and start fading out so it
+     *  never hard-cuts into the next track's silence-then-fade-in. Ticked
+     *  from {@link #pump()}, which already runs every frame on both
+     *  platforms -- no separate timer needed. */
+    private void tickFade(long now) {
+        if (!fadeEnabled) return;
+        if (fadeStartAt != 0L) {
+            long elapsed = now - fadeStartAt;
+            float t = elapsed >= fadeDurationMs ? 1f : (float) elapsed / fadeDurationMs;
+            float g = fadeFromGain + (fadeToGain - fadeFromGain) * t;
+            backend.setVolume(volume.peek() * g);
+            if (t >= 1f) fadeStartAt = 0L;
+            return;
+        }
+        if (fadeOutDoneForTrack || !backend.isPlaying()) return;
+        long dur = backend.duration();
+        if (dur <= 0) return;
+        long remaining = dur - backend.position();
+        if (remaining >= 0 && remaining <= FADE_OUT_MS) {
+            fadeFromGain = 1f;
+            fadeToGain = 0f;
+            fadeDurationMs = Math.max(1L, remaining);
+            fadeStartAt = now;
+            fadeOutDoneForTrack = true;
+        }
+    }
+
     // --- Frame pump (render thread) --------------------------------------
 
     /** Drain queued UI mutations, refresh the play head + log. Call once per frame. */
@@ -454,6 +523,7 @@ public final class PlayerController {
             }
         }
         long now = System.currentTimeMillis();
+        tickFade(now);
         if (now - lastPositionPush >= 200L) {
             lastPositionPush = now;
             if (backend.isPlaying()) {
@@ -1544,6 +1614,12 @@ public final class PlayerController {
                     playAt(playIndex);
                     return;
                 }
+                // A fade left in flight across the pause (e.g. paused during the
+                // last second's fade-out) would otherwise resume by snapping
+                // straight to wherever wall-clock time since fadeStartAt now
+                // maps it to -- reset so resume is always at the real volume.
+                fadeStartAt = 0L;
+                backend.setVolume(volume.peek());
                 backend.resume();
                 playingIntent = true;
                 post(() -> playing.set(true));
@@ -1632,6 +1708,17 @@ public final class PlayerController {
      *  the unblock sources (gdstudio / bodian / kuwo) before being skipped. */
     public void setUnblockEnabled(boolean enabled) {
         this.unblockEnabled = enabled;
+    }
+
+    /** Settings toggle: fade the volume in at the start of a track and out
+     *  approaching its natural end, instead of a hard cut. Turning it off
+     *  mid-fade snaps straight back to the user's actual volume setting. */
+    public void setFadeEnabled(boolean enabled) {
+        this.fadeEnabled = enabled;
+        if (!enabled) {
+            fadeStartAt = 0L;
+            backend.setVolume(volume.peek());
+        }
     }
 
     /** Push the current custom-API-source configuration in from Settings; called

@@ -142,6 +142,7 @@ public final class Main {
         settings.setMonetListener(controller::setMonetEnabled);
         settings.setUnblockListener(controller::setUnblockEnabled);
         settings.setMirrorListener(controller::setUpdateMirror);
+        settings.setFadeListener(controller::setFadeEnabled);
         settings.setCacheSizeListener(controller::setCacheMaxSizeMB);
         settings.setCustomApiListener(controller::setCustomApiConfig);
         settings.load();

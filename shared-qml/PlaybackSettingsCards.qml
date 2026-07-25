@@ -106,4 +106,48 @@ ColumnLayout {
             }
         }
     }
+
+    // Volume fade in/out: ramps up at the start of a track and down
+    // approaching its natural end instead of a hard cut.
+    Rectangle {
+        Layout.fillWidth: true
+        Layout.leftMargin: 12
+        Layout.rightMargin: 12
+        radius: 18
+        color: Theme.color.surfaceContainerHighest
+        implicitHeight: fadeCol.implicitHeight + 32
+
+        ColumnLayout {
+            id: fadeCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 16
+            spacing: 4
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                Text {
+                    Layout.fillWidth: true
+                    text: "淡入淡出"
+                    color: Theme.color.onSurfaceColor
+                    font.family: Theme.typography.bodyLarge.family
+                    font.pixelSize: Theme.typography.bodyLarge.size
+                }
+                Switch {
+                    checked: settings.fadeEnabled
+                    onClicked: settings.fadeEnabled = checked
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "切歌/播放结束时音量渐变，而不是直接切断"
+                color: Theme.color.onSurfaceVariantColor
+                font.family: Theme.typography.bodySmall.family
+                font.pixelSize: Theme.typography.bodySmall.size
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
 }
