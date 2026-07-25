@@ -230,9 +230,7 @@ public final class PlayerController {
     private static final long FADE_IN_MS = 700;
     private static final long FADE_OUT_MS = 900;
     // 0 = no fade in flight. A real epoch ms timestamp otherwise; pump() reads
-    // wall-clock elapsed against it each tick, so a fade started just before a
-    // pause naturally "catches up" to done (gain 0) rather than resuming
-    // stale — see setFadeEnabled/toggle().
+    // wall-clock elapsed against it each tick.
     private volatile long fadeStartAt = 0L;
     private volatile long fadeDurationMs = FADE_IN_MS;
     private volatile float fadeFromGain = 1f;
@@ -241,6 +239,11 @@ public final class PlayerController {
     // near-the-end check doesn't keep re-triggering it every tick for the
     // remainder of playback.
     private volatile boolean fadeOutDoneForTrack = false;
+    // Run once the in-flight ramp reaches its target (tickFade, t>=1) then
+    // cleared. Used to defer the actual backend.pause() until a manual
+    // pause's fade-out finishes instead of hard-cutting — see toggle().
+    // null = nothing pending.
+    private volatile Runnable fadeCompleteAction;
     private volatile long uid;
     // neteaseId of the track we last re-resolved after a playback error; cleared
     // when a track actually starts. Stops a persistently-failing track from looping
@@ -475,6 +478,7 @@ public final class PlayerController {
      *  the source took. */
     private void startFadeIn() {
         fadeOutDoneForTrack = false;
+        fadeCompleteAction = null;
         if (!fadeEnabled) { backend.setVolume(volume.peek()); return; }
         fadeFromGain = 0f;
         fadeToGain = 1f;
@@ -482,11 +486,35 @@ public final class PlayerController {
         fadeStartAt = System.currentTimeMillis();
     }
 
-    /** Advance any in-flight ramp, or notice the current track is within
-     *  {@link #FADE_OUT_MS} of its natural end and start fading out so it
-     *  never hard-cuts into the next track's silence-then-fade-in. Ticked
-     *  from {@link #pump()}, which already runs every frame on both
-     *  platforms -- no separate timer needed. */
+    /** Ramp toward silence over {@code durationMs} starting from wherever the
+     *  gain currently sits (not always 1 -- e.g. pausing again while an
+     *  earlier pause's fade-out is still in flight), then run {@code
+     *  onComplete} once (e.g. the actual backend.pause() a manual pause
+     *  deferred). Overwrites any in-flight ramp. */
+    private void startFadeOut(long durationMs, Runnable onComplete) {
+        fadeFromGain = currentFadeGain();
+        fadeToGain = 0f;
+        fadeDurationMs = Math.max(1L, durationMs);
+        fadeStartAt = System.currentTimeMillis();
+        fadeCompleteAction = onComplete;
+    }
+
+    /** The gain the in-flight ramp is at right now (or 1 -- settled/no ramp,
+     *  matching the always-full-volume-once-a-fade-in-completes invariant
+     *  everything else here relies on). */
+    private float currentFadeGain() {
+        if (fadeStartAt == 0L) return 1f;
+        long elapsed = System.currentTimeMillis() - fadeStartAt;
+        float t = elapsed >= fadeDurationMs ? 1f : (float) elapsed / fadeDurationMs;
+        return fadeFromGain + (fadeToGain - fadeFromGain) * t;
+    }
+
+    /** Advance any in-flight ramp (running its completion action, if any, once
+     *  it reaches target), or notice the current track is within {@link
+     *  #FADE_OUT_MS} of its natural end and start fading out so it never
+     *  hard-cuts into the next track's silence-then-fade-in. Ticked from
+     *  {@link #pump()}, which already runs every frame on both platforms --
+     *  no separate timer needed. */
     private void tickFade(long now) {
         if (!fadeEnabled) return;
         if (fadeStartAt != 0L) {
@@ -494,7 +522,12 @@ public final class PlayerController {
             float t = elapsed >= fadeDurationMs ? 1f : (float) elapsed / fadeDurationMs;
             float g = fadeFromGain + (fadeToGain - fadeFromGain) * t;
             backend.setVolume(volume.peek() * g);
-            if (t >= 1f) fadeStartAt = 0L;
+            if (t >= 1f) {
+                fadeStartAt = 0L;
+                Runnable action = fadeCompleteAction;
+                fadeCompleteAction = null;
+                if (action != null) action.run();
+            }
             return;
         }
         if (fadeOutDoneForTrack || !backend.isPlaying()) return;
@@ -1605,22 +1638,55 @@ public final class PlayerController {
                 return;
             }
             if (playingIntent) {
-                backend.pause();
                 playingIntent = false;
                 post(() -> playing.set(false));
+                if (fadeEnabled) {
+                    // UI reflects paused immediately; the actual backend.pause()
+                    // is deferred until the fade-out reaches silence so it's a
+                    // ramp-down, not a hard cut. If the user hits resume again
+                    // before that fires, playingIntent is already back to true
+                    // by then and this deferred call is skipped entirely — the
+                    // resume branch below picks it up as "never really paused".
+                    startFadeOut(FADE_OUT_MS, () -> { if (!playingIntent) backend.pause(); });
+                } else {
+                    backend.pause();
+                }
             } else {
                 if (needsReplay && playIndex >= 0) {
                     needsReplay = false;
                     playAt(playIndex);
                     return;
                 }
-                // A fade left in flight across the pause (e.g. paused during the
-                // last second's fade-out) would otherwise resume by snapping
-                // straight to wherever wall-clock time since fadeStartAt now
-                // maps it to -- reset so resume is always at the real volume.
-                fadeStartAt = 0L;
-                backend.setVolume(volume.peek());
-                backend.resume();
+                if (fadeStartAt != 0L && backend.isPlaying()) {
+                    // Caught mid a pause's deferred fade-out (backend.pause() never
+                    // actually ran) -- cancel that pending pause and ramp back up
+                    // from wherever the gain currently sits instead of restarting
+                    // from silence or leaving it stuck fading down.
+                    fadeCompleteAction = null;
+                    if (fadeEnabled) {
+                        fadeFromGain = currentFadeGain();
+                        fadeToGain = 1f;
+                        fadeDurationMs = FADE_IN_MS;
+                        fadeStartAt = System.currentTimeMillis();
+                    } else {
+                        fadeStartAt = 0L;
+                        backend.setVolume(volume.peek());
+                    }
+                } else {
+                    // Genuinely paused already (no ramp in flight to pick back up) --
+                    // fade back in from silence, symmetric with the pause fade-out.
+                    if (fadeEnabled) {
+                        fadeFromGain = 0f;
+                        fadeToGain = 1f;
+                        fadeDurationMs = FADE_IN_MS;
+                        fadeStartAt = System.currentTimeMillis();
+                        backend.setVolume(0f);
+                    } else {
+                        fadeStartAt = 0L;
+                        backend.setVolume(volume.peek());
+                    }
+                    backend.resume();
+                }
                 playingIntent = true;
                 post(() -> playing.set(true));
             }
