@@ -40,6 +40,9 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
      *  natural end, instead of a hard cut. Off by default — a playback
      *  behavior change, opt-in rather than surprising existing users. */
     public final Property<Boolean> fadeEnabled = new Property<>(Boolean.FALSE);
+    /** Netease playback quality: exhigh ("exhigh" level, ~320kbps) when on,
+     *  standard (~128kbps) when off to save bandwidth. On by default. */
+    public final Property<Boolean> highQualityEnabled = new Property<>(Boolean.TRUE);
     /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
      *  lyric page (Fonts.setUseSystemFont, Skija FontMgr — works on every platform);
      *  QML's own UI text (buttons/labels/settings) only re-reads this at the next
@@ -114,6 +117,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public interface UnblockListener { void onUnblock(boolean enabled); }
     public interface MirrorListener { void onMirror(boolean enabled); }
     public interface FadeListener { void onFade(boolean enabled); }
+    public interface HighQualityListener { void onHighQuality(boolean enabled); }
     public interface CacheSizeListener { void onCacheMaxSizeMB(long mb); }
     public interface MusicFolderListener { void onMusicFolder(String path); }
     public interface CacheFolderListener { void onCacheFolder(String path); }
@@ -129,6 +133,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     private UnblockListener unblockListener;
     private MirrorListener mirrorListener;
     private FadeListener fadeListener;
+    private HighQualityListener highQualityListener;
     private CacheSizeListener cacheSizeListener;
     private MusicFolderListener musicFolderListener;
     private CacheFolderListener cacheFolderListener;
@@ -139,6 +144,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public void setUnblockListener(UnblockListener l) { this.unblockListener = l; }
     public void setMirrorListener(MirrorListener l) { this.mirrorListener = l; }
     public void setFadeListener(FadeListener l) { this.fadeListener = l; }
+    public void setHighQualityListener(HighQualityListener l) { this.highQualityListener = l; }
     public void setCacheSizeListener(CacheSizeListener l) { this.cacheSizeListener = l; }
     public void setMusicFolderListener(MusicFolderListener l) { this.musicFolderListener = l; }
     public void setCacheFolderListener(CacheFolderListener l) { this.cacheFolderListener = l; }
@@ -164,11 +170,13 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         unblockEnabled.set(getBool("unblock", true));
         mirrorEnabled.set(getBool("mirror", isSimplifiedChinese()));
         fadeEnabled.set(getBool("fade", false));
+        highQualityEnabled.set(getBool("highQuality", true));
         recompute();
         if (monetListener != null) monetListener.onMonet(Boolean.TRUE.equals(monetEnabled.peek()));
         if (unblockListener != null) unblockListener.onUnblock(Boolean.TRUE.equals(unblockEnabled.peek()));
         if (mirrorListener != null) mirrorListener.onMirror(Boolean.TRUE.equals(mirrorEnabled.peek()));
         if (fadeListener != null) fadeListener.onFade(Boolean.TRUE.equals(fadeEnabled.peek()));
+        if (highQualityListener != null) highQualityListener.onHighQuality(Boolean.TRUE.equals(highQualityEnabled.peek()));
 
         darkMode.setInterceptor((p, v) -> {
             p.setBypassInterceptor(asInt(v));
@@ -198,6 +206,12 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             boolean on = Boolean.TRUE.equals(p.peek());
             put("fade", on);
             if (fadeListener != null) fadeListener.onFade(on);
+        });
+        highQualityEnabled.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            put("highQuality", on);
+            if (highQualityListener != null) highQualityListener.onHighQuality(on);
         });
 
         useSystemFont.set(getBool("useSystemFont", false));

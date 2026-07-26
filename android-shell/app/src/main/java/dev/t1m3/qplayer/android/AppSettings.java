@@ -43,6 +43,9 @@ public final class AppSettings extends QObject
      *  natural end, instead of a hard cut. Off by default — a playback
      *  behavior change, opt-in rather than surprising existing users. */
     public final Property<Boolean> fadeEnabled = new Property<>(Boolean.FALSE);
+    /** Netease playback quality: exhigh ("exhigh" level, ~320kbps) when on,
+     *  standard (~128kbps) when off to save bandwidth. On by default. */
+    public final Property<Boolean> highQualityEnabled = new Property<>(Boolean.TRUE);
     /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
      *  lyric page (Fonts.setUseSystemFont, Skija FontMgr). Unlike desktop, QML's own
      *  UI text (buttons/labels) does NOT follow this yet — Android's font loading in
@@ -146,6 +149,11 @@ public final class AppSettings extends QObject
         void onFade(boolean enabled);
     }
 
+    /** Notified when the playback quality toggle changes. */
+    public interface HighQualityListener {
+        void onHighQuality(boolean enabled);
+    }
+
     /** Notified when max cache size changes. */
     public interface CacheSizeListener {
         void onCacheMaxSizeMB(long mb);
@@ -163,6 +171,7 @@ public final class AppSettings extends QObject
     private UnblockListener unblockListener;
     private MirrorListener mirrorListener;
     private FadeListener fadeListener;
+    private HighQualityListener highQualityListener;
     private CacheSizeListener cacheSizeListener;
     private CustomApiListener customApiListener;
 
@@ -184,6 +193,10 @@ public final class AppSettings extends QObject
 
     public void setFadeListener(FadeListener l) {
         this.fadeListener = l;
+    }
+
+    public void setHighQualityListener(HighQualityListener l) {
+        this.highQualityListener = l;
     }
 
     public void setCacheSizeListener(CacheSizeListener l) {
@@ -208,11 +221,13 @@ public final class AppSettings extends QObject
         unblockEnabled.set(prefs.getBoolean("unblock", true));
         mirrorEnabled.set(prefs.getBoolean("mirror", isSimplifiedChinese()));
         fadeEnabled.set(prefs.getBoolean("fade", false));
+        highQualityEnabled.set(prefs.getBoolean("highQuality", true));
         recompute();
         if (monetListener != null) monetListener.onMonet(Boolean.TRUE.equals(monetEnabled.peek()));
         if (unblockListener != null) unblockListener.onUnblock(Boolean.TRUE.equals(unblockEnabled.peek()));
         if (mirrorListener != null) mirrorListener.onMirror(Boolean.TRUE.equals(mirrorEnabled.peek()));
         if (fadeListener != null) fadeListener.onFade(Boolean.TRUE.equals(fadeEnabled.peek()));
+        if (highQualityListener != null) highQualityListener.onHighQuality(Boolean.TRUE.equals(highQualityEnabled.peek()));
         darkMode.setInterceptor((p, v) -> {
             // Normalize to Integer (QML hands us a Long) so reads compare as ints.
             p.setBypassInterceptor(asInt(v));
@@ -242,6 +257,12 @@ public final class AppSettings extends QObject
             boolean on = Boolean.TRUE.equals(p.peek());
             prefs.edit().putBoolean("fade", on).apply();
             if (fadeListener != null) fadeListener.onFade(on);
+        });
+        highQualityEnabled.setInterceptor((p, v) -> {
+            p.setBypassInterceptor(v);
+            boolean on = Boolean.TRUE.equals(p.peek());
+            prefs.edit().putBoolean("highQuality", on).apply();
+            if (highQualityListener != null) highQualityListener.onHighQuality(on);
         });
 
         useSystemFont.set(prefs.getBoolean("useSystemFont", false));

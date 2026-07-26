@@ -145,6 +145,7 @@ public final class QPlayerActivity extends Activity {
         settings.setUnblockListener(on -> controller.setUnblockEnabled(on));
         settings.setMirrorListener(on -> controller.setUpdateMirror(on));
         settings.setFadeListener(on -> controller.setFadeEnabled(on));
+        settings.setHighQualityListener(on -> controller.setHighQualityEnabled(on));
         settings.setCacheSizeListener(mb -> controller.setCacheMaxSizeMB(mb));
         settings.setCustomApiListener(cfg -> controller.setCustomApiConfig(cfg));
         settings.load(this);

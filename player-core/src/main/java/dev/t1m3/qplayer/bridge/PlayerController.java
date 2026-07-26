@@ -1778,6 +1778,13 @@ public final class PlayerController {
         if (level != null && !level.isEmpty()) playLevel = level;
     }
 
+    /** Settings toggle: netease playback quality. On (default) requests "exhigh"
+     *  (~320kbps); off requests "standard" (~128kbps) to save bandwidth. Only
+     *  affects tracks resolved after the change, not the currently playing one. */
+    public void setHighQualityEnabled(boolean enabled) {
+        setPlayLevel(enabled ? "exhigh" : "standard");
+    }
+
     /** Toggle source-switching: when on, blocked/trial netease tracks fall back to
      *  the unblock sources (gdstudio / bodian / kuwo) before being skipped. */
     public void setUnblockEnabled(boolean enabled) {
