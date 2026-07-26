@@ -11,6 +11,8 @@ import io.github.humbleui.skija.Typeface;
 import java.util.HashMap;
 import java.util.Map;
 
+import dev.t1m3.qplayer.util.Logger;
+
 // Font cache for the lyric renderer. drawString uses a single typeface with no
 // automatic fallback, so the lyric face must itself cover the glyphs we draw —
 // the bundled PingFang SC covers Latin + CJK across four weights. Scripts PingFang
@@ -151,13 +153,28 @@ public final class Fonts {
             Typeface sys = null;
             if (mgr != null) {
                 Typeface nullFamily = mgr.matchFamilyStyle(null, FontStyle.NORMAL);
-                if (nullFamily != null && covers(nullFamily, '中')) sys = nullFamily;
+                boolean ok = nullFamily != null && covers(nullFamily, '中');
+                Logger.info("Fonts: null-family lookup -> {} covers='中'={}",
+                    nullFamily == null ? "null" : nullFamily.getFamilyName(), ok);
+                if (ok) sys = nullFamily;
             }
             if (sys == null && mgr != null) {
                 for (String name : SYSTEM_DEFAULT_CANDIDATES) {
                     Typeface t = mgr.matchFamilyStyle(name, FontStyle.NORMAL);
-                    if (t != null && covers(t, '中')) { sys = t; break; }
+                    boolean ok = t != null && covers(t, '中');
+                    Logger.info("Fonts: candidate '{}' -> {} covers='中'={}",
+                        name, t == null ? "null" : t.getFamilyName(), ok);
+                    if (ok) { sys = t; break; }
                 }
+            }
+            if (sys == null && mgr != null) {
+                int n = mgr.getFamiliesCount();
+                StringBuilder names = new StringBuilder();
+                for (int i = 0; i < Math.min(n, 30); i++) {
+                    if (i > 0) names.append(", ");
+                    names.append(mgr.getFamilyName(i));
+                }
+                Logger.info("Fonts: system has {} families, first 30: [{}]", n, names);
             }
             // Last resort, same as korean()/thai()/japanese() below: ask the font
             // manager for ANY installed font that covers this codepoint, instead of
@@ -170,9 +187,12 @@ public final class Fonts {
                 try {
                     Typeface t = mgr.matchFamilyStyleCharacter(
                         null, FontStyle.NORMAL, new String[]{"zh", "zh-CN"}, '中');
-                    if (t != null && covers(t, '中')) sys = t;
-                } catch (Throwable ignored) {
-                    // fall through
+                    boolean ok = t != null && covers(t, '中');
+                    Logger.info("Fonts: matchFamilyStyleCharacter('中') -> {} covers='中'={}",
+                        t == null ? "null" : t.getFamilyName(), ok);
+                    if (ok) sys = t;
+                } catch (Throwable e) {
+                    Logger.info("Fonts: matchFamilyStyleCharacter threw {}", e);
                 }
             }
             if (sys != null) {
