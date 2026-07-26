@@ -47,8 +47,11 @@ final class WinTray {
     private static final int WM_TRAYICON = WM_USER + 1;
     private static final int WM_QUIT_TRAY = WM_USER + 2;
     private static final int WM_LBUTTONUP = 0x0202;
+    private static final int WM_LBUTTONDBLCLK = 0x0203;
     private static final int WM_RBUTTONUP = 0x0205;
     private static final int WM_DESTROY = 0x0002;
+    private static final int WM_TIMER = 0x0113;
+    private static final int CLICK_TIMER_ID = 1;
 
     private static final int NIM_ADD = 0x0;
     private static final int NIM_MODIFY = 0x1;
@@ -92,6 +95,9 @@ final class WinTray {
         boolean DestroyMenu(HMENU menu);
         HANDLE LoadImageW(HINSTANCE inst, WString name, int type, int cx, int cy, int load);
         boolean DestroyIcon(HICON icon);
+        UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, int uElapse, Pointer lpTimerFunc);
+        boolean KillTimer(HWND hWnd, UINT_PTR nIDEvent);
+        int GetDoubleClickTime();
     }
 
     interface Shell32 extends StdCallLibrary {
@@ -165,15 +171,24 @@ final class WinTray {
 
     private final List<Item> items = new ArrayList<>();
     private int nextId = 1;
-    // TrackPopupMenu blocks the pump thread until dismissed; a double-click's second
-    // WM_LBUTTONUP re-enters showMenu() while the first call is still tracking, and a
-    // second TrackPopupMenu call implicitly cancels the first one (per Win32 docs) --
-    // right where the menu opens (upward from the tray icon at the screen's bottom
-    // edge), so the second click's coordinates land on whatever item ends up nearest
-    // the icon ("显示窗口", second-to-last) instead of opening a fresh menu. Guard
-    // against the reentrant call so a double-click's second up-event is just ignored.
+    // See openMenuOnce(): TrackPopupMenu blocks the pump thread until dismissed, and
+    // Win32 silently cancels whatever popup is open if TrackPopupMenu is called again
+    // before that -- guards against a second trigger landing while one is tracking.
     private final java.util.concurrent.atomic.AtomicBoolean menuOpen =
             new java.util.concurrent.atomic.AtomicBoolean(false);
+    // Run on a genuine WM_LBUTTONDBLCLK (see the WM_TRAYICON handling below for why
+    // the menu can't just be shown straight off WM_LBUTTONUP).
+    private volatile Runnable doubleClickAction;
+
+    /** Action for a real double-click on the icon (distinct from the single-click
+     *  menu) — e.g. restoring the window straight away without the menu in the way. */
+    void setDoubleClickAction(Runnable r) {
+        this.doubleClickAction = r;
+    }
+
+    // Only ever touched on the pump thread (wndProc callback), so no synchronization
+    // needed despite being read/written across the UP/DBLCLK branches above.
+    private boolean suppressNextUp = false;
 
     private volatile HWND hWnd;
     private volatile HICON hIcon;
@@ -249,11 +264,35 @@ final class WinTray {
             wndProc = (w, msg, wParam, lParam) -> {
                 if (msg == WM_TRAYICON) {
                     int evt = lParam.intValue() & 0xFFFF;
-                    if (evt == WM_RBUTTONUP || evt == WM_LBUTTONUP) {
-                        if (menuOpen.compareAndSet(false, true)) {
-                            try { showMenu(); } finally { menuOpen.set(false); }
+                    if (evt == WM_RBUTTONUP) {
+                        openMenuOnce();
+                    } else if (evt == WM_LBUTTONUP) {
+                        // Explorer sends UP, DBLCLK, UP for one double-click -- the
+                        // second UP is that click's release and must NOT re-arm the
+                        // timer (it did before this check, so the menu would still
+                        // pop up ~GetDoubleClickTime() after a double-click's window
+                        // already showed). Might instead be the first click of a
+                        // double-click, so showing the menu straight off it can
+                        // never tell a single click from the first half of a double
+                        // one either way -- defer to a timer matching the user's
+                        // actual double-click speed; WM_LBUTTONDBLCLK below cancels
+                        // it if a second click lands in time.
+                        if (suppressNextUp) {
+                            suppressNextUp = false;
+                        } else {
+                            U32.I.SetTimer(w, new UINT_PTR(CLICK_TIMER_ID), U32.I.GetDoubleClickTime(), null);
                         }
+                    } else if (evt == WM_LBUTTONDBLCLK) {
+                        U32.I.KillTimer(w, new UINT_PTR(CLICK_TIMER_ID));
+                        suppressNextUp = true;
+                        Runnable r = doubleClickAction;
+                        if (r != null) r.run();
                     }
+                    return new LRESULT(0);
+                }
+                if (msg == WM_TIMER && wParam.intValue() == CLICK_TIMER_ID) {
+                    U32.I.KillTimer(w, new UINT_PTR(CLICK_TIMER_ID));
+                    openMenuOnce();
                     return new LRESULT(0);
                 }
                 if (msg == WM_QUIT_TRAY) {
@@ -327,6 +366,16 @@ final class WinTray {
             synchronized (nid) { Shell32.I.Shell_NotifyIconW(NIM_DELETE, nid); }
             if (hIcon != null) U32.I.DestroyIcon(hIcon);
         } catch (Throwable ignored) {}
+    }
+
+    // TrackPopupMenu blocks the calling thread until dismissed; guards the (now rare,
+    // but still possible e.g. right-click landing during the left-click timer window)
+    // case of a second call arriving while one is already tracking -- Win32 silently
+    // cancels whatever popup is currently open when TrackPopupMenu is called again.
+    private void openMenuOnce() {
+        if (menuOpen.compareAndSet(false, true)) {
+            try { showMenu(); } finally { menuOpen.set(false); }
+        }
     }
 
     private void showMenu() {

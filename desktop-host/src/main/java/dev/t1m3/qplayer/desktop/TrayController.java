@@ -96,6 +96,9 @@ final class TrayController implements PlayerController.PlaybackListener {
                 shutdown();
                 win.requestQuit();
             }));
+            // Double-click bypasses the menu and restores the window directly, same
+            // action as the "显示窗口" item.
+            winTray.setDoubleClickAction(() -> win.postMainTask(win::restoreFromTray));
             if (winTray.install()) return true;
             winTray = null;
             return false;
