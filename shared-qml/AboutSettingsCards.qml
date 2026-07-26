@@ -59,14 +59,41 @@ ColumnLayout {
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
-                icon: "system_update"
-                onClicked: player.checkForUpdateManual()
+                icon: "link"
+                onClicked: player.openExternalUrl("https://github.com/TIMER-err/qplayer")
+            }
+        }
+    }
+
+    Rectangle {
+        Layout.fillWidth: true
+        Layout.leftMargin: 12
+        Layout.rightMargin: 12
+        radius: 18
+        color: Theme.color.surfaceContainerHighest
+        implicitHeight: updateRow.implicitHeight + 32
+
+        RowLayout {
+            id: updateRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 16
+            anchors.rightMargin: 8
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: "检查更新"
+                color: Theme.color.onSurfaceColor
+                font.family: Theme.typography.bodyLarge.family
+                font.pixelSize: Theme.typography.bodyLarge.size
             }
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
-                icon: "link"
-                onClicked: player.openExternalUrl("https://github.com/TIMER-err/qplayer")
+                icon: "system_update"
+                onClicked: player.checkForUpdateManual()
             }
         }
     }
