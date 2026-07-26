@@ -180,6 +180,18 @@ public final class Main {
         // host uses an ACTION_VIEW intent; on the desktop hand the URL to the OS
         // (no java.awt.Desktop, which is unreliable in the native image).
         controller.setUrlOpener(Main::openUrl);
+        // Pick this OS's own release asset (there's no .apk on a desktop release —
+        // PlayerController's default matcher, unchanged for Android, would never
+        // match anything here). "setup.exe" (not the plain .zip) so the in-app
+        // downloader hands off to the real installer.
+        controller.setAssetMatcher(name -> {
+            String n = name.toLowerCase();
+            String os = System.getProperty("os.name", "").toLowerCase();
+            if (os.contains("win")) return n.endsWith("setup.exe");
+            if (os.contains("mac")) return n.endsWith(".dmg");
+            return n.endsWith(".appimage");
+        });
+        controller.setInstaller(urls -> downloadAndInstallUpdate(controller, urls));
 
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
 
@@ -274,6 +286,97 @@ public final class Main {
             new ProcessBuilder(cmd).start();
         } catch (Exception e) {
             Logger.warn("open url failed ({}): {}", url, e.toString());
+        }
+    }
+
+    /** {@link PlayerController.Installer}: download the matched release asset into
+     *  the cache folder (not a temp dir — same place audio/cover caching already
+     *  lives, so it's covered by the existing cache-size/clear-cache settings) and
+     *  hand off to the OS to actually install it, mirroring how the Android side
+     *  hands a downloaded APK to the system package installer. */
+    private static void downloadAndInstallUpdate(PlayerController controller, String[] urls) {
+        new Thread(() -> {
+            String name = urls.length > 0 ? fileNameOf(urls[0]) : "qplayer-update";
+            File dir = new File(AppDirs.cacheBase(), "updates");
+            dir.mkdirs();
+            File out = new File(dir, name);
+            for (String url : urls) {
+                if (downloadOne(url, out, controller)) {
+                    out.setExecutable(true, false);
+                    controller.setUpdateProgress(100);
+                    launchInstaller(out);
+                    return;
+                }
+                Logger.warn("update source failed, trying next: {}", url);
+            }
+            controller.setUpdateProgress(-2);
+        }, "qplayer-update-dl").start();
+    }
+
+    private static String fileNameOf(String url) {
+        int slash = url.lastIndexOf('/');
+        return slash >= 0 ? url.substring(slash + 1) : url;
+    }
+
+    /** Download a single url into {@code out}, reporting progress; false on any
+     *  failure (so the caller can try the next mirror), same contract as the
+     *  Android downloader this mirrors. */
+    private static boolean downloadOne(String url, File out, PlayerController controller) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(15_000);
+            conn.setReadTimeout(30_000);
+            conn.setRequestProperty("User-Agent", "qplayer-updater");
+            int code = conn.getResponseCode();
+            if (code >= 400) return false;
+            int total = conn.getContentLength();
+            try (InputStream in = conn.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
+                byte[] buf = new byte[16384];
+                long read = 0;
+                int n;
+                int lastPct = -1;
+                while ((n = in.read(buf)) > 0) {
+                    fos.write(buf, 0, n);
+                    read += n;
+                    if (total > 0) {
+                        int pct = (int) (read * 100 / total);
+                        if (pct != lastPct) {
+                            lastPct = pct;
+                            controller.setUpdateProgress(pct);
+                        }
+                    }
+                }
+            }
+            return out.length() > 0;
+        } catch (Throwable e) {
+            Logger.warn("update download failed {}: {}", url, e.toString());
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** Hand the downloaded installer off to the OS — same "get out of the way,
+     *  let the platform take it from here" spirit as Android's ACTION_VIEW to the
+     *  system package installer. Windows: run the Inno Setup exe directly (it
+     *  handles the "close the running app" prompt itself). macOS: {@code open} the
+     *  dmg (mounts it, Finder shows the drag-to-Applications window). Linux:
+     *  AppImage isn't a true installer, so just reveal the containing folder for
+     *  the user to swap it in themselves. */
+    private static void launchInstaller(File out) {
+        try {
+            String os = System.getProperty("os.name", "").toLowerCase();
+            if (os.contains("win")) {
+                new ProcessBuilder(out.getAbsolutePath()).start();
+            } else if (os.contains("mac")) {
+                new ProcessBuilder("open", out.getAbsolutePath()).start();
+            } else {
+                new ProcessBuilder("xdg-open", out.getParentFile().getAbsolutePath()).start();
+            }
+        } catch (Exception e) {
+            Logger.warn("launch installer failed: {}", e.toString());
         }
     }
 

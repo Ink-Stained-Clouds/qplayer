@@ -713,6 +713,24 @@ public final class PlayerController {
         this.updateMirror = enabled;
     }
 
+    /** Picks this host's own downloadable release asset out of the release's asset
+     *  list (Android: the .apk; desktop: the installer/AppImage for the running OS).
+     *  {@link #checkForUpdate(boolean)} calls this once per asset name, in listed
+     *  order, and takes the first match. */
+    public interface AssetMatcher { boolean matches(String assetName); }
+
+    /** Default: Android's original hardcoded rule, kept as the fallback so a host
+     *  that never calls {@link #setAssetMatcher} (i.e. Android, unchanged) still
+     *  works exactly as before. */
+    private volatile AssetMatcher assetMatcher = name -> name.toLowerCase().endsWith(".apk");
+
+    /** Desktop hosts call this at startup with an OS-specific matcher (installer
+     *  .exe / .dmg / .AppImage) so {@link #checkForUpdate} finds their own asset
+     *  instead of never matching anything (there is no .apk in a desktop release). */
+    public void setAssetMatcher(AssetMatcher m) {
+        this.assetMatcher = m != null ? m : (name -> name.toLowerCase().endsWith(".apk"));
+    }
+
     /** True once a newer release than the running version is found; QML watches it
      *  to pop the update dialog. */
     public final Property<Boolean> updateAvailable = new Property<>(false);
@@ -840,7 +858,7 @@ public final class PlayerController {
                     for (JsonElement e : assets) {
                         if (!e.isJsonObject()) continue;
                         JsonObject a = e.getAsJsonObject();
-                        if (optString(a, "name").toLowerCase().endsWith(".apk")) {
+                        if (assetMatcher.matches(optString(a, "name"))) {
                             apk = optString(a, "browser_download_url");
                             break;
                         }
