@@ -798,10 +798,27 @@ public final class PlayerController {
         post(() -> appVersion.set(this.currentVersion));
     }
 
-    /** Fetch the latest release off the worker thread; on a newer version, publish
-     *  it to the update Properties (QML pops the dialog). Best-effort: any failure
-     *  (offline, rate-limited, parse error) just logs and leaves the dialog closed. */
+    /** Silent (startup) check — no feedback when already up to date or on failure,
+     *  only the update dialog when a newer release is actually found. */
     public void checkForUpdate() {
+        checkForUpdate(false);
+    }
+
+    /** Settings > 关于's "检查更新" button (a distinct name rather than an overload
+     *  call from QML, to sidestep any doubt about how the QML/Java bridge resolves
+     *  overloaded method calls). */
+    public void checkForUpdateManual() {
+        checkForUpdate(true);
+    }
+
+    /** Fetch the latest release off the worker thread; on a newer version, publish
+     *  it to the update Properties (QML pops the dialog). Best-effort on failure
+     *  (offline, rate-limited, parse error): just logs, unless {@code manual}.
+     *
+     * @param manual true for a user-initiated "检查更新" tap (Settings > 关于) —
+     *  toasts "已是最新版本"/an error message instead of failing silently, since a
+     *  button the user just pressed needs to visibly do *something*. */
+    public void checkForUpdate(boolean manual) {
         worker.submit(() -> {
             try {
                 String json = fetchReleaseJson();
@@ -811,7 +828,10 @@ public final class PlayerController {
 
                 String tag = optString(obj, "tag_name");
                 String latest = tag.startsWith("v") ? tag.substring(1) : tag;
-                if (!isNewer(latest, currentVersion)) return;
+                if (!isNewer(latest, currentVersion)) {
+                    if (manual) post(() -> toast.set("已是最新版本"));
+                    return;
+                }
 
                 String notes = optString(obj, "body");
                 String apk = "";
@@ -842,6 +862,7 @@ public final class PlayerController {
                 Logger.info("update available: {} (running {})", latest, currentVersion);
             } catch (Throwable e) {
                 Logger.warn("update check failed: {}", e.toString());
+                if (manual) post(() -> toast.set("检查更新失败，请稍后重试"));
             }
         });
     }

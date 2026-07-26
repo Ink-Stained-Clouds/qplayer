@@ -231,6 +231,13 @@ public final class Main {
         startLibraryScan(controller, reader, window, initialFolder);
         watcher.start(initialFolder);
 
+        // Don't auto-check for updates outside a packaged native-image build — a
+        // plain `mvn exec:exec` dev run would otherwise nag on every launch,
+        // mirroring QPlayerActivity's debug-build skip on Android.
+        if (nativeImage) {
+            controller.checkForUpdate();
+        }
+
         // Tray init on a daemon thread so a GTK/AppIndicator hang can't freeze the app.
         // (-Dqplayer.tray=false disables it, e.g. for headless rendering checks.)
         if (!"false".equals(System.getProperty("qplayer.tray", "true"))) {

@@ -59,6 +59,12 @@ ColumnLayout {
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
+                icon: "system_update"
+                onClicked: player.checkForUpdateManual()
+            }
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
                 icon: "link"
                 onClicked: player.openExternalUrl("https://github.com/TIMER-err/qplayer")
             }
