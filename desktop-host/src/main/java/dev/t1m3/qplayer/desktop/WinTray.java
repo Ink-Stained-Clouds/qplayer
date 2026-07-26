@@ -165,6 +165,15 @@ final class WinTray {
 
     private final List<Item> items = new ArrayList<>();
     private int nextId = 1;
+    // TrackPopupMenu blocks the pump thread until dismissed; a double-click's second
+    // WM_LBUTTONUP re-enters showMenu() while the first call is still tracking, and a
+    // second TrackPopupMenu call implicitly cancels the first one (per Win32 docs) --
+    // right where the menu opens (upward from the tray icon at the screen's bottom
+    // edge), so the second click's coordinates land on whatever item ends up nearest
+    // the icon ("显示窗口", second-to-last) instead of opening a fresh menu. Guard
+    // against the reentrant call so a double-click's second up-event is just ignored.
+    private final java.util.concurrent.atomic.AtomicBoolean menuOpen =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private volatile HWND hWnd;
     private volatile HICON hIcon;
@@ -240,7 +249,11 @@ final class WinTray {
             wndProc = (w, msg, wParam, lParam) -> {
                 if (msg == WM_TRAYICON) {
                     int evt = lParam.intValue() & 0xFFFF;
-                    if (evt == WM_RBUTTONUP || evt == WM_LBUTTONUP) showMenu();
+                    if (evt == WM_RBUTTONUP || evt == WM_LBUTTONUP) {
+                        if (menuOpen.compareAndSet(false, true)) {
+                            try { showMenu(); } finally { menuOpen.set(false); }
+                        }
+                    }
                     return new LRESULT(0);
                 }
                 if (msg == WM_QUIT_TRAY) {
