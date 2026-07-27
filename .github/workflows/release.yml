@@ -2,9 +2,9 @@ name: Release
 
 # One unified release pipeline. It builds, in parallel:
 #   • android  — the signed release APK
-#   • desktop  — the GraalVM native-image app on Linux / Windows / macOS
-#                (intel + apple-silicon); native-image can't cross-compile, so
-#                each platform builds on its own runner.
+#   • desktop  — the jpackage bundle (app + jlinked JRE) on Linux / Windows /
+#                macOS; jpackage only targets the OS it runs on, so each platform
+#                builds on its own runner.
 # Every job attaches its artifact(s) to the GitHub Release for the tag
 # (action-gh-release creates the release on first upload and appends after).
 #
@@ -125,61 +125,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # native-image -J-Xmx per runner: ubuntu/windows-latest have 16GB,
-          # macos-14 has 7GB. Keep ~3GB headroom for OS + Maven on the 16GB boxes
-          # and ~2GB on the 7GB one.
           - os: ubuntu-latest
             name: linux-x64
             package: bash desktop-host/dist/package-linux.sh
             artifact: desktop-host/target/QPlayer-x86_64.AppImage
-            xmx: 12g
           - os: windows-latest
             name: windows-x64
             package: powershell -ExecutionPolicy Bypass -File desktop-host/dist/package-windows.ps1
             artifact: desktop-host/target/QPlayer-windows-x64.zip
-            xmx: 12g
           # Apple Silicon only: GitHub retired the free Intel (macos-13) runner and
-          # native-image can't cross-compile, so an arm64 runner can't emit an Intel
-          # binary. Intel Mac users build locally (desktop-host/dist/package-macos.sh).
+          # jpackage builds for the machine it runs on, so an arm64 runner can't emit
+          # an Intel bundle. Intel Mac users build locally (dist/package-macos.sh).
           - os: macos-14            # apple silicon
             name: macos-arm64
             package: bash desktop-host/dist/package-macos.sh
             artifact: desktop-host/target/QPlayer.dmg
-            xmx: 5g
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up GraalVM 21
-        uses: graalvm/setup-graalvm@v1
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
         with:
-          # Oracle GraalVM (free under GFTC for prod). The Community distribution
-          # resolves '21' to 21.0.2 here, which precedes the Windows AWT heap-walk
-          # fixes (21.0.5+) that headful TrayIcon depends on. Oracle '21' tracks
-          # the latest LTS patch (21.0.7+), matching the local agent run.
+          # A full JDK (not a JRE) — jpackage and jlink come from here.
+          distribution: temurin
           java-version: '21'
-          distribution: 'graalvm'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          native-image-job-reports: 'true'
 
       # Explicit Maven cache (per-OS — GitHub caches don't cross OS): the LWJGL +
-      # Skija + dorkbox jars are large, and restore/save show up plainly in the log.
+      # Skija jars are large, and restore/save show up plainly in the log.
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-m2-
-
-      # The AOT step (and the native binary) loads libskija.so, which links
-      # libEGL/libGL/fontconfig. A clean ubuntu runner ships none of them, so
-      # FontMgr.<clinit> dies with UnsatisfiedLinkError: libEGL.so.1. Windows /
-      # macOS Skija use other backends and need nothing here.
-      - name: Install native GL/EGL libs (Linux runner)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libgles2 libglu1-mesa libfontconfig1
 
       # Build the matching qml4j-core from source (like the android job) instead of
       # resolving it from Maven Central, so a freshly-tagged engine works the moment
@@ -202,25 +181,22 @@ jobs:
       - name: Install player-core to local Maven repo
         run: mvn -B -DskipTests -pl player-core -am install
 
-      - name: Build native image
-        # bash on every runner (git-bash on Windows): PowerShell splits the bare
-        # -Dnative.xmx=12g arg into "-Dnative" + ".xmx=12g", which mvn reads as a
-        # bogus lifecycle phase. setup-graalvm's JAVA_HOME/PATH apply to bash too.
+      - name: Stage the app bundle
+        # bash on every runner (git-bash on Windows) so the same command line works
+        # everywhere. Bakes the release tag (sans leading v) into version.properties
+        # so the in-app update check reports the real version, matching the tag.
         shell: bash
         env:
           QPLAYER_VERSION: ${{ github.event.release.tag_name || github.ref_name }}
-        # Bake the release tag (sans leading v) into version.properties so the
-        # in-app update check reports the real version, matching the tag.
         run: |
           VER="${QPLAYER_VERSION#v}"
-          mvn -B -DskipTests -Dnative.xmx=${{ matrix.xmx }} \
-            -Dqplayer.app.version="${VER:-0.0.0}" \
-            -pl desktop-host -Pnative package
+          mvn -B -DskipTests -Dqplayer.app.version="${VER:-0.0.0}" \
+            -pl desktop-host -Pdist package
 
       - name: Package
-        # macOS bakes this into Info.plist (CFBundleShortVersionString); the
-        # Linux/Windows packagers ignore it. Resolved like the Windows installer
-        # step below (release tag, or the pushed tag ref).
+        # Each script runs jpackage (jlinked runtime + app image) and wraps the
+        # result: AppImage / zip / dmg. QPLAYER_VERSION is the bundle version they
+        # bake into the launcher metadata.
         env:
           QPLAYER_VERSION: ${{ github.event.release.tag_name || github.ref_name }}
         run: ${{ matrix.package }}

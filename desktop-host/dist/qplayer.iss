@@ -1,8 +1,9 @@
 ; Inno Setup script for the QPlayer Windows installer.
 ; Built in CI (see .github/workflows/release.yml) over the QPlayer/ folder that
-; package-windows.ps1 produces. Overridable defines:
+; package-windows.ps1 produces (the jpackage app-image: qplayer.exe + app\ + the
+; bundled runtime\). Overridable defines:
 ;   /DAppVersion=x.y.z   version shown in Add/Remove Programs
-;   /DSourceFolder=...   the packaged app folder (exe + DLLs)
+;   /DSourceFolder=...   the packaged app folder
 ;   /DIconFile=...       the .ico for the setup + shortcuts
 ; Local test (with Inno Setup installed):
 ;   iscc /DSourceFolder=..\target\QPlayer desktop-host\dist\qplayer.iss

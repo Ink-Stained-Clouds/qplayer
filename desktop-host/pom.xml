@@ -15,24 +15,17 @@
     <description>LWJGL/GLFW host + desktop audio backend (javax.sound + SPI decoders + jaudiotagger). Dev/run target.</description>
 
     <properties>
-        <!-- Desktop-only module, always built/run on JDK 21 (GraalVM). Override the
-             parent's release 8 (kept for the Android-shared player-core) so we can
-             use modern APIs like ProcessHandle for self-locating the native libs. -->
+        <!-- Desktop-only module, always built/run on JDK 21. Override the parent's
+             release 8 (kept for the Android-shared player-core) so we can use
+             modern APIs here. -->
         <maven.compiler.release>17</maven.compiler.release>
         <lwjgl.version>3.3.3</lwjgl.version>
         <!-- The native classifiers for THIS build host. Defaults target Linux x64;
              the os-activated profiles below flip them for Windows / macOS (intel &
-             apple-silicon). native-image can't cross-compile, so each platform's
-             release is built on its own runner with the matching natives. -->
+             apple-silicon). jpackage can't cross-build either, so each platform's
+             release is produced on its own runner with the matching natives. -->
         <lwjgl.natives>natives-linux</lwjgl.natives>
         <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
-        <!-- Heap cap for the native-image build JVM. Sized for a local dev box;
-             CI overrides per-runner (Linux/Windows ubuntu/windows-latest have 16GB,
-             macos-14 has 7GB) via -Dnative.xmx=… on the mvn command line. -->
-        <native.xmx>7g</native.xmx>
-        <!-- native-image builder parallelism. Lower it (-Dnative.threads=2) on a
-             memory-constrained host to cut peak memory; CI keeps the default. -->
-        <native.threads>4</native.threads>
         <log4j.version>2.25.4</log4j.version>
         <jna.version>5.14.0</jna.version>
         <!-- App version baked into version.properties (read by Main → the update
@@ -48,14 +41,14 @@
 
     <build>
         <resources>
-            <!-- Keep the default resource dir (holds META-INF/native-image/** config)
-                 — declaring <resources> otherwise replaces it. -->
+            <!-- Keep the default resource dir (log4j2.xml) — declaring <resources>
+                 at all otherwise replaces it. -->
             <resource>
                 <directory>${project.basedir}/src/main/resources</directory>
             </resource>
             <!-- Maven-filtered: substitutes ${qplayer.app.version} into
                  version.properties. Kept in its own dir so filtering never touches
-                 the QML / native-image config / fonts above. -->
+                 the QML / fonts below. -->
             <resource>
                 <directory>${project.basedir}/src/main/resources-filtered</directory>
                 <filtering>true</filtering>
@@ -201,10 +194,8 @@
         </dependency>
 
         <!-- Logging backend for the desktop host: the shared player-core Logger
-             routes through a log4j2 Sink installed in Main. log4j-core 2.25+ ships
-             GraalVM reachability metadata, so the native image needs no hand-written
-             reflect/resource config for it. Kept out of player-core so Android keeps
-             its java.util.logging → logcat path. -->
+             routes through a log4j2 Sink installed in Main. Kept out of player-core
+             so Android keeps its java.util.logging → logcat path. -->
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-api</artifactId>
@@ -219,11 +210,8 @@
 
         <!-- System tray. On Windows we drive Shell_NotifyIcon + a native Win32
              popup menu directly via JNA (TrayController → WinTray): the menu is
-             rendered by the OS, so CJK works with zero AWT font-manager init —
-             which is unusable in the native image (sun.awt.FontConfiguration NPEs
-             with no JDK lib dir). Other platforms still use the AWT tray. The
-             standard net.java.dev.jna artifact has official GraalVM reachability
-             metadata, so jnidispatch + the mapped calls work in the native image. -->
+             rendered by the OS, so CJK renders correctly regardless of the AWT
+             font configuration. Other platforms still use the AWT tray. -->
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
@@ -284,90 +272,74 @@
             </properties>
         </profile>
 
-        <!-- `mvn -Pnative package` (run under a GraalVM JDK): AOT-compile the QML to
-             classes, then build the native image. Produces target/qplayer (+ the JDK
-             native libs alongside). Packaging into AppImage/zip/dmg is done by the
-             scripts under dist/ and the GitHub Actions release workflow. -->
+        <!-- `mvn -Pdist package`: lay out everything jpackage needs under
+             target/app — the app jar (with a lib/-relative Class-Path manifest) plus
+             every runtime dependency in target/app/lib. The dist/ scripts then run
+             jpackage over that directory to produce the per-OS bundle. -->
         <profile>
-            <id>native</id>
+            <id>dist</id>
             <build>
                 <plugins>
-                    <!-- 0) Bundle the build JDK's fontconfig.bfc onto the classpath so
-                            the native binary can extract it at startup and point
-                            `java.awt.fontconfig` at the copy. Without it AWT's logical-
-                            font init throws "Fontconfig head is null" (the native image
-                            has no JDK lib dir), and any font-metrics lookup downstream
-                            — the tray's Swing JPopupMenu sizing, for one — fails. -->
+                    <!-- The app jar jpackage launches. Class-Path lists the sibling
+                         lib/*.jar so the generated launcher needs no -cp of its own. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <version>3.4.1</version>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <addClasspath>true</addClasspath>
+                                    <classpathPrefix>lib/</classpathPrefix>
+                                    <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
+                                </manifest>
+                            </archive>
+                        </configuration>
+                    </plugin>
+
+                    <!-- Runtime classpath (player-core, qml4j, Skija, LWJGL + its
+                         natives jars, log4j, JNA, the decoders) into target/app/lib.
+                         Skija/LWJGL extract their own natives from these jars at
+                         runtime, exactly as they do on a dev `exec:exec` run. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>stage-libs</id>
+                                <phase>prepare-package</phase>
+                                <goals><goal>copy-dependencies</goal></goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/app/lib</outputDirectory>
+                                    <includeScope>runtime</includeScope>
+                                    <!-- jlayer declares junit at compile scope; it has
+                                         no business in a shipped bundle. -->
+                                    <excludeArtifactIds>junit</excludeArtifactIds>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- Drop the app jar next to lib/ under a stable name, so the
+                         packaging scripts always pass the same main jar to jpackage. -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-antrun-plugin</artifactId>
                         <version>3.1.0</version>
                         <executions>
                             <execution>
-                                <id>bundle-fontconfig</id>
-                                <phase>process-classes</phase>
+                                <id>stage-app-jar</id>
+                                <phase>package</phase>
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
-                                        <copy file="${java.home}/lib/fontconfig.bfc"
-                                              tofile="${project.build.outputDirectory}/fontconfig.bfc"
-                                              failonerror="false"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              tofile="${project.build.directory}/app/qplayer.jar"/>
                                     </target>
                                 </configuration>
                             </execution>
                         </executions>
-                    </plugin>
-
-                    <!-- 1) AOT-compile the QML graph into target/classes (forked JVM;
-                            AotCompile halts itself, so Maven keeps going). -->
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>aot-compile-qml</id>
-                                <phase>process-classes</phase>
-                                <goals><goal>exec</goal></goals>
-                                <configuration>
-                                    <executable>java</executable>
-                                    <arguments>
-                                        <argument>-classpath</argument>
-                                        <classpath/>
-                                        <argument>dev.t1m3.qplayer.desktop.aot.AotCompile</argument>
-                                        <argument>${project.build.outputDirectory}</argument>
-                                    </arguments>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-
-                    <!-- 2) Build the native image. Build args + reflection/JNI/resource
-                            metadata come from META-INF/native-image/. -->
-                    <plugin>
-                        <groupId>org.graalvm.buildtools</groupId>
-                        <artifactId>native-maven-plugin</artifactId>
-                        <version>0.10.3</version>
-                        <extensions>true</extensions>
-                        <executions>
-                            <execution>
-                                <id>build-native</id>
-                                <phase>package</phase>
-                                <goals><goal>compile-no-fork</goal></goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <imageName>qplayer</imageName>
-                            <mainClass>dev.t1m3.qplayer.desktop.Main</mainClass>
-            <buildArgs>
-                                <buildArg>-J-Xmx${native.xmx}</buildArg>
-                                <buildArg>-H:NumberOfThreads=${native.threads}</buildArg>
-                                <!-- Disable the no-activity watchdog: on a slow/low-memory
-                                     host (GC thrash) it false-positives a "deadlock" and
-                                     aborts a build that would otherwise finish. -->
-                                <buildArg>-H:DeadlockWatchdogInterval=0</buildArg>
-                            </buildArgs>
-                        </configuration>
                     </plugin>
                 </plugins>
             </build>

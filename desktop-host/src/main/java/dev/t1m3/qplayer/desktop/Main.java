@@ -16,7 +16,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -34,12 +33,25 @@ import java.util.List;
  */
 public final class Main {
 
+    /** True when running from a jpackage-produced bundle (the launcher sets this
+     *  property), false on a plain `mvn exec:exec` dev run. */
+    private static final boolean PACKAGED = System.getProperty("jpackage.app-path") != null;
+
     public static void main(String[] args) {
-        // Windows native binary (GUI subsystem): no console on double-click, but
+        // The jpackage launcher hands the command line straight to main() instead of
+        // to the JVM (and drops -J flags), so pull the -Dkey=value ones back out
+        // ourselves. Keeps the packaged app's launch knobs identical to a dev run:
+        // -Dqplayer.gfx=vulkan, -Dqplayer.width/height=…, -Dqplayer.tray=false.
+        for (String a : args) {
+            if (!a.startsWith("-D")) continue;
+            int eq = a.indexOf('=');
+            if (eq > 2) System.setProperty(a.substring(2, eq), a.substring(eq + 1));
+        }
+
+        // Windows packaged launcher (GUI subsystem): no console on double-click, but
         // attach to the launching terminal's console so logs still stream there.
         // Before anything writes to stdout (log4j console appender resolves it).
-        if (System.getProperty("java.vm.name", "").contains("Substrate")
-                && System.getProperty("os.name", "").toLowerCase().contains("win")) {
+        if (PACKAGED && System.getProperty("os.name", "").toLowerCase().contains("win")) {
             WinConsole.attachParentConsole();
         }
 
@@ -63,70 +75,9 @@ public final class Main {
         }
 
         // Route the shared player-core logger to log4j2 (colored console + rolling
-        // file, config in log4j2.xml). First thing in main so every later line — incl.
-        // the startup property fixups below — lands in the configured format.
+        // file, config in log4j2.xml). Early in main so every later line lands in
+        // the configured format.
         Logger.setSink(new Log4j2Sink());
-
-        // Pin Rhino to the interpreter BEFORE any qml4j class loads. JsRuntime caches
-        // the optimization level into a `static final` field whose initializer reads
-        // `qml4j.rhino.opt`, and `-Dqml4j.rhino.opt=-1` in native-image.properties is
-        // not reliably baked into runtime System properties by newer GraalVM. Without
-        // the interpreter, Rhino's Codegen path calls ClassLoader.defineClass at
-        // runtime — which native-image forbids — and the render thread crashes with
-        // "No classes have been predefined during the image build".
-        if (System.getProperty("qml4j.rhino.opt") == null) {
-            System.setProperty("qml4j.rhino.opt", "-1");
-        }
-
-        // In a native image there is no JDK home; javax.sound's provider loader throws
-        // "Can't find java.home" reading the optional lib/sound.properties. Point it at
-        // a real dir so the (absent) file is simply skipped.
-        if (System.getProperty("java.home") == null) {
-            System.setProperty("java.home", System.getProperty("user.dir", "/tmp"));
-        }
-
-        // AWT's logical-font init reads <java.home>/lib/fontconfig.bfc; the native
-        // binary has no JDK lib dir, so it throws "Fontconfig head is null" and any
-        // downstream font-metrics call (incl. the tray's Swing JPopupMenu sizing) dies.
-        // The native build bundles the host JDK's fontconfig.bfc as a classpath
-        // resource (maven-antrun-plugin in the native profile); extract it to a temp
-        // file and point AWT at it (sun.awt.fontconfig is the documented override —
-        // FontConfiguration.findFontConfigFile reads it before falling back to the
-        // default lib/fontconfig.bfc lookup) BEFORE any tray/Swing code runs.
-        // Only the macOS tray uses AWT/Swing (Windows = WinTray, Linux = GTK
-        // LinuxTray), so this matters there alone — skip it (and its misleading
-        // "tray menus will fail" warning) on the native Linux/Windows builds.
-        if (System.getProperty("java.vm.name", "").contains("Substrate")
-                && System.getProperty("os.name", "").toLowerCase().contains("mac")
-                && System.getProperty("sun.awt.fontconfig") == null) {
-            try (InputStream is = Main.class.getResourceAsStream("/fontconfig.bfc")) {
-                if (is == null) {
-                    Logger.warn("fontconfig.bfc not bundled — tray menus will fail");
-                } else {
-                    File f = File.createTempFile("qplayer-fontconfig", ".bfc");
-                    f.deleteOnExit();
-                    try (OutputStream os = new FileOutputStream(f)) { is.transferTo(os); }
-                    System.setProperty("sun.awt.fontconfig", f.getAbsolutePath());
-                    Logger.info("fontconfig extracted: {}", f.getAbsolutePath());
-                }
-            } catch (Throwable t) {
-                Logger.warn("fontconfig extract failed: {}", t);
-            }
-        }
-
-        // In the native image, make the bare binary self-sufficient: point Skija +
-        // LWJGL at the native libs that ship beside the executable, so `qplayer[.exe]`
-        // works without a wrapper script (and the path is read straight from the OS,
-        // dodging the mojibake you get passing a non-ASCII dir through a .cmd file).
-        // On Windows this dir also holds icudtl.dat (Skija's ICU data; Linux/macOS
-        // bake it into the lib). A launcher that already set these (e.g. the AppImage
-        // AppRun, pointing at its native-libs subdir) wins via the null check.
-        // Skipped on a normal JVM (dev `exec:exec`), where Skija extracts its own
-        // natives and the executable is `java`, not us.
-        if (System.getProperty("java.vm.name", "").contains("Substrate")) {
-            defaultNativePath("skija.library.path");
-            defaultNativePath("org.lwjgl.librarypath");
-        }
 
         ResourceLoader resources = new ClasspathResourceLoader();
 
@@ -170,15 +121,7 @@ public final class Main {
         if (qmlBytes == null) throw new IllegalStateException("Main.qml not found on classpath");
         String qml = new String(qmlBytes, StandardCharsets.UTF_8);
 
-        // In a GraalVM native image (or with -Dqplayer.aot=true) load the build-time
-        // AOT-compiled QML classes instead of generating them at runtime — the
-        // no-runtime-codegen path native-image's closed world requires (paired with
-        // interpreted Rhino, baked via -Dqml4j.rhino.opt=-1 at build time).
-        boolean nativeImage = System.getProperty("java.vm.name", "").contains("Substrate");
-        boolean aot = nativeImage || "true".equals(System.getProperty("qplayer.aot"));
-        QmlEngine engine = aot
-                ? new QmlEngine(new dev.t1m3.qplayer.desktop.aot.PrecompiledBackend())
-                : new QmlEngine();
+        QmlEngine engine = new QmlEngine();
         DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings);
 
         // Playback control runs on the main event loop (alive even while the render
@@ -187,7 +130,8 @@ public final class Main {
         controller.setExitListener(window::onExitRequested);
         // Open external links (the About page) in the system browser. The Android
         // host uses an ACTION_VIEW intent; on the desktop hand the URL to the OS
-        // (no java.awt.Desktop, which is unreliable in the native image).
+        // (no java.awt.Desktop, which needs a working desktop integration and can
+        // block on some Linux setups).
         controller.setUrlOpener(Main::openUrl);
         // Pick this OS's own release asset (there's no .apk on a desktop release —
         // PlayerController's default matcher, unchanged for Android, would never
@@ -252,10 +196,10 @@ public final class Main {
         startLibraryScan(controller, reader, window, initialFolder);
         watcher.start(initialFolder);
 
-        // Don't auto-check for updates outside a packaged native-image build — a
-        // plain `mvn exec:exec` dev run would otherwise nag on every launch,
-        // mirroring QPlayerActivity's debug-build skip on Android.
-        if (nativeImage) {
+        // Don't auto-check for updates outside a packaged build — a plain
+        // `mvn exec:exec` dev run would otherwise nag on every launch, mirroring
+        // QPlayerActivity's debug-build skip on Android.
+        if (PACKAGED) {
             controller.checkForUpdate();
         }
 
@@ -398,8 +342,8 @@ public final class Main {
         }
     }
 
-    /** Running app version from the Maven-filtered version.properties (baked into
-     *  the classpath / native image), for the update check. Empty if unavailable. */
+    /** Running app version from the Maven-filtered version.properties on the
+     *  classpath, for the update check. Empty if unavailable. */
     private static String appVersion() {
         try (InputStream is = Main.class.getResourceAsStream("/version.properties")) {
             if (is == null) return "";
@@ -447,27 +391,6 @@ public final class Main {
         }, "qplayer-scan");
         t.setDaemon(true);
         t.start();
-    }
-
-    // Set a native-library path property to the running executable's directory,
-    // unless a launcher already set it. Used to make the bare native binary find
-    // the Skija/LWJGL libs (and icudtl.dat) that ship beside it.
-    private static void defaultNativePath(String prop) {
-        if (System.getProperty(prop) != null) return;
-        try {
-            String cmd = ProcessHandle.current().info().command().orElse(null);
-            if (cmd != null) {
-                File parent = new File(cmd).getAbsoluteFile().getParentFile();
-                if (parent != null) {
-                    System.setProperty(prop, parent.getAbsolutePath());
-                    return;
-                }
-            }
-        } catch (Throwable ignored) {
-            // ProcessHandle may be restricted; fall through to the CWD.
-        }
-        String cwd = System.getProperty("user.dir");
-        if (cwd != null) System.setProperty(prop, cwd);
     }
 
     // The desktop GL drivers (notably NVIDIA's) can SIGSEGV a worker thread the

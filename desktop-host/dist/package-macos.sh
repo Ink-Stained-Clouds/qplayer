@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Package the macOS native image into QPlayer.app + a .dmg.
-# Run AFTER `mvn -pl desktop-host -Pnative package` (under a GraalVM JDK) on macOS.
+# Package the macOS desktop app with jpackage into QPlayer.app + a .dmg.
+# Run AFTER `mvn -pl desktop-host -Pdist package` (under a JDK 21) on macOS.
 #   bash desktop-host/dist/package-macos.sh
 # Output: desktop-host/target/QPlayer.dmg
 #
@@ -8,13 +8,13 @@
 # codesigned + notarized (Apple Developer ID), otherwise Gatekeeper blocks it.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+DIST="desktop-host/dist"
 T=desktop-host/target
-BIN="$T/qplayer"
-[ -x "$BIN" ] || { echo "native binary $BIN not found — run the native build first"; exit 1; }
+APP="$T/app"
+[ -f "$APP/qplayer.jar" ] || { echo "$APP/qplayer.jar not found — run 'mvn -pl desktop-host -Pdist package' first"; exit 1; }
 
-# Version for Info.plist. CI passes QPLAYER_VERSION (the release tag, like the
-# Windows installer step); a local build falls back to the latest git tag, then
-# to 0.0.0. Leading "v" stripped either way.
+# Version for Info.plist. CI passes QPLAYER_VERSION (the release tag); a local
+# build falls back to the latest git tag, then to 0.0.0.
 VERSION="${QPLAYER_VERSION:-${GITHUB_REF_NAME:-}}"
 VERSION="${VERSION#v}"
 if [ -z "$VERSION" ]; then
@@ -22,52 +22,18 @@ if [ -z "$VERSION" ]; then
   VERSION="${VERSION#v}"
 fi
 [ -n "$VERSION" ] || VERSION="0.0.0"
-echo "packaging QPlayer $VERSION"
+# CFBundleVersion's major must be > 0 or jpackage refuses the build, and QPlayer
+# is still on 0.x. Bump only the number baked into the bundle — the version the
+# app reports (and the update check compares) comes from version.properties.
+BUNDLE_VERSION="$VERSION"
+case "$BUNDLE_VERSION" in 0.*|0) BUNDLE_VERSION="1${VERSION#0}" ;; esac
+echo "packaging QPlayer $VERSION (bundle version $BUNDLE_VERSION)"
 
-APP="$T/QPlayer.app"
-LIBS="$APP/Contents/lib"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$LIBS"
-
-# Pick the natives matching this Mac's architecture.
-if [ "$(uname -m)" = "arm64" ]; then SKP=macos-arm64; LWP=natives-macos-arm64; else SKP=macos-x64; LWP=natives-macos; fi
-
-# binary + the JDK native libs (native-image emits *.dylib next to the binary; keep
-# them next to the binary in Contents/MacOS where it resolves them).
-cp "$BIN" "$APP/Contents/MacOS/qplayer-bin"
-cp "$T"/*.dylib "$APP/Contents/MacOS/" 2>/dev/null || true
-
-# Skija + LWJGL dylibs go in a separate Contents/lib (same shim-shadowing reason as
-# Linux), pulled from the local Maven repo.
-M2="${MAVEN_REPO_LOCAL:-$HOME/.m2/repository}"
-for jar in \
-  "$M2"/io/github/humbleui/skija-$SKP/*/skija-$SKP-*.jar \
-  "$M2"/org/lwjgl/*/*/*-$LWP.jar; do
-  [ -f "$jar" ] || continue
-  case "$jar" in *sources*|*javadoc*) continue ;; esac
-  unzip -o -j "$jar" '*.dylib' -d "$LIBS" >/dev/null 2>&1 || true
-done
-[ "$(ls -A "$LIBS" 2>/dev/null)" ] || { echo "no Skija/LWJGL .dylib found under $M2"; exit 1; }
-
-# launcher (CFBundleExecutable): set the dylib path then exec the binary. A native
-# image runs main() on thread 0, so GLFW's macOS main-thread rule is already met.
-cat > "$APP/Contents/MacOS/qplayer" <<'EOF'
-#!/bin/sh
-HERE="$(cd "$(dirname "$0")" && pwd)"
-export DYLD_LIBRARY_PATH="$HERE/../lib:${DYLD_LIBRARY_PATH:-}"
-exec "$HERE/qplayer-bin" \
-  -Dskija.library.path="$HERE/../lib" \
-  -Dorg.lwjgl.librarypath="$HERE/../lib" \
-  "$@"
-EOF
-chmod +x "$APP/Contents/MacOS/qplayer" "$APP/Contents/MacOS/qplayer-bin"
-
-# App icon: macOS wants a multi-resolution .icns, not a loose PNG, and the bundle
-# only shows it when Info.plist names it via CFBundleIconFile. Build the .icns
-# from the 512px source with sips + iconutil (both ship with macOS). If that
-# fails for any reason, fall back to the bare PNG so packaging still succeeds.
+# App icon: macOS wants a multi-resolution .icns, not a loose PNG. Build one from
+# the 512px source with sips + iconutil (both ship with macOS); if that fails,
+# jpackage falls back to its own generic icon rather than failing the build.
 ICON_SRC="docs/icon.png"
-ICON_OK=""
+ICON_ARG=()
 if command -v sips >/dev/null && command -v iconutil >/dev/null && [ -f "$ICON_SRC" ]; then
   SET="$T/qplayer.iconset"
   rm -rf "$SET"; mkdir -p "$SET"
@@ -76,28 +42,29 @@ if command -v sips >/dev/null && command -v iconutil >/dev/null && [ -f "$ICON_S
               128x128:128 128x128@2x:256 256x256:256 256x256@2x:512 512x512:512; do
     sips -z "${pair##*:}" "${pair##*:}" "$ICON_SRC" --out "$SET/icon_${pair%%:*}.png" >/dev/null 2>&1
   done
-  if iconutil -c icns "$SET" -o "$APP/Contents/Resources/qplayer.icns" 2>/dev/null; then
-    ICON_OK=1
+  if iconutil -c icns "$SET" -o "$T/qplayer.icns" 2>/dev/null; then
+    ICON_ARG=(--icon "$T/qplayer.icns")
   fi
   rm -rf "$SET"
 fi
-[ -n "$ICON_OK" ] || cp "$ICON_SRC" "$APP/Contents/Resources/qplayer.png" 2>/dev/null || true
 
-cat > "$APP/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleName</key><string>QPlayer</string>
-  <key>CFBundleExecutable</key><string>qplayer</string>
-  <key>CFBundleIdentifier</key><string>dev.t1m3.qplayer</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleIconFile</key><string>qplayer</string>
-  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleVersion</key><string>${VERSION}</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict></plist>
-EOF
+# Shared module list (see jre-modules.txt), comments stripped.
+MODS=$(sed 's/#.*//' "$DIST/jre-modules.txt" | tr -d '[:blank:]' | grep . | paste -sd, -)
 
-# .dmg
-hdiutil create -volname QPlayer -srcfolder "$APP" -ov -format UDZO "$T/QPlayer.dmg"
+rm -rf "$T/pkg"
+
+# -XstartOnFirstThread is mandatory: GLFW must own thread 0 on macOS, and the JVM
+# otherwise runs main() on a thread it spawns itself.
+jpackage --type dmg \
+  --name QPlayer --app-version "$BUNDLE_VERSION" --vendor t1m3 --description "QPlayer" \
+  --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.Main \
+  --dest "$T/pkg" "${ICON_ARG[@]}" \
+  --mac-package-identifier dev.t1m3.qplayer --mac-package-name QPlayer \
+  --java-options -XstartOnFirstThread \
+  --add-modules "$MODS" \
+  --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"
+
+# jpackage names it QPlayer-<version>.dmg; the release asset is plain QPlayer.dmg.
+mv "$T"/pkg/QPlayer-*.dmg "$T/QPlayer.dmg"
+rm -rf "$T/pkg"
 echo "→ $T/QPlayer.dmg"

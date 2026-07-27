@@ -90,24 +90,24 @@ mvn -pl desktop-host exec:exec -Dwin.w=480 -Dwin.h=800   # narrow (bottom bar)
 
 > The close button minimizes to the tray (the render thread is destroyed, audio keeps playing); only "Quit" from the tray exits. On macOS launch with `-XstartOnFirstThread`.
 
-**Standalone desktop executable (GraalVM native-image)**
+**Self-contained desktop bundle (jpackage + jlink)**
 
-Needs a **GraalVM 21** JDK. The QML is AOT-compiled at build time (no runtime bytecode generation). `native-image` can't cross-compile across OS/arch, so **each platform is built on its own machine**.
+Needs a full **JDK 21** (not a JRE — `jpackage`/`jlink` must be present). The bundle ships a jlinked runtime, so users don't install Java. `jpackage` only targets the OS it runs on, so **each platform is built on its own machine**.
 
 ```sh
 # 1) install the shared module
 mvn -DskipTests -pl player-core -am install
 
-# 2) AOT-compile the QML + build the native binary → desktop-host/target/qplayer[.exe]
-mvn -DskipTests -pl desktop-host -Pnative package
+# 2) stage target/app (qplayer.jar + every runtime dependency under lib/)
+mvn -DskipTests -pl desktop-host -Pdist package
 
-# 3) package into a lightweight per-platform bundle (Skija/LWJGL natives included)
+# 3) package into a per-platform bundle (jpackage jlinks the runtime as it goes)
 bash       desktop-host/dist/package-linux.sh      # Linux   → target/QPlayer-x86_64.AppImage (single file)
 pwsh -File desktop-host/dist/package-windows.ps1   # Windows → target/QPlayer-windows-x64.zip
 bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.dmg (host arch)
 ```
 
-> The macOS `.dmg` is unsigned; distributing it needs codesign + notarization or Gatekeeper blocks it. On a `v*` tag, `.github/workflows/release.yml` runs all of the above on the three-platform CI and attaches the artifacts to the GitHub Release.
+> The JDK modules linked into the runtime are listed in `desktop-host/dist/jre-modules.txt`, shared by all three scripts. The macOS `.dmg` is unsigned; distributing it needs codesign + notarization or Gatekeeper blocks it. On a `v*` tag, `.github/workflows/release.yml` runs all of the above on the three-platform CI and attaches the artifacts to the GitHub Release.
 
 ## Releasing
 

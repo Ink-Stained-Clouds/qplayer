@@ -15,7 +15,7 @@ import java.util.logging.Level;
  * <p>The default sink writes to {@code java.util.logging} (→ logcat on Android,
  * which is where the shared code runs unchanged). The desktop host swaps in a
  * log4j2 sink via {@link #setSink} at startup, keeping the log4j dependency out
- * of player-core (and off the Android / native-image-shared classpath).
+ * of player-core (and off the Android classpath).
  *
  * <p>Also keeps a capped in-memory ring buffer so an on-device log panel (the
  * QML bridge polls {@link #version()} / {@link #snapshot()}) can surface what's

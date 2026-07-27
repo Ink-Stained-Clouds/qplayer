@@ -22,7 +22,8 @@
   - `android-shell/app/build.gradle.kts` 的 `versionCode`（+1）和 `versionName`
   - `desktop-host/pom.xml` 的 `<qplayer.app.version>`
   - 漏改会导致 APK 内置版本号跟 tag 对不上，App 自带的更新检查（比较 `PackageInfo.versionName` 和 GitHub 最新 release tag）会无限提示更新。
-- 打 `v<versionName>` tag 触发 `.github/workflows/release.yml`：android + linux/macos/windows 桌面共 4 个 job 并行构建，都会把产物传到同一个 GitHub Release。**这 4 个并发上传偶尔会互相顶掉、丢文件**（比如 android job 构建成功但 apk 没挂上 release）；遇到这种情况用 GitHub API 单独 rerun 那一个 job（`POST /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun`），比重新走一遍全部 native-image 编译快得多。
+- 打 `v<versionName>` tag 触发 `.github/workflows/release.yml`：android + linux/macos/windows 桌面共 4 个 job 并行构建，都会把产物传到同一个 GitHub Release。**这 4 个并发上传偶尔会互相顶掉、丢文件**（比如 android job 构建成功但 apk 没挂上 release）；遇到这种情况用 GitHub API 单独 rerun 那一个 job（`POST /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun`）。
+- 桌面端打包是 **jpackage + jlink**（不再是 GraalVM native-image）：`mvn -pl desktop-host -Pdist package` 组装 `target/app`，再由 `desktop-host/dist/package-{linux,windows,macos}` 调 jpackage。运行时就是普通 JVM，不存在反射元数据/闭世界那套约束。裁剪进运行时的 JDK 模块列表在 `desktop-host/dist/jre-modules.txt`，三个脚本共用——**加了新依赖后如果启动崩在 `NoClassDefFoundError`/`ClassNotFoundException`，先怀疑这里少了模块**。
 - Release notes 手写中文，格式：`### 新功能` / `### 优化` / `### 修复` 三段式，结尾 `Full Changelog: vX...vY` 对比链接。改 release body 用 GitHub API PATCH 即可（不会重新触发 CI）；改 tag message 必须删掉 tag 重新打（会重新触发一次完整构建）。
 - 这台开发机在国内网络下直连 `api.github.com` 下载大文件很慢（~25KB/s），能用 GitHub 自己的基础设施做的事（如上面的单独 rerun）优先别走本地下载。
 
@@ -45,6 +46,11 @@ mvn -pl player-core install -DskipTests -q
 mvn -pl desktop-host package -DskipTests -q
 # 桌面端：运行
 mvn -pl desktop-host exec:exec -q
+
+# 桌面端：出分发包（需完整 JDK 21，带 jpackage/jlink）
+# PowerShell 会把裸的 -Dqplayer.app.version=... 拆开，必须整体加引号
+mvn -pl desktop-host -Pdist package -DskipTests -q "-Dqplayer.app.version=0.8.22"
+powershell -ExecutionPolicy Bypass -File desktop-host\dist\package-windows.ps1
 
 # Android：编译（这台机器内存紧张，需要限制 Gradle 堆）
 cd android-shell

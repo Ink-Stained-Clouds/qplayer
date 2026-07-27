@@ -90,24 +90,24 @@ mvn -pl desktop-host exec:exec -Dwin.w=480 -Dwin.h=800   # 窄屏(底部导航)
 
 > 关闭按钮最小化到托盘(渲染线程销毁、音频续播),从托盘"退出"才真正退出。macOS 启动需加 `-XstartOnFirstThread`。
 
-**桌面单文件可执行(GraalVM native-image)**
+**桌面分发包(jpackage + jlink)**
 
-需要 **GraalVM 21** JDK。QML 在构建期 AOT 编译,无运行时字节码生成。`native-image` 不能跨系统/架构编译,**每个平台需在对应机器上构建**。
+需要完整的 **JDK 21**(非 JRE,要带 `jpackage`/`jlink`)。产物内置一个按需裁剪的 JRE,用户无需自行安装 Java。`jpackage` 只能为当前系统打包,**每个平台需在对应机器上构建**。
 
 ```sh
 # 1) 安装共享模块
 mvn -DskipTests -pl player-core -am install
 
-# 2) AOT 编译 QML + 构建原生二进制 → desktop-host/target/qplayer[.exe]
-mvn -DskipTests -pl desktop-host -Pnative package
+# 2) 组装 target/app(qplayer.jar + lib/ 下的全部运行时依赖)
+mvn -DskipTests -pl desktop-host -Pdist package
 
-# 3) 打成各平台轻量分发包(Skija/LWJGL 原生库一并打入)
+# 3) 打成各平台分发包(jpackage 顺带 jlink 出运行时)
 bash       desktop-host/dist/package-linux.sh      # Linux   → target/QPlayer-x86_64.AppImage(单文件)
 pwsh -File desktop-host/dist/package-windows.ps1   # Windows → target/QPlayer-windows-x64.zip
 bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.dmg(随当前架构)
 ```
 
-> macOS 的 `.dmg` 未签名,对外分发需自行 codesign + 公证,否则 Gatekeeper 会拦截。打 `v*` tag 时,`.github/workflows/release.yml` 会在三平台 CI 上自动完成上述构建并附到 GitHub Release。
+> 裁进运行时的 JDK 模块列表在 `desktop-host/dist/jre-modules.txt`,三个脚本共用。macOS 的 `.dmg` 未签名,对外分发需自行 codesign + 公证,否则 Gatekeeper 会拦截。打 `v*` tag 时,`.github/workflows/release.yml` 会在三平台 CI 上自动完成上述构建并附到 GitHub Release。
 
 ## 发版
 
