@@ -26,6 +26,18 @@ Item {
     property real dailyHdrY: greetH + gridH + 4
     property real dailyTop: dailyHdrY + (dailyCount > 0 ? 40 : 0)
 
+    // A tap holds the "尝试连接中" state for at least this long even if the
+    // request itself fails near-instantly (e.g. no network at all) -- a flash
+    // too quick to actually read isn't feedback. A genuinely slow real request
+    // still keeps showing it past 3s (refreshBusy also watches homeLoading).
+    property bool refreshCooling: false
+    property bool refreshBusy: refreshCooling || player.homeLoading
+    Timer {
+        id: refreshCoolTimer
+        interval: 3000
+        onTriggered: page.refreshCooling = false
+    }
+
     function greeting() {
         var h = new Date().getHours();
         if (h < 6) return "夜深了";
@@ -95,11 +107,75 @@ Item {
         }
     }
 
-    Text {
+    // Empty either because it's still loading, or because loadHome() tried and
+    // every request failed (offline/API down) -- refreshBusy tells those two
+    // apart, since both otherwise look identical (both lists just empty).
+    Item {
         anchors.centerIn: parent
         visible: page.recCount === 0 && page.dailyCount === 0
-        text: "加载中…"
-        color: Theme.color.onSurfaceVariantColor
-        fontSize: 14
+        width: emptyRow.width + 40
+        height: 44
+
+        Rectangle {
+            id: refreshPill
+            anchors.fill: parent
+            radius: height / 2
+            color: Theme.color.surfaceContainerHigh
+
+            // MD3 state layer + Ripple — the same building block Button/
+            // IconButton use everywhere else in the app, so it's already
+            // proven to animate correctly in qml4j (unlike the `scale`
+            // press-bounce tried here first, which never interpolated under
+            // either an implicit Behavior or an explicit NumberAnimation).
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: Theme.color.onSecondaryContainerColor
+                opacity: refreshRipple.pressed ? 0.12 : (refreshRipple.containsMouse ? 0.08 : 0)
+                Behavior on opacity { NumberAnimation { duration: 100 } }
+            }
+
+            Ripple {
+                id: refreshRipple
+                anchors.fill: parent
+                clipRadius: parent.radius
+                rippleColor: Theme.color.onSecondaryContainerColor
+                // Stays tappable while busy -- the ripple/highlight still responds
+                // (disabling the MouseArea would kill that feedback entirely), the
+                // tap itself just does nothing until the in-flight attempt settles.
+                onClicked: {
+                    if (page.refreshBusy) return;
+                    page.refreshCooling = true;
+                    refreshCoolTimer.restart();
+                    player.loadHome();
+                }
+            }
+
+            Row {
+                id: emptyRow
+                anchors.centerIn: parent
+                spacing: 8
+                Text {
+                    id: refreshIcon
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "sync"
+                    font.family: Theme.iconFont.name
+                    font.pixelSize: 18
+                    color: page.refreshBusy ? Theme.color.onSurfaceVariantColor : Theme.color.onSecondaryContainerColor
+                    NumberAnimation on rotation {
+                        running: page.refreshBusy
+                        loops: Animation.Infinite
+                        from: 360; to: 0
+                        duration: 700
+                    }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: page.refreshBusy ? "尝试连接中" : "点击刷新"
+                    color: page.refreshBusy ? Theme.color.onSurfaceVariantColor : Theme.color.onSecondaryContainerColor
+                    fontSize: 14
+                }
+            }
+        }
     }
 }
