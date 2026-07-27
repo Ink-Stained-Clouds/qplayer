@@ -3,6 +3,7 @@ package dev.t1m3.qplayer.bridge;
 import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.audio.MetadataReader;
 import dev.t1m3.qplayer.cache.DiskCache;
+import dev.t1m3.qplayer.cache.PlaylistCacheIndex;
 import dev.t1m3.qplayer.cache.SongMetaIndex;
 import dev.t1m3.qplayer.customapi.CustomApiClient;
 import dev.t1m3.qplayer.customapi.CustomApiConfig;
@@ -98,6 +99,9 @@ public final class PlayerController {
      *  something to show when the live network call fails (offline, or the API
      *  is just down) — DiskCache itself only knows bare ids, no display text. */
     private final SongMetaIndex songMetaIndex = new SongMetaIndex();
+    /** playlistId -> summary + song-list snapshot, so 我的歌单 and a
+     *  previously-opened playlist still render with no network. */
+    private final PlaylistCacheIndex playlistCacheIndex = new PlaylistCacheIndex();
 
     private final List<Track> library = new CopyOnWriteArrayList<>();
     private final List<Track> queue = new CopyOnWriteArrayList<>();
@@ -339,6 +343,10 @@ public final class PlayerController {
     public final Property<List<String>> searchHistory = new Property<>(Collections.<String>emptyList());
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
+    /** True while {@link #loadHome} is in flight — lets HomePage.qml tell "still
+     *  loading" from "tried and failed" (both look like empty lists otherwise) so
+     *  it can show a tap-to-retry affordance instead of a permanent spinner. */
+    public final Property<Boolean> homeLoading = new Property<>(Boolean.FALSE);
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteaseSong>> recentSongs = new Property<>(Collections.<NeteaseSong>emptyList());
     /** Currently opened playlist. */
@@ -397,6 +405,29 @@ public final class PlayerController {
     /** Transient user-facing message; the UI shows a Snackbar when it changes. */
     public final Property<String> toast = new Property<>("");
 
+    /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
+     *  exact same text as last time. qml4j's property-changed notification
+     *  doesn't fire when a Property is set to a value equal to its current
+     *  one, so a plain {@code toast.set(msg)} silently no-ops on a repeat
+     *  (e.g. tapping Settings > 关于's "检查更新" twice with nothing newer
+     *  either time — the second tap's ripple fires but no Snackbar appears).
+     *  Clearing to "" and immediately back to {@code msg} within the same
+     *  synchronous callback wasn't enough either — the two writes land in the
+     *  same render pass and get coalesced into "no net change", so the clear
+     *  is pushed out with a genuine delay to land in a separate frame before
+     *  the real message. Safe to call from any thread. */
+    private void showToast(String msg) {
+        post(() -> toast.set(""));
+        worker.submit(() -> {
+            try {
+                Thread.sleep(30);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            post(() -> toast.set(msg));
+        });
+    }
+
     public PlayerController(AudioBackend backend, MetadataReader metadataReader) {
         this(backend, metadataReader, NeteaseClient.INSTANCE);
     }
@@ -437,6 +468,7 @@ public final class PlayerController {
         backend.setOnError(() -> onMain(this::onPlaybackError));
         worker.submit(this::loadSearchHistory);
         songMetaIndex.load();
+        playlistCacheIndex.load();
         loadQueue();
         loadCustomPlaylist();
         if (netease.isLoggedIn()) {
@@ -847,7 +879,7 @@ public final class PlayerController {
                 String tag = optString(obj, "tag_name");
                 String latest = tag.startsWith("v") ? tag.substring(1) : tag;
                 if (!isNewer(latest, currentVersion)) {
-                    if (manual) post(() -> toast.set("已是最新版本"));
+                    if (manual) showToast("已是最新版本");
                     return;
                 }
 
@@ -880,7 +912,7 @@ public final class PlayerController {
                 Logger.info("update available: {} (running {})", latest, currentVersion);
             } catch (Throwable e) {
                 Logger.warn("update check failed: {}", e.toString());
-                if (manual) post(() -> toast.set("检查更新失败，请稍后重试"));
+                if (manual) showToast("检查更新失败，请稍后重试");
             }
         });
     }
@@ -1392,6 +1424,12 @@ public final class PlayerController {
                 // The audio fast-path skips resolveAndPlayNetease, so load the lyrics
                 // (cache-first inside) here too — else a cached song plays wordless.
                 loadNeteaseLyrics(t, i);
+                // Same reason: cacheAudioAsync (which downloads the 64x64 offline-
+                // playlist thumbnail) never runs on this path either, so a track
+                // cached before that thumbnail existed — or just replayed a second
+                // time — would otherwise never get one and stay a gray placeholder
+                // in an offline playlist's song list forever.
+                cacheThumb64Async(t.coverUrl);
             } else if (t.streamUrl != null) {
                 Logger.info("play netease (cached url): {}", t.title);
                 backend.play(t.playable(), resumeMs);
@@ -1960,6 +1998,28 @@ public final class PlayerController {
             diskCache.cacheAudio(url, nid);
             songMetaIndex.save();
         });
+        cacheThumb64Async(t.coverUrl);
+    }
+
+    /** A 64x64 cover thumbnail for offline playlist browsing (PlaylistCacheIndex
+     *  persists coverUrl only, no thumbnail bytes — this is the only place one
+     *  actually gets downloaded). Stored in DiskCache's dedicated thumb64
+     *  sub-cache, capped by file count (oldest evicted first, see
+     *  {@code DiskCache.THUMB64_MAX_COUNT}) rather than a per-call limit here —
+     *  browsing a playlist queues one download per track (hasThumb64 skips
+     *  ones already cached, so reopening the same playlist is cheap), and the
+     *  disk-side cap keeps total thumbnail storage/count bounded regardless of
+     *  how many different playlists get browsed over time. Idempotent and safe
+     *  to call from any thread — only the actual download runs on
+     *  {@link #worker}. Called from {@link #openPlaylist} for every track in a
+     *  freshly (re)opened playlist, and from {@link #cacheAudioAsync} / playAt()'s
+     *  already-cached fast path so a track actually played still gets one even
+     *  if it was evicted (or never browsed) since. */
+    private void cacheThumb64Async(String coverUrl) {
+        if (coverUrl == null || coverUrl.isEmpty()) return;
+        String thumb64 = thumbUrl(coverUrl, "64");
+        if (diskCache.hasThumb64(thumb64)) return;
+        worker.submit(() -> diskCache.cacheThumb64(thumb64));
     }
 
     private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs) {
@@ -2615,6 +2675,7 @@ public final class PlayerController {
 
     /** Load the home content: recommended songs (login) + recommended playlists. */
     public void loadHome() {
+        post(() -> homeLoading.set(true));
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> picks = netease.personalizedPlaylists(12);
@@ -2635,6 +2696,7 @@ public final class PlayerController {
                     Logger.warn("daily recommend failed: {}", e.getMessage());
                 }
             }
+            post(() -> homeLoading.set(false));
         });
     }
 
@@ -2674,11 +2736,65 @@ public final class PlayerController {
                     playlistDeletable.set(owned && favoritePid != 0L && playlistId != favoritePid);
                     playlistLoading.set(false);
                 });
+                playlistCacheIndex.upsert(playlistId, name,
+                        detail != null ? detail.coverUrl : null, songs.size(), songs);
+                // One download per track (DiskCache's thumb64 count-cap bounds
+                // total storage/downloads over time, not this call).
+                for (NeteaseSong s : songs) cacheThumb64Async(s.coverUrl);
+                playlistCacheIndex.save();
             } catch (Throwable e) {
                 Logger.warn("open playlist {} failed: {}", playlistId, e.getMessage());
-                post(() -> playlistLoading.set(false));
+                offlinePlaylistFallback(playlistId);
             }
         });
+    }
+
+    /** {@link #openPlaylist} couldn't reach the network: fall back to whatever
+     *  {@link #playlistCacheIndex} has for this id, if anything. Songs never
+     *  actually played have no cached thumbnail (only {@code cacheAudioAsync}
+     *  downloads one) — those rows just show the placeholder glyph, same as a
+     *  cover still decoding. */
+    private void offlinePlaylistFallback(long playlistId) {
+        PlaylistCacheIndex.Cached cached = playlistCacheIndex.get(playlistId);
+        if (cached == null || cached.songs.isEmpty()) {
+            post(() -> {
+                if (currentPlaylistId != playlistId) return;
+                playlistLoading.set(false);
+                toast.set("当前无网络，且未缓存过该歌单");
+            });
+            return;
+        }
+        List<NeteaseSong> offline = new ArrayList<>(cached.songs.size());
+        for (NeteaseSong s : cached.songs) offline.add(withLocalThumb(s));
+        String cover = cached.coverUrl != null ? diskCache.getThumb64(thumbUrl(cached.coverUrl, "64")) : null;
+        final String name = cached.name;
+        post(() -> {
+            if (currentPlaylistId != playlistId) return;
+            playlistTitle.set(name == null ? "" : name);
+            playlistCoverPath.set(cover == null ? "" : cover);
+            playlistTracks.set(offline);
+            playlistLoading.set(false);
+            toast.set("当前无网络，显示已缓存的歌单内容");
+        });
+    }
+
+    /** Copy of {@code s} with {@code coverThumbPath} resolved to its disk-cached
+     *  64x64 file (empty if that track was never actually played/cached) — never
+     *  mutates the shared instance living inside {@link #playlistCacheIndex}. */
+    private NeteaseSong withLocalThumb(NeteaseSong s) {
+        NeteaseSong copy = new NeteaseSong();
+        copy.id = s.id;
+        copy.name = s.name;
+        copy.artist = s.artist;
+        copy.album = s.album;
+        copy.coverUrl = s.coverUrl;
+        copy.durationMs = s.durationMs;
+        copy.fee = s.fee;
+        if (s.coverUrl != null && !s.coverUrl.isEmpty()) {
+            String local = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+            copy.coverThumbPath = local != null ? local : "";
+        }
+        return copy;
     }
 
     /** Collect / un-collect the currently open playlist. No-op on your own playlist or
@@ -2714,7 +2830,15 @@ public final class PlayerController {
 
     /** Load the signed-in user's playlists (favorites + created). */
     public void loadMyPlaylists() {
-        if (uid == 0) return;
+        // uid == 0 normally means "not logged in, nothing to load" -- except when
+        // refreshLogin's own live check just failed offline but cookies say we
+        // were logged in last session (see its catch block): there's no live uid
+        // to call userPlaylists(uid, ...) with, but there may still be a cached
+        // snapshot from a previous online session worth falling back to.
+        if (uid == 0) {
+            worker.submit(this::offlineMyPlaylistsFallback);
+            return;
+        }
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> pls = netease.userPlaylists(uid, 100);
@@ -2724,15 +2848,46 @@ public final class PlayerController {
                     p.owned = p.creatorUid == uid;
                     // The "我喜欢的音乐" default is the first playlist the user owns.
                     if (favPid == 0L && p.owned) favPid = p.id;
+                    playlistCacheIndex.upsert(p.id, p.name, p.coverUrl, p.trackCount, null);
+                    cacheThumb64Async(p.coverUrl);
                 }
                 favoritePid = favPid;
+                playlistCacheIndex.save();
                 post(() -> {
                     myPlaylists.set(pls);
                     playlistCount.set(pls.size());
                 });
             } catch (Throwable e) {
                 Logger.warn("user playlists failed: {}", e.getMessage());
+                offlineMyPlaylistsFallback();
             }
+        });
+    }
+
+    /** {@link #loadMyPlaylists} couldn't reach the network (or has no live uid to
+     *  even try with): fall back to whatever {@link #playlistCacheIndex} has from
+     *  previous online sessions, regardless of uid. No-op (leaves whatever 我的
+     *  already showed) when there's nothing cached at all. */
+    private void offlineMyPlaylistsFallback() {
+        List<PlaylistCacheIndex.Cached> cached = playlistCacheIndex.snapshot();
+        if (cached.isEmpty()) return;
+        List<NeteasePlaylist> offline = new ArrayList<>(cached.size());
+        for (PlaylistCacheIndex.Cached e : cached) {
+            NeteasePlaylist p = new NeteasePlaylist();
+            p.id = e.id;
+            p.name = e.name;
+            p.coverUrl = e.coverUrl;
+            p.trackCount = e.trackCount;
+            if (e.coverUrl != null && !e.coverUrl.isEmpty()) {
+                String local = diskCache.getThumb64(thumbUrl(e.coverUrl, "64"));
+                p.coverThumbPath = local != null ? local : "";
+            }
+            offline.add(p);
+        }
+        post(() -> {
+            myPlaylists.set(offline);
+            playlistCount.set(offline.size());
+            toast.set("当前无网络，显示已缓存的歌单列表");
         });
     }
 
@@ -3027,6 +3182,10 @@ public final class PlayerController {
     }
 
     private void refreshLogin() {
+        // Cheap, local (cookie presence only, no network) -- read before the network
+        // attempt below so the catch block still knows "was logged in last session"
+        // even when loginUid()'s actual API call is what throws.
+        final boolean cookieLoggedIn = netease.isLoggedIn();
         worker.submit(() -> {
             try {
                 long id = netease.loginUid();
@@ -3057,6 +3216,17 @@ public final class PlayerController {
                 }
             } catch (Throwable e) {
                 Logger.warn("refreshLogin failed: {}", e.getMessage());
+                // Offline (or the API's just down) but cookies say we were logged in
+                // last session: don't fall back to a logged-out UI just because the
+                // live refresh couldn't reach the network -- still surface it as
+                // logged in and let loadHome/loadMyPlaylists fall back to their own
+                // cached data (uid stays 0 this session; loadMyPlaylists() no longer
+                // requires it to at least try the offline path).
+                if (cookieLoggedIn) {
+                    post(() -> loggedIn.set(true));
+                    loadHome();
+                    loadMyPlaylists();
+                }
             }
         });
     }

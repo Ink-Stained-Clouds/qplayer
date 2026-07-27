@@ -30,9 +30,19 @@ public final class DiskCache {
     private volatile String baseDir = AppDirs.cacheBase() + "/cache";
 
     /** Sub-directory names. */
-    public static final String AUDIO  = "audio";
-    public static final String LYRIC  = "lyric";
-    public static final String IMAGE  = "image";
+    public static final String AUDIO   = "audio";
+    public static final String LYRIC   = "lyric";
+    public static final String IMAGE   = "image";
+    /** Offline-playlist-browsing thumbnails (64x64), kept separate from the
+     *  general {@link #IMAGE} cache: capped by file *count*
+     *  ({@link #THUMB64_MAX_COUNT}), not the byte-size budget the other three
+     *  sub-caches share, since a meaningful byte budget for images this tiny
+     *  would be a near-unlimited file count anyway. */
+    public static final String THUMB64 = "thumb64";
+
+    /** Oldest files (by lastModified) are deleted once the count exceeds this,
+     *  every time a new one is cached — see {@link #cacheThumb64}. */
+    private static final int THUMB64_MAX_COUNT = 128;
 
     private volatile long maxSizeBytes;
 
@@ -87,6 +97,14 @@ public final class DiskCache {
         return baseDir + "/" + IMAGE + "/" + Math.abs(url.hashCode()) + ".img";
     }
 
+    /** Resolve cache file for a 64x64 offline-playlist thumbnail, keyed by
+     *  url hash (the url is expected to already carry its own size param,
+     *  e.g. {@code ?param=64y64} — same convention as {@link #imagePath}). */
+    public String thumb64Path(String url) {
+        if (url == null || url.isEmpty()) return null;
+        return baseDir + "/" + THUMB64 + "/" + Math.abs(url.hashCode()) + ".img";
+    }
+
     // ---- existence check -------------------------------------------------
 
     public boolean hasAudio(long neteaseId) {
@@ -101,6 +119,11 @@ public final class DiskCache {
 
     public boolean hasImage(String url) {
         String p = imagePath(url);
+        return p != null && new File(p).exists();
+    }
+
+    public boolean hasThumb64(String url) {
+        String p = thumb64Path(url);
         return p != null && new File(p).exists();
     }
 
@@ -133,6 +156,12 @@ public final class DiskCache {
         return touch(p);
     }
 
+    /** Return the cached 64x64 thumbnail file path, or null. */
+    public String getThumb64(String url) {
+        String p = thumb64Path(url);
+        return touch(p);
+    }
+
     // ---- write (download to cache) ---------------------------------------
 
     /**
@@ -162,12 +191,22 @@ public final class DiskCache {
         downloadToFile(url, path);
     }
 
+    /** Download an HTTP URL to the 64x64 thumbnail cache file, then evict the
+     *  oldest thumbnails (by lastModified) past {@link #THUMB64_MAX_COUNT} —
+     *  a file *count* cap, independent of the byte-size budget the other
+     *  three sub-caches share via {@link #evictIfNeeded}. */
+    public void cacheThumb64(String url) {
+        String path = thumb64Path(url);
+        downloadToFile(url, path);
+        evictThumb64IfOverCount();
+    }
+
     // ---- size & cleanup ---------------------------------------------------
 
-    /** Total bytes used by all three cache sub-directories. */
+    /** Total bytes used by all four cache sub-directories. */
     public long totalSize() {
         long total = 0;
-        for (String sub : new String[]{AUDIO, LYRIC, IMAGE}) {
+        for (String sub : new String[]{AUDIO, LYRIC, IMAGE, THUMB64}) {
             total += dirSize(new File(baseDir, sub));
         }
         return total;
@@ -175,7 +214,7 @@ public final class DiskCache {
 
     /** Delete all cached files. */
     public void clearAll() {
-        for (String sub : new String[]{AUDIO, LYRIC, IMAGE}) {
+        for (String sub : new String[]{AUDIO, LYRIC, IMAGE, THUMB64}) {
             deleteRecursive(new File(baseDir, sub));
         }
     }
@@ -263,6 +302,19 @@ public final class DiskCache {
                 total -= sz;
                 Logger.info("disk cache evicted: {}", f.getName());
             }
+        }
+    }
+
+    /** Count (not byte-size) cap on {@link #THUMB64}: delete the oldest files
+     *  once there are more than {@link #THUMB64_MAX_COUNT}. */
+    private void evictThumb64IfOverCount() {
+        File dir = new File(baseDir, THUMB64);
+        File[] files = dir.listFiles();
+        if (files == null || files.length <= THUMB64_MAX_COUNT) return;
+        Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        int overBy = files.length - THUMB64_MAX_COUNT;
+        for (int i = 0; i < overBy; i++) {
+            if (files[i].delete()) Logger.info("thumb64 cache evicted: {}", files[i].getName());
         }
     }
 
