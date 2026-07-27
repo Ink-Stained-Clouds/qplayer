@@ -197,7 +197,7 @@ public final class DiskCache {
      *  three sub-caches share via {@link #evictIfNeeded}. */
     public void cacheThumb64(String url) {
         String path = thumb64Path(url);
-        downloadToFile(url, path);
+        downloadToFile(url, path, true);
         evictThumb64IfOverCount();
     }
 
@@ -248,6 +248,13 @@ public final class DiskCache {
     }
 
     private void downloadToFile(String url, String path) {
+        downloadToFile(url, path, false);
+    }
+
+    /** {@code quiet} suppresses the per-file success line: warming a playlist's
+     *  thumbnails queues one download per track, which drowned the log (a few
+     *  hundred lines per playlist opened). Failures are still logged. */
+    private void downloadToFile(String url, String path, boolean quiet) {
         if (url == null || path == null) return;
         ensureParent(path);
         HttpURLConnection c = null;
@@ -262,8 +269,9 @@ public final class DiskCache {
                 int n;
                 while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
             }
-            long size = new File(path).length();
-            Logger.info("disk cache downloaded: {} ({} B)", fileName(path), size);
+            if (!quiet) {
+                Logger.info("disk cache downloaded: {} ({} B)", fileName(path), new File(path).length());
+            }
         } catch (Throwable e) {
             Logger.warn("disk cache download failed: {}", e.getMessage());
             cleanPartial(path);
@@ -313,8 +321,10 @@ public final class DiskCache {
         if (files == null || files.length <= THUMB64_MAX_COUNT) return;
         Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
         int overBy = files.length - THUMB64_MAX_COUNT;
+        // Unlogged: this runs after every warmed thumbnail, so once the cache is at
+        // its cap it fires on each one -- a line here is pure noise, not a signal.
         for (int i = 0; i < overBy; i++) {
-            if (files[i].delete()) Logger.info("thumb64 cache evicted: {}", files[i].getName());
+            files[i].delete();
         }
     }
 

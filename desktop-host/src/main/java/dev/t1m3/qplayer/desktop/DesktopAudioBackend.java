@@ -150,6 +150,11 @@ public final class DesktopAudioBackend implements AudioBackend {
             boolean reachedEnd = false;
             try {
                 reachedEnd = playCurrentSource();
+            } catch (InterruptedException e) {
+                // Shutdown interrupts this thread mid-sleep; that's the intended
+                // way out, not a fault worth an ERROR + stack trace on every exit.
+                Thread.currentThread().interrupt();
+                break;
             } catch (Throwable e) {
                 Logger.exception(e);
                 playing.set(false);

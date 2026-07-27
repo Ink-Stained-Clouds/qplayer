@@ -1562,7 +1562,15 @@ public final class PlayerController {
         String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
         if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) return local;
         if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
-            String cached = diskCache.getImage(t.coverUrl);
+            // Must use the same 1024px key updateCover() and loadCoverBytes() cache
+            // under: hashing the raw coverUrl points at a file nothing ever writes,
+            // so this always returned "". That went unnoticed everywhere except the
+            // lyric page, whose cover Image binds coverPath alone (the MiniPlayer's
+            // falls back to the remote coverUrl) -- so playing a track preloaded by
+            // preloadAdjacent, which takes updateCover's coverBytes fast path and
+            // gets its coverPath from here, left the lyric page on its placeholder
+            // while the fluid backdrop and Monet seed came up fine from the same bytes.
+            String cached = diskCache.getImage(thumbUrl(t.coverUrl, "1024"));
             if (cached != null) return cached;
         }
         return "";
