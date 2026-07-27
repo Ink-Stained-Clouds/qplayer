@@ -138,6 +138,15 @@ public final class Main {
         controller.setColorExtractor(new DesktopColorExtractor());
         controller.setCurrentVersion(appVersion());
 
+        // A downloaded update installer (see downloadAndInstallUpdate below) has
+        // served its purpose once the app restarts -- it's never deleted right
+        // after launching it (risky to delete a file an installer might still be
+        // reading from), and <cacheBase>/updates is a sibling of DiskCache's own
+        // cache/ tree, not inside it, so it's otherwise invisible to the
+        // cache-size display and "清除缓存" button forever. Sweep it at every
+        // startup instead.
+        deleteRecursive(new File(AppDirs.cacheBase(), "updates"));
+
         DesktopSettings settings = new DesktopSettings();
         settings.setMonetListener(controller::setMonetEnabled);
         settings.setUnblockListener(controller::setUnblockEnabled);
@@ -316,6 +325,15 @@ public final class Main {
     private static String fileNameOf(String url) {
         int slash = url.lastIndexOf('/');
         return slash >= 0 ? url.substring(slash + 1) : url;
+    }
+
+    private static void deleteRecursive(File f) {
+        if (!f.exists()) return;
+        File[] children = f.listFiles();
+        if (children != null) {
+            for (File c : children) deleteRecursive(c);
+        }
+        f.delete();
     }
 
     /** Download a single url into {@code out}, reporting progress; false on any
