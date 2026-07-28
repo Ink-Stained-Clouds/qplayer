@@ -86,34 +86,34 @@ public final class SettingsCatalog {
         addCustomApiFields(out);
 
         // ---- 歌词 -----------------------------------------------------------
-        // One card, same as before: every lyric control in a single surface.
+        // One card per control, like every other tab: no group() here, so each
+        // row is its own card and the wide-window grid can pair them up.
         out.add(SettingSpec.stepper("lyricFontSize", LYRIC, "字号", 28, 14, 40, 1)
-                .unit(" px").group("lyric")
+                .unit(" px")
                 .build());
         out.add(SettingSpec.segmented("lyricFontWeight", LYRIC, "字重", 2,
                         "极细", "细", "常规", "中等")
-                .group("lyric")
                 .build());
         out.add(SettingSpec.stepper("lyricLineSpacing", LYRIC, "行间距", 200, 100, 250, 5)
-                .scale(100).unit("×").group("lyric")
+                .scale(100).unit("×")
                 .build());
         out.add(SettingSpec.toggle("lyricSpring", LYRIC, "弹簧动效", true)
-                .desc("滚动与逐字上抬使用弹簧物理").group("lyric")
+                .desc("滚动与逐字上抬使用弹簧物理")
                 .build());
         out.add(SettingSpec.toggle("lyricScale", LYRIC, "放大缩放", true)
-                .desc("当前行放大、其余行略缩").group("lyric")
+                .desc("当前行放大、其余行略缩")
                 .build());
         out.add(SettingSpec.toggle("lyricGlow", LYRIC, "演唱发光", true)
-                .desc("已唱字词白色辉光(较耗电)").group("lyric")
+                .desc("已唱字词白色辉光(较耗电)")
                 .build());
         out.add(SettingSpec.toggle("lyricLinearAnim", LYRIC, "非逐字歌词线性动画", false)
-                .desc("关闭时整行一起点亮").group("lyric")
+                .desc("关闭时整行一起点亮")
                 .build());
         out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "边缘模糊", false)
-                .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)").group("lyric")
+                .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)")
                 .build());
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
-                .desc("动态流动 / 静态(渲染一次,更省电)").group("lyric")
+                .desc("动态流动 / 静态(渲染一次,更省电)")
                 .build());
         // Adjusted from the lyric page's own control, not from this page.
         out.add(SettingSpec.hidden("lyricOffsetMs", SettingSpec.STEPPER, 0)

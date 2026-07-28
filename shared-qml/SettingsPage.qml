@@ -31,6 +31,10 @@ Rectangle {
     property real panelOpacity: 1
     property real panelShift: 0
     property var groups: settings.groups(page.currentCategory)
+    // A desktop-width window fits two card columns; one card per row there left
+    // most of the page empty sideways and very long vertically. Same 600px break
+    // Main.qml uses to swap the bottom bar for the rail.
+    property bool twoColumn: page.width >= 600
 
     function selectCategory(name) {
         if (!name || name === page.currentCategory) return
@@ -115,14 +119,17 @@ Rectangle {
             Layout.topMargin: 16
             clip: true
             contentWidth: width
-            contentHeight: groupsCol.implicitHeight + 24
+            contentHeight: groupsGrid.implicitHeight + 24
 
-            ColumnLayout {
-                id: groupsCol
-                width: settingsFlickable.width
+            GridLayout {
+                id: groupsGrid
+                x: 12
+                width: settingsFlickable.width - 24
                 y: page.panelShift
                 opacity: page.panelOpacity
-                spacing: 14
+                columns: page.twoColumn ? 2 : 1
+                columnSpacing: 14
+                rowSpacing: 14
 
                 // One card per group, one row per spec inside it — the grouping
                 // is declared in the catalog, so the page never names a setting.
@@ -130,9 +137,24 @@ Rectangle {
                     model: page.groups
 
                     delegate: SettingCard {
+                        // Long cards (the whole 歌词 card, the custom-API block)
+                        // take the full width instead of stretching one column
+                        // and leaving the other empty beside them.
+                        property bool fullWidth: page.twoColumn && modelData.rows.length >= 4
+
                         Layout.fillWidth: true
-                        Layout.leftMargin: 12
-                        Layout.rightMargin: 12
+                        // A grid row is as tall as its tallest card; without this
+                        // a short card would float in the middle of that row.
+                        Layout.alignment: Qt.AlignTop
+                        Layout.columnSpan: fullWidth ? 2 : 1
+                        // A spanning cell does NOT take part in this engine's
+                        // column sizing (only span-1 fillWidth children grow a
+                        // track), so a category whose only card spans — 歌词 —
+                        // ended up with two zero-width columns and a card
+                        // collapsed to a line at the left edge, unclickable.
+                        // Asking for the full width makes the span itself widen
+                        // the tracks it covers.
+                        Layout.preferredWidth: fullWidth ? groupsGrid.width : -1
 
                         property var groupData: modelData
 
