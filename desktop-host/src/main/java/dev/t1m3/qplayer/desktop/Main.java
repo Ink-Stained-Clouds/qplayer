@@ -158,16 +158,15 @@ public final class Main {
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
         // Windows tray: hand it the multi-size .ico the installer also uses.
         tray.setIcoBytes(resources.load("app-icon.ico"));
-        MprisControls mpris = MprisControls.isSupported()
-                ? new MprisControls(controller, window) : null;
+        DesktopMediaControls systemMedia = createSystemMediaControls(controller, window);
 
         // PlayerController intentionally has one host callback (Android installs its
         // media-session service there). Combine the two desktop consumers here so
         // bringing up MPRIS never steals playback updates from the tray.
-        MprisControls finalMpris = mpris;
+        DesktopMediaControls finalSystemMedia = systemMedia;
         controller.setPlaybackListener(() -> {
             tray.onPlaybackChanged();
-            if (finalMpris != null) finalMpris.onPlaybackChanged();
+            if (finalSystemMedia != null) finalSystemMedia.onPlaybackChanged();
         });
 
         window.init();
@@ -229,14 +228,19 @@ public final class Main {
             Thread trayThread = getTrayThread(tray, window);
             trayThread.start();
         }
-        if (mpris != null && !"false".equals(System.getProperty("qplayer.mpris", "true"))) {
-            mpris.start();
+        boolean systemMediaEnabled =
+                !"false".equals(System.getProperty("qplayer.systemMedia", "true"))
+                // Keep the Linux-specific switch accepted by the first MPRIS build.
+                && (!(systemMedia instanceof MprisControls)
+                    || !"false".equals(System.getProperty("qplayer.mpris", "true")));
+        if (systemMedia != null && systemMediaEnabled) {
+            systemMedia.start();
         }
 
         window.runEventLoop(); // blocks on the main thread until quit
 
         watcher.stop();
-        if (mpris != null) mpris.shutdown();
+        if (systemMedia != null) systemMedia.shutdown();
         tray.shutdown();
         try {
             controller.shutdown();
@@ -402,6 +406,17 @@ public final class Main {
         }, "qplayer-tray-init");
         trayThread.setDaemon(true);
         return trayThread;
+    }
+
+    private static DesktopMediaControls createSystemMediaControls(
+            PlayerController controller, DesktopWindow window) {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if ((os.contains("nux") || os.contains("nix")) && MprisControls.isSupported()) {
+            return new MprisControls(controller, window);
+        }
+        if (os.contains("mac")) return new MacMediaControls(controller, window);
+        if (os.contains("win")) return new WindowsMediaControls(controller, window);
+        return null;
     }
 
     private static void startLibraryScan(PlayerController controller, MetadataReader reader,

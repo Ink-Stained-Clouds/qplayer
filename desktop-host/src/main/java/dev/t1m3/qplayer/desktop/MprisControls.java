@@ -40,7 +40,7 @@ import java.util.List;
  * driven from there. Emitting a signal is safe from any thread — GDBusConnection
  * is documented thread-safe — so updates push straight from the caller.
  */
-final class MprisControls implements PlayerController.PlaybackListener {
+final class MprisControls implements DesktopMediaControls {
 
     private static final String BUS_NAME = "org.mpris.MediaPlayer2.qplayer";
     private static final String OBJECT_PATH = "/org/mpris/MediaPlayer2";
@@ -226,13 +226,13 @@ final class MprisControls implements PlayerController.PlaybackListener {
 
     /** Bring the interface up on its own thread. Failures are logged and ignored —
      *  the app simply has no system media controls then. */
-    void start() {
+    public void start() {
         thread = new Thread(this::run, "qplayer-mpris");
         thread.setDaemon(true);
         thread.start();
     }
 
-    void shutdown() {
+    public void shutdown() {
         try {
             if (ownerId != 0 && gio != null) gio.g_bus_unown_name(ownerId);
             if (loop != null && glib != null) glib.g_main_loop_quit(loop);
@@ -587,6 +587,11 @@ final class MprisControls implements PlayerController.PlaybackListener {
     /** Prefer the cached cover file — a widget can load a local path instantly and
      *  without network — falling back to the remote URL. */
     private String artUrl(Track track) {
+        String cached = controller.currentCoverPath();
+        if (cached != null && !cached.isEmpty()) {
+            File f = new File(cached);
+            if (f.isFile()) return f.toURI().toString();
+        }
         for (String path : new String[]{track.coverLocalPath, track.coverThumbPath}) {
             if (path != null && !path.startsWith("http")) {
                 File f = new File(path);

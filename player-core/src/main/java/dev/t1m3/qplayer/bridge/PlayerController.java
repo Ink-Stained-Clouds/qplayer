@@ -3128,6 +3128,13 @@ public final class PlayerController {
         return i >= 0 && i < queue.size() ? queue.get(i) : null;
     }
 
+    /** Best local artwork path for the current track, including a downloaded
+     * network cover in DiskCache. Safe while the render pump is suspended. */
+    public String currentCoverPath() {
+        Track track = currentTrack();
+        return track != null ? coverDiskPath(track) : "";
+    }
+
     /** Intended play state for the media session — true from play/resume until pause,
      *  unaffected by the backend's brief async-prepare gap. */
     public boolean isPlaying() {
