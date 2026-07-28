@@ -1663,26 +1663,29 @@ public class LyricRenderer {
         return false;
     }
 
-    // The Korean/Thai/Japanese fallback face at `base`'s size when `text` needs one
-    // (and the platform ships one), else `base`. Measure and draw call this with the
-    // same (text, base), so cached syllable widths and drawn advances stay aligned.
+    // The Korean/Thai/Japanese fallback face matching `base`'s size and weight when
+    // `text` needs one, else `base`. Measure and draw call this with the same
+    // (text, base), so cached syllable widths and drawn advances stay aligned.
     private static Font fontForText(String text, Font base) {
         // Fonts.korean/thai/japanese return a cache-owned, cross-frame Font —
         // borrowed, not owned here, so it must NOT be closed (try-with-resources
-        // would free it mid-cache).
+        // would free it mid-cache). They return null both when the platform ships no
+        // face for the script AND when `base` already covers it (a JP/KR-capable
+        // system or user-picked font), which is what keeps such text on the user's
+        // own font instead of always hopping to a fallback family.
         // noinspection resource
         if (needsKorean(text)) {
-            Font ko = Fonts.korean(base.getSize());
+            Font ko = Fonts.korean(base);
             if (ko != null) return ko;
         }
         // noinspection resource
         if (needsThai(text)) {
-            Font th = Fonts.thai(base.getSize());
+            Font th = Fonts.thai(base);
             if (th != null) return th;
         }
         // noinspection resource
         if (needsJapanese(text)) {
-            Font ja = Fonts.japanese(base.getSize());
+            Font ja = Fonts.japanese(base);
             if (ja != null) return ja;
         }
         return base;

@@ -109,11 +109,10 @@ ColumnLayout {
         }
     }
 
-    // Bundled PingFang SC vs the OS's own default font (issue #15).
-    // Takes effect immediately on the lyric page; other UI text (buttons,
-    // this settings page, etc.) needs an app restart to pick it up, and
-    // only actually changes on Windows — noted in the subtitle so it
-    // isn't a silent surprise.
+    // Font source (issue #15): one picker over 内置 / 系统默认 / any installed
+    // family, instead of the toggle-plus-override pair this replaced (whose
+    // precedence was invisible in the UI). settings.fontFamily is "" for the
+    // bundled font, "system" for the OS default, else the family name.
     Rectangle {
         Layout.fillWidth: true
         Layout.leftMargin: 12
@@ -135,54 +134,7 @@ ColumnLayout {
                 spacing: 12
                 Text {
                     Layout.fillWidth: true
-                    text: "使用系统默认字体"
-                    color: Theme.color.onSurfaceColor
-                    font.family: Theme.typography.bodyLarge.family
-                    font.pixelSize: Theme.typography.bodyLarge.size
-                }
-                Switch {
-                    checked: settings.useSystemFont
-                    onClicked: settings.useSystemFont = checked
-                }
-            }
-            Text {
-                Layout.fillWidth: true
-                text: "歌词页立即生效；其余界面文字需要重启软件，且目前只有 Windows 上会真正切换"
-                color: Theme.color.onSurfaceVariantColor
-                font.family: Theme.typography.bodySmall.family
-                font.pixelSize: Theme.typography.bodySmall.size
-                wrapMode: Text.WordWrap
-            }
-        }
-    }
-
-    // Pick one specific installed font instead of just "system default"
-    // (issue #15, desktop/Windows-only — see FontPickerDialog.qml and
-    // DesktopWindow's registry lookup). Not present in AppSettings
-    // (Android), hence the typeof guard.
-    Rectangle {
-        visible: typeof settings.lyricFontFamily !== "undefined"
-        Layout.fillWidth: true
-        Layout.leftMargin: 12
-        Layout.rightMargin: 12
-        radius: 18
-        color: Theme.color.surfaceContainerHighest
-        implicitHeight: fontFamilyCol.implicitHeight + 32
-
-        ColumnLayout {
-            id: fontFamilyCol
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 16
-            spacing: 4
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                Text {
-                    Layout.fillWidth: true
-                    text: "指定字体"
+                    text: "字体"
                     color: Theme.color.onSurfaceColor
                     font.family: Theme.typography.bodyLarge.family
                     font.pixelSize: Theme.typography.bodyLarge.size
@@ -194,7 +146,17 @@ ColumnLayout {
             }
             Text {
                 Layout.fillWidth: true
-                text: settings.lyricFontFamily ? ("当前：" + settings.lyricFontFamily) : "未指定，跟随上方开关"
+                text: settings.fontFamily === "" ? "当前：内置字体 PingFang SC"
+                      : settings.fontFamily === "system" ? "当前：系统默认字体"
+                      : ("当前：" + settings.fontFamily)
+                color: Theme.color.onSurfaceVariantColor
+                font.family: Theme.typography.bodySmall.family
+                font.pixelSize: Theme.typography.bodySmall.size
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "歌词页立即生效（字重设置对可变字体和多字重字体同样有效）；其余界面文字需要重启软件"
                 color: Theme.color.onSurfaceVariantColor
                 font.family: Theme.typography.bodySmall.family
                 font.pixelSize: Theme.typography.bodySmall.size

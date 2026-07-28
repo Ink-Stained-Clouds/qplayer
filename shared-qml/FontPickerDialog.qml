@@ -2,12 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import md3.Core
 
-// Desktop-only "pick any installed font" picker (issue #15, beyond the coarser
-// bundled/system-default toggle in SettingsPage.qml). Only meaningful where
-// settings.lyricFontFamily exists (see SettingsPage.qml's typeof guard) — this
-// component itself doesn't touch `settings` until opened, so it's harmless to
-// instantiate on Android too, but SettingsPage never shows the button that opens
-// it there.
+// The app's one font picker (issue #15): the bundled font, the OS default, or any
+// installed family, writing settings.fontFamily ("" / "system" / family name).
 //
 // Virtualized the same way VirtualSongList.qml is (Repeater windowStart/
 // windowCount over a fixed rowH): the family list can be 100+ entries long and
@@ -30,8 +26,9 @@ Rectangle {
 
     MouseArea { anchors.fill: parent; onClicked: dialog.closed() }
 
-    // All available families plus a leading "清除" row to reset to the
-    // useSystemFont/bundled default — filtered in-place as the user types.
+    // Installed families, filtered in-place as the user types. The two built-in
+    // sources (bundled / system default) are fixed rows above the list, so they
+    // stay reachable no matter what's typed in the search box.
     property var filtered: {
         var q = searchField.text.toLowerCase();
         var src = (typeof settings.availableFontFamilies !== "undefined" && settings.availableFontFamilies) || [];
@@ -79,19 +76,39 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 44
                 radius: 8
-                color: resetMa.pressed ? Theme.color.surfaceContainerHighest : "transparent"
+                color: bundledMa.pressed ? Theme.color.surfaceContainerHighest : "transparent"
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "跟随上方「使用系统默认字体」开关"
-                    color: Theme.color.onSurfaceVariantColor
-                    fontSize: 13
+                    text: "内置字体 PingFang SC"
+                    color: settings.fontFamily === "" ? Theme.color.primary : Theme.color.onSurfaceColor
+                    fontSize: 14
                 }
                 MouseArea {
-                    id: resetMa
+                    id: bundledMa
                     anchors.fill: parent
-                    onClicked: { settings.lyricFontFamily = ""; dialog.closed() }
+                    onClicked: { settings.fontFamily = ""; dialog.closed() }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                radius: 8
+                color: systemMa.pressed ? Theme.color.surfaceContainerHighest : "transparent"
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "系统默认字体"
+                    color: settings.fontFamily === "system" ? Theme.color.primary : Theme.color.onSurfaceColor
+                    fontSize: 14
+                }
+                MouseArea {
+                    id: systemMa
+                    anchors.fill: parent
+                    onClicked: { settings.fontFamily = "system"; dialog.closed() }
                 }
             }
 
@@ -139,14 +156,15 @@ Rectangle {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData || ""
                                 elide: Text.ElideRight
-                                color: Theme.color.onSurfaceColor
+                                color: settings.fontFamily === modelData
+                                       ? Theme.color.primary : Theme.color.onSurfaceColor
                                 fontSize: 14
                             }
 
                             MouseArea {
                                 id: rowMa
                                 anchors.fill: parent
-                                onClicked: { settings.lyricFontFamily = modelData; dialog.closed() }
+                                onClicked: { settings.fontFamily = modelData; dialog.closed() }
                             }
                         }
                     }

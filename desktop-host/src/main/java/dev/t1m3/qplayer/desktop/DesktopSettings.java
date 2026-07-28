@@ -43,21 +43,15 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     /** Netease playback quality: exhigh ("exhigh" level, ~320kbps) when on,
      *  standard (~128kbps) when off to save bandwidth. On by default. */
     public final Property<Boolean> highQualityEnabled = new Property<>(Boolean.TRUE);
-    /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
-     *  lyric page (Fonts.setUseSystemFont, Skija FontMgr — works on every platform);
-     *  QML's own UI text (buttons/labels/settings) only re-reads this at the next
-     *  app launch (DesktopWindow.ensureView → loadFonts), and only actually changes
-     *  on Windows (qml4j's uiTypefaces needs raw font-file bytes, not a Typeface
-     *  object, so that half is a best-effort disk read of a system font file). */
-    public final Property<Boolean> useSystemFont = new Property<>(Boolean.FALSE);
-    /** Windows font-picker UI, one step further than useSystemFont above: pin the
-     *  lyric page to one specific installed family instead of just "system default".
-     *  Empty = no override (falls back to useSystemFont/bundled). Takes effect the
-     *  same way useSystemFont does — live for the lyric page (Fonts.setCustomFamily),
-     *  restart-required and Windows-only for QML's own UI text (DesktopWindow's
-     *  registry lookup). Desktop-only (no Android twin): QML guards on
-     *  `typeof settings.lyricFontFamily !== "undefined"`. */
-    public final Property<String> lyricFontFamily = new Property<>("");
+    /** The app's font source (issue #15), as one value instead of the old
+     *  useSystemFont toggle + lyricFontFamily override pair: empty = the bundled
+     *  PingFang SC, {@link Fonts#SYSTEM} = the OS default UI font, anything else =
+     *  that installed family (see availableFontFamilies). Applies live to the
+     *  host-drawn lyric page (Fonts.setSelection, Skija FontMgr — same code on every
+     *  platform); QML's own UI text (buttons/labels/settings) only re-reads it at
+     *  the next app launch (DesktopWindow.ensureView → loadFonts), since qml4j's
+     *  uiTypefaces needs raw font-file bytes rather than a Typeface object. */
+    public final Property<String> fontFamily = new Property<>("");
     /** Every family FontMgr knows about, populated once at startup for the picker's
      *  list (see Fonts.listFamilies()). Not persisted — cheap to regenerate. */
     public final Property<java.util.List<String>> availableFontFamilies =
@@ -215,29 +209,17 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
             if (highQualityListener != null) highQualityListener.onHighQuality(on);
         });
 
-        useSystemFont.set(getBool("useSystemFont", false));
-        Fonts.setUseSystemFont(Boolean.TRUE.equals(useSystemFont.peek()));
-        useSystemFont.setInterceptor((p, v) -> {
+        availableFontFamilies.set(java.util.Arrays.asList(sortedFamilies()));
+        fontFamily.set(getString("fontFamily", migratedFontSelection()));
+        Fonts.setSelection(fontFamily.peek());
+        fontFamily.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
-            boolean on = Boolean.TRUE.equals(p.peek());
-            put("useSystemFont", on);
+            String family = asStr(p.peek());
+            put("fontFamily", family);
             // Live for the host-drawn lyric page; QML's own text needs a restart
             // (DesktopWindow re-reads this Property only at the next loadFonts()
             // call, in ensureView() — see the Property's own doc comment above).
-            Fonts.setUseSystemFont(on);
-        });
-
-        availableFontFamilies.set(java.util.Arrays.asList(sortedFamilies()));
-        lyricFontFamily.set(getString("lyricFontFamily", ""));
-        Fonts.setCustomFamily(lyricFontFamily.peek());
-        lyricFontFamily.setInterceptor((p, v) -> {
-            p.setBypassInterceptor(v);
-            String family = asStr(p.peek());
-            put("lyricFontFamily", family);
-            // Live for the host-drawn lyric page; QML's own text needs a restart
-            // (DesktopWindow re-reads this Property only at the next loadFonts()
-            // call, in ensureView()) and only actually resolves a file on Windows.
-            Fonts.setCustomFamily(family);
+            Fonts.setSelection(family);
         });
 
         lyricFontSize.set(getInt("lyricFontSize", 28));
@@ -445,6 +427,16 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
 
     /** Case-insensitive sorted snapshot of every installed font family, for the
      *  Windows font-picker UI's list. */
+    /** Value for the unified fontFamily key when it isn't in the store yet: fold in
+     *  whatever the two settings it replaced (a bundled/system toggle plus a
+     *  separate family override that silently won over it) were last set to, so an
+     *  existing install keeps the font it was already using. */
+    private String migratedFontSelection() {
+        String legacyFamily = getString("lyricFontFamily", "");
+        if (!legacyFamily.isEmpty()) return legacyFamily;
+        return getBool("useSystemFont", false) ? Fonts.SYSTEM : "";
+    }
+
     private static String[] sortedFamilies() {
         String[] names = Fonts.listFamilies();
         java.util.Arrays.sort(names, String.CASE_INSENSITIVE_ORDER);

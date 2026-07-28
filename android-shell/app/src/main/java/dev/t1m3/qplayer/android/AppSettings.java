@@ -46,12 +46,18 @@ public final class AppSettings extends QObject
     /** Netease playback quality: exhigh ("exhigh" level, ~320kbps) when on,
      *  standard (~128kbps) when off to save bandwidth. On by default. */
     public final Property<Boolean> highQualityEnabled = new Property<>(Boolean.TRUE);
-    /** Issue #15's "内置字体 / 系统默认字体" toggle. Applies live to the host-drawn
-     *  lyric page (Fonts.setUseSystemFont, Skija FontMgr). Unlike desktop, QML's own
-     *  UI text (buttons/labels) does NOT follow this yet — Android's font loading in
-     *  QmlGLSurfaceView/QPlayerActivity is a separate, independent path not wired up
-     *  here; only the Skija-side lyric-page half is implemented on this platform. */
-    public final Property<Boolean> useSystemFont = new Property<>(Boolean.FALSE);
+    /** The app's font source (issue #15), same single-value shape as
+     *  DesktopSettings.fontFamily: empty = the bundled PingFang SC,
+     *  {@link Fonts#SYSTEM} = the OS default UI font, anything else = that installed
+     *  family (see availableFontFamilies). Applies live to the host-drawn lyric page
+     *  (Fonts.setSelection). Unlike desktop, QML's own UI text (buttons/labels) does
+     *  NOT follow it — Android's font loading in QmlGLSurfaceView/QPlayerActivity is
+     *  a separate path that only ever loads the bundled files. */
+    public final Property<String> fontFamily = new Property<>("");
+    /** Every family FontMgr knows about, for the picker's list. Not persisted —
+     *  cheap to regenerate at startup (see Fonts.listFamilies()). */
+    public final Property<java.util.List<String>> availableFontFamilies =
+            new Property<>(java.util.Collections.emptyList());
 
     // Lyric-page typography (Object-typed: QML numeric writes arrive as Long).
     /** Lyric main font size in px (14–40). */
@@ -266,13 +272,19 @@ public final class AppSettings extends QObject
             if (highQualityListener != null) highQualityListener.onHighQuality(on);
         });
 
-        useSystemFont.set(prefs.getBoolean("useSystemFont", false));
-        Fonts.setUseSystemFont(Boolean.TRUE.equals(useSystemFont.peek()));
-        useSystemFont.setInterceptor((p, v) -> {
+        String[] families = Fonts.listFamilies();
+        java.util.Arrays.sort(families, String.CASE_INSENSITIVE_ORDER);
+        availableFontFamilies.set(java.util.Arrays.asList(families));
+        // Migrate the bundled/system toggle this replaced, so an existing install
+        // keeps the font it was already using.
+        String legacy = prefs.getBoolean("useSystemFont", false) ? Fonts.SYSTEM : "";
+        fontFamily.set(prefs.getString("fontFamily", legacy));
+        Fonts.setSelection(fontFamily.peek());
+        fontFamily.setInterceptor((p, v) -> {
             p.setBypassInterceptor(v);
-            boolean on = Boolean.TRUE.equals(p.peek());
-            prefs.edit().putBoolean("useSystemFont", on).apply();
-            Fonts.setUseSystemFont(on);
+            String family = p.peek() != null ? p.peek() : "";
+            prefs.edit().putString("fontFamily", family).apply();
+            Fonts.setSelection(family);
         });
 
         lyricFontSize.set(prefs.getInt("lyricFontSize", 28));

@@ -5,6 +5,7 @@ import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.util.Logger;
 
@@ -18,6 +19,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -175,41 +177,27 @@ public final class DesktopWindow {
         v.setClipboard(new GlfwClipboard(this));
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);
-        boolean useSystemFont = settings != null && Boolean.TRUE.equals(settings.useSystemFont.peek());
-        String customFamily = settings != null ? settings.lyricFontFamily.peek() : null;
-        loadFonts(v, resources, useSystemFont, customFamily);
+        loadFonts(v, resources);
         v.load(qmlSource);
         view = v;
         return v;
     }
 
-    // Windows system UI font candidates for the "系统默认字体" setting (QML's own
-    // text, via QmlView.uiTypefaces — that API only takes raw font-file bytes, no
-    // Typeface-object overload, so unlike Fonts.setUseSystemFont (Skija FontMgr,
-    // works on every platform) this part is best-effort and Windows-only: reads an
-    // actual font file off disk, falling back to the bundled OTF on any failure
-    // (missing file, unreadable, wrong platform). Microsoft YaHei ships on every
-    // modern Windows install regardless of display language.
-    private static final String[] WIN_REGULAR_FONT_CANDIDATES = {"msyh.ttc", "simsun.ttc", "simhei.ttf"};
-    private static final String[] WIN_BOLD_FONT_CANDIDATES = {"msyhbd.ttc", "simhei.ttf"};
-
-    public static void loadFonts(QmlView v, ResourceLoader resources, boolean useSystemFont) {
-        loadFonts(v, resources, useSystemFont, null);
-    }
-
-    /** @param customFamily Windows font-picker UI selection (see
-     *  DesktopSettings.lyricFontFamily); takes precedence over useSystemFont, same
-     *  as Fonts.setCustomFamily's precedence over setUseSystemFont. Null/empty for
-     *  no override. */
-    public static void loadFonts(QmlView v, ResourceLoader resources, boolean useSystemFont, String customFamily) {
+    /** Load the fonts QML's own UI text is drawn with. The lyric page resolves its
+     *  face through Skija's FontMgr (Fonts.setSelection) and needs nothing here, but
+     *  qml4j's uiTypefaces only takes raw font-file BYTES — no Typeface-object
+     *  overload — so following the same setting for the UI means locating the actual
+     *  file behind {@link Fonts#activeFamilyName()} on disk. That lookup is
+     *  per-platform ({@link #findSystemFontFile}) and best-effort: anything that
+     *  doesn't resolve falls back to the bundled PingFang OTF, which is also what a
+     *  bundled-font selection uses directly. Read once per view spawn, hence the
+     *  "restart to apply" note in Settings. */
+    public static void loadFonts(QmlView v, ResourceLoader resources) {
         byte[] reg = null, med = null;
-        if (customFamily != null && !customFamily.isEmpty()) {
-            reg = readWindowsFontByFamily(customFamily, false);
-            med = readWindowsFontByFamily(customFamily, true);
-        }
-        if (reg == null && med == null && useSystemFont) {
-            reg = readWindowsSystemFont(WIN_REGULAR_FONT_CANDIDATES);
-            med = readWindowsSystemFont(WIN_BOLD_FONT_CANDIDATES);
+        String family = Fonts.activeFamilyName();
+        if (family != null) {
+            reg = findSystemFontFile(family, false);
+            med = findSystemFontFile(family, true);
         }
         if (reg == null) reg = resources.load("fonts/PingFangSC-Regular.otf");
         if (med == null) med = resources.load("fonts/PingFangSC-Medium.otf");
@@ -218,18 +206,87 @@ public final class DesktopWindow {
         if (iconFont != null) v.iconTypeface(iconFont);
     }
 
-    private static byte[] readWindowsSystemFont(String[] fileNameCandidates) {
-        String winDir = System.getenv("WINDIR");
-        if (winDir == null || winDir.isEmpty()) return null; // not Windows — skip entirely
-        for (String name : fileNameCandidates) {
-            try {
-                java.io.File f = new java.io.File(winDir + "\\Fonts\\" + name);
-                if (f.isFile()) return java.nio.file.Files.readAllBytes(f.toPath());
-            } catch (Throwable ignored) {
-                // Fall through to the next candidate / the bundled-font fallback above.
+    /** The regular (or bold) font file of an installed family, as bytes; null when
+     *  this platform's lookup can't find one. Windows reads the registry index,
+     *  Linux asks fontconfig, macOS scans the standard font directories — Skija
+     *  itself exposes no path for a Typeface, so there's no shared shortcut. */
+    private static byte[] findSystemFontFile(String family, boolean bold) {
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        try {
+            if (os.contains("win")) return readWindowsFontByFamily(family, bold);
+            if (os.contains("mac")) return readMacFontByFamily(family, bold);
+            return readFontconfigFontByFamily(family, bold);
+        } catch (Throwable ignored) {
+            return null; // any lookup failure → the bundled font
+        }
+    }
+
+    /** Linux: fontconfig already indexes every installed family and answers with the
+     *  file path directly, so there's nothing to scan. {@code fc-match} is part of
+     *  the fontconfig package every desktop distro pulls in; if it's missing or slow
+     *  the caller falls back to the bundled font. */
+    private static byte[] readFontconfigFontByFamily(String family, boolean bold) {
+        try {
+            Process p = new ProcessBuilder("fc-match", "-f", "%{file}",
+                    family + ":weight=" + (bold ? "bold" : "regular"))
+                    .redirectErrorStream(false).start();
+            String path;
+            try (java.io.InputStream in = p.getInputStream()) {
+                path = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+            }
+            if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return null;
+            }
+            if (path.isEmpty()) return null;
+            java.io.File f = new java.io.File(path);
+            return f.isFile() ? java.nio.file.Files.readAllBytes(f.toPath()) : null;
+        } catch (Throwable ignored) {
+            return null; // no fc-match on PATH, unreadable file, ...
+        }
+    }
+
+    // macOS font locations, in the order CoreText itself searches them.
+    private static final String[] MAC_FONT_DIRS = {
+        System.getProperty("user.home", "") + "/Library/Fonts",
+        "/Library/Fonts",
+        "/System/Library/Fonts",
+        "/System/Library/Fonts/Supplemental",
+    };
+
+    /** macOS: no registry, and no CLI that reports a family's file path (the closest,
+     *  {@code system_profiler SPFontsDataType}, takes seconds), so open each file in
+     *  the standard font directories with Skija and keep the one whose family name
+     *  and weight match. Runs once per launch and only when a non-bundled font is
+     *  selected. */
+    private static byte[] readMacFontByFamily(String family, boolean bold) {
+        io.github.humbleui.skija.FontMgr mgr = io.github.humbleui.skija.FontMgr.getDefault();
+        if (mgr == null) return null;
+        int wanted = bold ? 700 : 400;
+        java.io.File best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (String dir : MAC_FONT_DIRS) {
+            java.io.File[] files = new java.io.File(dir).listFiles();
+            if (files == null) continue;
+            for (java.io.File f : files) {
+                String name = f.getName().toLowerCase(java.util.Locale.ROOT);
+                if (!name.endsWith(".ttf") && !name.endsWith(".otf")
+                        && !name.endsWith(".ttc") && !name.endsWith(".otc")) continue;
+                try {
+                    io.github.humbleui.skija.Typeface t = mgr.makeFromFile(f.getAbsolutePath());
+                    if (t == null || !family.equalsIgnoreCase(t.getFamilyName())) continue;
+                    int distance = Math.abs(t.getFontStyle().getWeight() - wanted);
+                    if (distance < bestDistance) { bestDistance = distance; best = f; }
+                } catch (Throwable ignored) {
+                    // Unparseable/permission-denied file — just skip it.
+                }
             }
         }
-        return null;
+        try {
+            return best != null ? java.nio.file.Files.readAllBytes(best.toPath()) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     // Registry key Windows itself keeps up to date with every installed font:
