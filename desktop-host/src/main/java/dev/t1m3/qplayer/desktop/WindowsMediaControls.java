@@ -45,6 +45,18 @@ final class WindowsMediaControls implements DesktopMediaControls {
             guid("44a9796f-723e-4fdf-a218-033e75b0c084");
     private static final GUID IID_STREAM_REFERENCE_STATICS =
             guid("857309dc-3fbf-4e7d-986f-ef3b1a07a964");
+    private static final GUID IID_IUNKNOWN =
+            guid("00000000-0000-0000-c000-000000000046");
+    private static final GUID IID_IAGILE_OBJECT =
+            guid("94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90");
+    private static final GUID IID_BUTTON_HANDLER =
+            guid("0557e996-7b23-5bae-aa81-ea0d671143a4");
+    private static final GUID IID_POSITION_HANDLER =
+            guid("44e34f15-bdc0-50a7-ace4-39e91fb753f1");
+    private static final GUID IID_SHUFFLE_HANDLER =
+            guid("17ecea80-27e4-5dae-abb4-c858ad1c5307");
+    private static final GUID IID_REPEAT_HANDLER =
+            guid("a6214bde-02d5-55b3-ab0d-c6031be70da1");
 
     interface Combase extends Library {
         int RoInitialize(int initType);
@@ -60,12 +72,6 @@ final class WindowsMediaControls implements DesktopMediaControls {
     interface RefCallback extends StdCallLibrary.StdCallCallback {
         int invoke(Pointer self);
     }
-    interface InspectCallback extends StdCallLibrary.StdCallCallback {
-        int invoke(Pointer self, Pointer value);
-    }
-    interface GetIidsCallback extends StdCallLibrary.StdCallCallback {
-        int invoke(Pointer self, IntByReference count, PointerByReference iids);
-    }
     interface InvokeCallback extends StdCallLibrary.StdCallCallback {
         int invoke(Pointer self, Pointer sender, Pointer args);
     }
@@ -80,6 +86,8 @@ final class WindowsMediaControls implements DesktopMediaControls {
     private Pointer timeline;
     private volatile boolean running;
     private volatile long pausedPositionMs;
+    private Thread timelineThread;
+    private String publishedMetadataKey;
 
     WindowsMediaControls(PlayerController controller, DesktopWindow window) {
         this.controller = controller;
@@ -103,12 +111,14 @@ final class WindowsMediaControls implements DesktopMediaControls {
             release(factory);
             smtc2 = query(smtc, IID_SMTC2);
 
-            enableButtons();
+            configureButtons();
             installHandlers();
+            check(call(smtc, 11, (byte) 1), "SetIsEnabled");
             timeline = activate(
                     "Windows.Media.SystemMediaTransportControlsTimelineProperties");
             running = true;
             publish();
+            startTimelineUpdates();
             Logger.info("system media controls initialized: Windows SMTC");
         } catch (Throwable t) {
             Logger.warn("Windows system media controls unavailable: {}", t);
@@ -119,6 +129,8 @@ final class WindowsMediaControls implements DesktopMediaControls {
     @Override
     public void shutdown() {
         running = false;
+        if (timelineThread != null) timelineThread.interrupt();
+        timelineThread = null;
         try {
             if (smtc != null) {
                 call(smtc, 7, 0);  // Closed
@@ -132,6 +144,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
         smtc = null;
         smtc2 = null;
         timeline = null;
+        publishedMetadataKey = null;
         keepAlive.clear();
     }
 
@@ -141,8 +154,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
         publish();
     }
 
-    private void enableButtons() {
-        check(call(smtc, 11, (byte) 1), "SetIsEnabled");
+    private void configureButtons() {
         check(call(smtc, 13, (byte) 1), "SetIsPlayEnabled");
         check(call(smtc, 17, (byte) 1), "SetIsPauseEnabled");
         check(call(smtc, 25, (byte) 1), "SetIsPreviousEnabled");
@@ -150,7 +162,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
     }
 
     private void installHandlers() {
-        Pointer buttonHandler = handler((sender, args) -> {
+        Pointer buttonHandler = handler(IID_BUTTON_HANDLER, (sender, args) -> {
             IntByReference button = new IntByReference();
             check(call(args, 6, button), "Button");
             switch (button.getValue()) {
@@ -171,10 +183,10 @@ final class WindowsMediaControls implements DesktopMediaControls {
                     break;
             }
         });
-        check(call(smtc, 30, buttonHandler, new LongByReference()), "ButtonPressed");
+        check(call(smtc, 32, buttonHandler, new LongByReference()), "ButtonPressed");
 
         if (smtc2 == null) return;
-        Pointer seekHandler = handler((sender, args) -> {
+        Pointer seekHandler = handler(IID_POSITION_HANDLER, (sender, args) -> {
             LongByReference ticks = new LongByReference();
             check(call(args, 6, ticks), "RequestedPlaybackPosition");
             long ms = Math.max(0L, ticks.getValue() / 10_000L);
@@ -184,10 +196,10 @@ final class WindowsMediaControls implements DesktopMediaControls {
                 publish();
             });
         });
-        check(call(smtc2, 13, seekHandler, new LongByReference()),
+        registerOptionalEvent(smtc2, 13, seekHandler,
                 "PlaybackPositionChangeRequested");
 
-        Pointer shuffleHandler = handler((sender, args) -> {
+        Pointer shuffleHandler = handler(IID_SHUFFLE_HANDLER, (sender, args) -> {
             ByteByReference enabled = new ByteByReference();
             check(call(args, 6, enabled), "RequestedShuffleEnabled");
             window.postMainTask(() -> {
@@ -195,17 +207,32 @@ final class WindowsMediaControls implements DesktopMediaControls {
                 else if (playMode() == 1) controller.setPlayMode(0);
             });
         });
-        check(call(smtc2, 17, shuffleHandler, new LongByReference()),
+        registerOptionalEvent(smtc2, 17, shuffleHandler,
                 "ShuffleEnabledChangeRequested");
 
-        Pointer repeatHandler = handler((sender, args) -> {
+        Pointer repeatHandler = handler(IID_REPEAT_HANDLER, (sender, args) -> {
             IntByReference mode = new IntByReference();
             check(call(args, 6, mode), "RequestedAutoRepeatMode");
             window.postMainTask(() -> controller.setPlayMode(
                     mode.getValue() == 1 ? 2 : 0));
         });
-        check(call(smtc2, 19, repeatHandler, new LongByReference()),
+        registerOptionalEvent(smtc2, 19, repeatHandler,
                 "AutoRepeatModeChangeRequested");
+    }
+
+    /**
+     * Some desktop SMTC implementations expose ISystemMediaTransportControls2
+     * but reject one or more of its request events with CO_E_NOT_SUPPORTED.
+     * Those events only add seek/shuffle/repeat commands; they must not disable
+     * the base session, metadata, or play/pause/next/previous controls.
+     */
+    private void registerOptionalEvent(Pointer source, int method, Pointer handler,
+                                       String name) {
+        int hr = call(source, method, handler, new LongByReference());
+        if (failed(hr)) {
+            Logger.warn("Windows SMTC optional event unavailable: {} (0x{})",
+                    name, Integer.toHexString(hr));
+        }
     }
 
     private interface EventBody {
@@ -213,28 +240,28 @@ final class WindowsMediaControls implements DesktopMediaControls {
     }
 
     /** Minimal WinRT TypedEventHandler COM object. */
-    private Pointer handler(EventBody body) {
+    private Pointer handler(GUID delegateIid, EventBody body) {
         AtomicInteger refs = new AtomicInteger(1);
         Memory object = new Memory(Native.POINTER_SIZE);
-        Memory vtable = new Memory((long) Native.POINTER_SIZE * 7);
+        // WinRT delegate interfaces derive directly from IUnknown. Their ABI is
+        // QueryInterface/AddRef/Release/Invoke, without IInspectable's three
+        // GetIids/GetRuntimeClassName/GetTrustLevel entries.
+        Memory vtable = new Memory((long) Native.POINTER_SIZE * 4);
 
         QueryInterfaceCallback qi = (self, iid, out) -> {
+            GUID requested = new GUID(iid);
+            if (!requested.equals(IID_IUNKNOWN)
+                    && !requested.equals(IID_IAGILE_OBJECT)
+                    && !requested.equals(delegateIid)) {
+                out.setValue(Pointer.NULL);
+                return E_NOINTERFACE;
+            }
             out.setValue(self);
             refs.incrementAndGet();
             return S_OK;
         };
         RefCallback addRef = self -> refs.incrementAndGet();
         RefCallback release = self -> Math.max(0, refs.decrementAndGet());
-        GetIidsCallback getIids = (self, count, iids) -> {
-            if (count != null) count.setValue(0);
-            if (iids != null) iids.setValue(Pointer.NULL);
-            return S_OK;
-        };
-        InspectCallback runtimeName = (self, value) -> E_NOINTERFACE;
-        InspectCallback trustLevel = (self, value) -> {
-            if (value != null) value.setInt(0, 0);
-            return S_OK;
-        };
         InvokeCallback invoke = (self, sender, args) -> {
             try {
                 body.invoke(sender, args);
@@ -244,7 +271,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
                 return 0x80004005;
             }
         };
-        Object[] callbacks = {qi, addRef, release, getIids, runtimeName, trustLevel, invoke};
+        Object[] callbacks = {qi, addRef, release, invoke};
         for (int i = 0; i < callbacks.length; i++) {
             vtable.setPointer((long) i * Native.POINTER_SIZE,
                     CallbackReference.getFunctionPointer((com.sun.jna.Callback) callbacks[i]));
@@ -261,16 +288,27 @@ final class WindowsMediaControls implements DesktopMediaControls {
         try {
             Track track = controller.currentTrack();
             if (track == null) {
-                call(smtc, 7, 0);
+                // Closed is terminal for a SMTC session. At startup there is no
+                // current track yet, but the session must remain available for a
+                // later play request, so advertise Stopped and reserve Closed for
+                // shutdown().
+                check(call(smtc, 7, 2), "SetPlaybackStatus(Stopped)");
                 return;
             }
-            updateMetadata(track);
+            String metadataKey = metadataKey(track);
+            if (!metadataKey.equals(publishedMetadataKey)) {
+                updateMetadata(track);
+                publishedMetadataKey = metadataKey;
+            }
             call(smtc, 7, controller.isPlaying() ? 3 : 4);
 
             if (smtc2 != null) {
                 int mode = playMode();
                 call(smtc2, 7, mode == 2 ? 1 : 2); // Track / List
                 call(smtc2, 9, (byte) (mode == 1 ? 1 : 0));
+                // A non-zero playback rate tells SMTC consumers to extrapolate
+                // Position continuously between our periodic timeline syncs.
+                check(call(smtc2, 11, 1.0d), "SetPlaybackRate");
                 updateTimeline(track);
             }
         } catch (Throwable t) {
@@ -366,6 +404,42 @@ final class WindowsMediaControls implements DesktopMediaControls {
 
     private long positionMs() {
         return controller.isPlaying() ? Math.max(0L, controller.position()) : pausedPositionMs;
+    }
+
+    private String metadataKey(Track track) {
+        return String.valueOf(track.title) + '\0'
+                + String.valueOf(track.artist) + '\0'
+                + String.valueOf(track.album) + '\0'
+                + String.valueOf(track.coverUrl) + '\0'
+                + controller.currentCoverPath();
+    }
+
+    private void startTimelineUpdates() {
+        if (smtc2 == null || timeline == null) return;
+        timelineThread = new Thread(() -> {
+            while (running) {
+                try {
+                    // Some third-party Windows media panels do not extrapolate
+                    // Position from PlaybackRate, so provide a smooth live value.
+                    Thread.sleep(250L);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (!running) return;
+                window.postMainTask(() -> {
+                    Track track = controller.currentTrack();
+                    if (running && track != null) {
+                        try {
+                            updateTimeline(track);
+                        } catch (Throwable t) {
+                            Logger.warn("Windows SMTC timeline update failed: {}", t);
+                        }
+                    }
+                });
+            }
+        }, "qplayer-smtc-timeline");
+        timelineThread.setDaemon(true);
+        timelineThread.start();
     }
 
     private int playMode() {

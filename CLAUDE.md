@@ -10,10 +10,10 @@
 
 ## 仓库与分支
 
-- `origin` = `Ink-Stained-Clouds/qplayer`（自己的 fork），`upstream` = `TIMER-err/qplayer`（协作者仓库，remote URL 里嵌了 PAT，绝不能回显到输出或写进文件）。
-- **`upstream/master` 是唯一权威分支**（2026-07-13 起）。`origin` 这个 fork 和 `upstream` 的 `ink`/`ink_clouds` 分支都是临时/过时的，已被强推覆盖为 `upstream/master` 的内容，不再维护。
+- `origin` = `TIMER-err/qplayer`，是当前唯一远端与权威仓库。remote URL 可能包含凭据，绝不能回显到输出或写进文件。
+- **`origin/master` 是唯一权威分支**。旧 fork 与 `ink`/`ink_clouds` 分支均为临时/过时内容，不再维护。
 - 本地仓库**只保留 `master` 一个分支**，不要新建 `ink-fresh` 等其他本地分支。所有开发直接在 `master` 上进行。
-- 正常情况下 `git push origin master` / `git push upstream master:master` 应该都是快进（fast-forward），不需要强推。
+- 正常情况下使用 `git push origin master`，应该是快进（fast-forward），不需要强推。
 - **禁止 `git push --force`**，包括任何分支/远端。哪怕之前批准过一次强推，下一次也要重新问，不能当作标准许可。
 
 ## 发版流程

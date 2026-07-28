@@ -13,6 +13,8 @@ import dev.t1m3.qplayer.settings.SettingsCatalog;
 import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.util.Logger;
+import com.sun.jna.WString;
+import com.sun.jna.platform.win32.Shell32;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
@@ -80,6 +82,7 @@ public final class Main {
         // file, config in log4j2.xml). Early in main so every later line lands in
         // the configured format.
         Logger.setSink(new Log4j2Sink());
+        configureWindowsAppIdentity();
 
         ResourceLoader resources = new ClasspathResourceLoader();
 
@@ -417,6 +420,27 @@ public final class Main {
         if (os.contains("mac")) return new MacMediaControls(controller, window);
         if (os.contains("win")) return new WindowsMediaControls(controller, window);
         return null;
+    }
+
+    /**
+     * Give the unpackaged Win32 process a stable Shell identity before GLFW
+     * creates its top-level window. SMTC can accept updates without one, but the
+     * Windows 10/11 Shell may not surface that anonymous session in its media UI.
+     */
+    private static void configureWindowsAppIdentity() {
+        if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
+        try {
+            int hr = Shell32.INSTANCE
+                    .SetCurrentProcessExplicitAppUserModelID(
+                            new WString("dev.t1m3.qplayer"))
+                    .intValue();
+            if (hr < 0) {
+                Logger.warn("Windows AppUserModelID unavailable: 0x{}",
+                        Integer.toHexString(hr));
+            }
+        } catch (Throwable t) {
+            Logger.warn("Windows AppUserModelID unavailable: {}", t);
+        }
     }
 
     private static void startLibraryScan(PlayerController controller, MetadataReader reader,
