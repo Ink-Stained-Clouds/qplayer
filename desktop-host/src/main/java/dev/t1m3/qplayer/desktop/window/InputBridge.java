@@ -2,6 +2,7 @@ package dev.t1m3.qplayer.desktop.window;
 
 import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.items.core.Item;
+import io.github.timer_err.qml4j.render.items.core.MouseEvent;
 import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
@@ -32,6 +33,15 @@ final class InputBridge {
     // like the mobile fling: ease the shown position toward the target at the same
     // frame-rate-independent rate a = 1 - exp(-EASE*dt). (Flickable.EASE = 18.)
     private static final float EASE = 18f;
+    // The lyric column gets its own, gentler decay -- a separate constant (not a
+    // scrollByWheel-side fling injected after the fact: an earlier attempt at that
+    // handed off an independently-computed velocity once EASE had already decayed
+    // the glide to ~0, which is a discontinuous *second* deceleration bolted onto
+    // the first -- visibly a stall-then-lurch, not a single smooth coast). A lower
+    // rate here just makes the one glide curve every wheel event already drives
+    // take longer to settle, for the lyric column only; every QML Flickable-backed
+    // list keeps the original EASE and is untouched.
+    private static final float LYRIC_EASE = 7f;
     // Notches accumulated per wheel detent (1.0 = one Flickable WHEEL_STEP ≈ 48px of
     // content); the engine applies WHEEL_STEP internally via dispatchWheel. >1 covers
     // more distance per detent (faster) while keeping the same glide curve.
@@ -65,10 +75,19 @@ final class InputBridge {
             win.postRenderTask(() -> onMove(fx, fy));
         });
         GLFW.glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
-            if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) return;
             final float fx = (float) cursorX, fy = (float) cursorY;
-            if (action == GLFW.GLFW_PRESS) win.postRenderTask(() -> onPress(fx, fy));
-            else if (action == GLFW.GLFW_RELEASE) win.postRenderTask(() -> onRelease(fx, fy));
+            if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+                if (action == GLFW.GLFW_PRESS) win.postRenderTask(() -> onPress(fx, fy));
+                else if (action == GLFW.GLFW_RELEASE) win.postRenderTask(() -> onRelease(fx, fy));
+                return;
+            }
+            // Right-click: forward straight to QML on press, bypassing the left-button-
+            // only lyric-drag state machine entirely (a context menu doesn't need real
+            // press/hold tracking -- SongRow's Ripple opens its menu the instant it sees
+            // a right button-down, same as it does for a left-button long-press).
+            if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT && action == GLFW.GLFW_PRESS) {
+                win.postRenderTask(() -> onRightClick(fx, fy));
+            }
         });
         GLFW.glfwSetScrollCallback(window, (w, dx, dy) -> {
             final double adx = dx * WHEEL_GAIN, ady = dy * WHEEL_GAIN;
@@ -154,9 +173,11 @@ final class InputBridge {
     }
 
     /** Called once per frame on the render thread: ease the accumulated wheel notches
-     *  toward 0 with the Flickable's own a = 1 - exp(-EASE*dt) glide and feed the
-     *  per-frame delta to dispatchWheel, so a desktop wheel scroll animates with the
-     *  same curve as a mobile fling. */
+     *  toward 0 with a = 1 - exp(-ease*dt) and feed the per-frame delta to whichever
+     *  target is under the cursor, so a desktop wheel scroll animates smoothly instead
+     *  of jumping straight to its target. One continuous curve per gesture — the rate
+     *  differs by target (see LYRIC_EASE), but it's decided once per frame before
+     *  easing, not switched mid-glide, so there's no discontinuity to introduce. */
     void tickScroll() {
         if (Math.abs(pendingScrollX) < 0.001 && Math.abs(pendingScrollY) < 0.001) {
             pendingScrollX = pendingScrollY = 0;
@@ -172,7 +193,24 @@ final class InputBridge {
 
         QmlView v = win.view();
         if (v == null) return;
-        double a = 1.0 - Math.exp(-EASE * dt);
+        float scale = win.uiScale();
+        float lx = (float) cursorX / scale, ly = (float) cursorY / scale;
+
+        // The lyric column is host-drawn Skia, not a QML Flickable, so dispatchWheel's
+        // hit-test never finds anything under the cursor there and the wheel silently
+        // no-ops. Mirror onPress's own lyricsScrollable() check and drive the
+        // compositor directly instead, same as the drag gesture already does.
+        LyricCompositor c = win.compositor();
+        PlayerController controllerForGesture = win.controller();
+        boolean offsetPanelOpen = controllerForGesture != null
+                && Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek());
+        float topInset = win.settings() != null ? win.settings().topInset() : 0f;
+        float surfaceWLogical = win.framebufferSize()[0] / scale;
+        float surfaceHLogical = win.framebufferSize()[1] / scale;
+        boolean overLyric = !offsetPanelOpen && c != null
+                && c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset);
+
+        double a = 1.0 - Math.exp(-(overLyric ? LYRIC_EASE : EASE) * dt);
         double stepX = pendingScrollX * a;
         double stepY = pendingScrollY * a;
         // Snap the tail so it settles instead of crawling asymptotically.
@@ -180,8 +218,12 @@ final class InputBridge {
         if (Math.abs(pendingScrollY - stepY) < 0.002) stepY = pendingScrollY;
         pendingScrollX -= stepX;
         pendingScrollY -= stepY;
-        float scale = win.uiScale();
-        v.dispatchWheel((float) cursorX / scale, (float) cursorY / scale, (float) stepX, (float) stepY);
+
+        if (overLyric) {
+            c.lyricRenderer().scrollByWheel((float) stepY);
+            return;
+        }
+        v.dispatchWheel(lx, ly, (float) stepX, (float) stepY);
     }
 
     // Select-all on the focused editable, mirroring the engine's own selection
@@ -297,6 +339,15 @@ final class InputBridge {
         }
         QmlView v = win.view();
         if (v != null) v.dispatchPointerUp(lx, ly);
+    }
+
+    private void onRightClick(float x, float y) {
+        QmlView v = win.view();
+        if (v == null) return;
+        float scale = win.uiScale();
+        float lx = x / scale, ly = y / scale;
+        v.dispatchPointerDown(lx, ly, MouseEvent.RIGHT_BUTTON);
+        v.dispatchPointerUp(lx, ly, MouseEvent.RIGHT_BUTTON);
     }
 
     // Printable characters arrive via the char callback; this maps only the control

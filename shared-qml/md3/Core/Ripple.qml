@@ -13,6 +13,10 @@ MouseArea {
     property alias clipBottomRightRadius: maskRect.bottomRightRadius
 
     hoverEnabled: true
+    // Right-click only makes sense where a long-press already opens something (a
+    // context menu) -- plain buttons/cards stay left-button-only so a stray right
+    // click elsewhere in the app doesn't ripple/activate them.
+    acceptedButtons: longPressEnabled ? (Qt.LeftButton | Qt.RightButton) : Qt.LeftButton
 
     // Opt-in long-press. When enabled, a stationary hold for `longPressMs` emits
     // longPressed(); dragging (a scroll) past a small slop or releasing cancels it,
@@ -134,6 +138,14 @@ MouseArea {
     }
 
     onPressed: (mouse) => {
+        // Right-click (desktop only -- see InputBridge.onRightClick, forwarded as a
+        // synthetic press+release pair): skip the ripple wave and open immediately,
+        // same as a long-press but with no hold delay.
+        if (root.longPressEnabled && mouse.button === Qt.RightButton) {
+            root.pressX = mouse.x; root.pressY = mouse.y
+            root.longPressed()
+            return
+        }
         root.activeWave = waveComponent.createObject(rippleContent, { startX: mouse.x, startY: mouse.y })
         root.liveWaves = root.liveWaves + 1
         if (root.longPressEnabled) { root.pressX = mouse.x; root.pressY = mouse.y; holdTimer.restart() }

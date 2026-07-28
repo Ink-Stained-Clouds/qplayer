@@ -1739,6 +1739,32 @@ public class LyricRenderer {
     }
 
     /**
+     * Mouse-wheel scroll over the lyric column (desktop only — touch drives
+     * {@link #scrollDown}/{@link #scrollMove}/{@link #scrollUp} instead). {@code
+     * notches} is in the same wheel-notch units InputBridge already feeds
+     * dispatchWheel (NOT pixels — the engine's own Flickable wheel handling
+     * multiplies by its internal 48px-per-notch WHEEL_STEP before touching
+     * contentY, decompiled from EventDispatcher.wheelOnAxis; mirrored here so a
+     * given wheel motion moves the lyric column exactly as far as it would move
+     * any QML Flickable-backed list). Settles into the same idle-hold/return-to-
+     * follow state a finished drag leaves behind.
+     */
+    private static final float WHEEL_STEP_PX = 48f;
+
+    public void scrollByWheel(float notches) {
+        if (!userScrollActive) {
+            userScroll = clampScroll(lastScrollY);
+        }
+        userScrollActive = true;
+        userDragging = false;
+        userFling = false;
+        userReturning = false;
+        // Matches Flickable's own contentY -= step*WHEEL_STEP convention exactly.
+        userScroll = clampScroll(userScroll - notches * WHEEL_STEP_PX);
+        userLastInteractNs = System.nanoTime();
+    }
+
+    /**
      * Start time (ms) of the lyric line under a tapped screen y, or -1 if the tap landed
      * in the blank run-out beyond the first/last line. Uses the last frame's geometry.
      */
