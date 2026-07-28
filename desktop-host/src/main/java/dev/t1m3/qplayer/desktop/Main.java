@@ -156,6 +156,8 @@ public final class Main {
         controller.setInstaller(urls -> downloadAndInstallUpdate(controller, urls));
 
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
+        // Windows tray: hand it the multi-size .ico the installer also uses.
+        tray.setIcoBytes(resources.load("app-icon.ico"));
 
         window.init();
         // Start rendering immediately — the render thread is the core; the tray is

@@ -139,6 +139,47 @@ Rectangle {
         currentIndex: app.page
         model: app.navItems
         onItemClicked: app.switchTo(index)
+
+        // Rail header: the app mark in the top-left corner, which only the wide
+        // layout has room for (the compact layout's top-left is the TopAppBar's
+        // title). The logo slides from centred (collapsed rail) to left-aligned
+        // beside the name (extended rail) on the same 200ms curve the rail's own
+        // width animates with; the name itself just fades, so the two states
+        // don't fight over the 80px collapsed width.
+        header: Item {
+            implicitHeight: 64 + settings.topInset
+
+            Image {
+                id: railLogo
+                width: 32
+                height: 32
+                y: settings.topInset + 16
+                x: app.expanded ? 24 : (parent.width - width) / 2
+                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                source: "app-icon.png"
+                // Decode straight to ~2x the drawn size. Without this the 256px
+                // source is resampled to 32 at draw time with plain bilinear
+                // (SamplingMode.LINEAR), which at an 8:1 ratio aliases the disc's
+                // grooves badly; sourceSize routes it through the loader's
+                // mipmapped downscale instead. The artwork already carries its own
+                // rounded corners, so no radius here — clipping them a second time
+                // just re-aliases the edge.
+                sourceSize.width: 64
+                sourceSize.height: 64
+            }
+            Text {
+                anchors.left: railLogo.right
+                anchors.leftMargin: 12
+                anchors.verticalCenter: railLogo.verticalCenter
+                text: "QPlayer"
+                opacity: app.expanded ? 1 : 0
+                visible: opacity > 0.01
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                color: Theme.color.onSurfaceColor
+                font.family: Theme.typography.titleMedium.family
+                font.pixelSize: Theme.typography.titleMedium.size
+            }
+        }
     }
 
     TopAppBar {

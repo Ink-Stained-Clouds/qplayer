@@ -63,6 +63,10 @@ final class WinTray {
     private static final int IMAGE_ICON = 1;
     private static final int LR_LOADFROMFILE = 0x10;
     private static final int LR_DEFAULTSIZE = 0x40;
+    // Notification-area icon metrics: the shell asks for SM_CXSMICON-sized icons
+    // (16px at 100% scaling, 20/24/32 as DPI scaling goes up).
+    private static final int SM_CXSMICON = 49;
+    private static final int SM_CYSMICON = 50;
 
     private static final int MF_STRING = 0x0;
     private static final int MF_SEPARATOR = 0x800;
@@ -98,6 +102,7 @@ final class WinTray {
         UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, int uElapse, Pointer lpTimerFunc);
         boolean KillTimer(HWND hWnd, UINT_PTR nIDEvent);
         int GetDoubleClickTime();
+        int GetSystemMetrics(int index);
     }
 
     interface Shell32 extends StdCallLibrary {
@@ -192,6 +197,7 @@ final class WinTray {
 
     private volatile HWND hWnd;
     private volatile HICON hIcon;
+    private volatile byte[] iconIco;
     private final NOTIFYICONDATA nid = new NOTIFYICONDATA();
     private WndProc wndProc;            // strong ref: JNA callbacks must not be GC'd
     private Thread pump;
@@ -218,6 +224,14 @@ final class WinTray {
 
     void setIconPng(byte[] png) {
         this.iconPng = png;
+    }
+
+    /** A ready-made multi-size .ico, preferred over the PNG: Windows then loads the
+     *  entry that already matches the tray size instead of downscaling a 256px
+     *  image itself (LoadImage's stretch is not resampled, so fine detail — the
+     *  record's grooves — turns to noise). */
+    void setIconIco(byte[] ico) {
+        this.iconIco = ico;
     }
 
     void setTooltip(String tip) {
@@ -420,13 +434,21 @@ final class WinTray {
     }
 
     private HICON loadIcon() {
-        if (iconPng == null) return null;
+        byte[] ico = iconIco != null ? iconIco : (iconPng != null ? wrapPngAsIco(iconPng) : null);
+        if (ico == null) return null;
         try {
             java.io.File f = java.io.File.createTempFile("qplayer-tray", ".ico");
             f.deleteOnExit();
-            java.nio.file.Files.write(f.toPath(), wrapPngAsIco(iconPng));
+            java.nio.file.Files.write(f.toPath(), ico);
+            // Ask for the notification area's own size so a multi-size .ico is
+            // matched entry-for-entry; LR_DEFAULTSIZE (32px) would make the shell
+            // scale a second time. Falls back to the old behaviour if the metrics
+            // are unavailable.
+            int cx = U32.I.GetSystemMetrics(SM_CXSMICON);
+            int cy = U32.I.GetSystemMetrics(SM_CYSMICON);
+            int flags = LR_LOADFROMFILE | ((cx > 0 && cy > 0) ? 0 : LR_DEFAULTSIZE);
             HANDLE h = U32.I.LoadImageW(null, new WString(f.getAbsolutePath()),
-                    IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                    IMAGE_ICON, Math.max(0, cx), Math.max(0, cy), flags);
             if (h == null) {
                 Logger.warn("WinTray: LoadImage failed (err={})", Native.getLastError());
                 return null;

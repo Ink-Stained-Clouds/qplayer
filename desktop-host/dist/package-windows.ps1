@@ -35,7 +35,7 @@ Remove-Item -Recurse -Force $out, $dir -ErrorAction SilentlyContinue
 & jpackage --type app-image `
     --name qplayer --app-version $ver --vendor t1m3 --description "QPlayer" `
     --input $app --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.Main `
-    --dest $out --icon "$PSScriptRoot\app-icon.ico" `
+    --dest $out --icon "$PSScriptRoot\..\src\main\resources\app-icon.ico" `
     --add-modules $mods `
     --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"
 if ($LASTEXITCODE -ne 0) { throw "jpackage failed ($LASTEXITCODE)" }

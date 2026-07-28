@@ -15,7 +15,9 @@
   #define SourceFolder "..\target\QPlayer"
 #endif
 #ifndef IconFile
-  #define IconFile "app-icon.ico"
+  ; The multi-size icon now lives with the app resources (the tray loads the
+  ; same file at runtime), so there is one .ico in the repo, not two.
+  #define IconFile "..\src\main\resources\app-icon.ico"
 #endif
 
 [Setup]

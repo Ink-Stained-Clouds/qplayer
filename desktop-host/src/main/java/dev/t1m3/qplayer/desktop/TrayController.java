@@ -43,6 +43,8 @@ final class TrayController implements PlayerController.PlaybackListener {
     private final PlayerController controller;
     private final DesktopWindow win;
     private final byte[] iconPng;
+    /** Multi-size .ico for the Windows tray; see setIcoBytes. */
+    private byte[] iconIco;
 
     // Windows backend (non-null when active).
     private WinTray winTray;
@@ -63,6 +65,15 @@ final class TrayController implements PlayerController.PlaybackListener {
         this.controller = controller;
         this.win = win;
         this.iconPng = iconPng;
+    }
+
+    /** The app's multi-size .ico. Windows picks the entry matching the tray's own
+     *  size from it, instead of shrinking one 256px image twice (LoadImage to the
+     *  default icon size, then the shell to the notification-area size) — which
+     *  visibly mushes fine detail. Ignored by the other backends, which take the
+     *  PNG. Set before {@link #install}. */
+    void setIcoBytes(byte[] ico) {
+        this.iconIco = ico;
     }
 
     /** Build the tray. Returns false (and logs) if no tray is available, in which
@@ -86,6 +97,7 @@ final class TrayController implements PlayerController.PlaybackListener {
     private boolean installWin() {
         try {
             winTray = new WinTray();
+            if (iconIco != null) winTray.setIconIco(iconIco);
             winTray.setIconPng(iconPng != null ? iconPng : placeholderPng());
             winTray.addItem("上一首", () -> win.postMainTask(controller::prev));
             winPlayPause = winTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
