@@ -60,7 +60,12 @@ public final class SettingsCatalog {
                 .build());
         out.add(SettingSpec.action("pickFont", APPEARANCE, "字体", "选择")
                 .provider("fontName")
-                .desc("歌词页立即生效（字重设置对可变字体和多字重字体同样有效）；其余界面文字需要重启软件")
+                .desc("歌词页立即生效；其余界面文字需要重启软件")
+                .build());
+        out.add(SettingSpec.radio("graphicsBackend", APPEARANCE, "图形后端", 0,
+                        "OpenGL", "Vulkan")
+                .desc("切换后重启软件生效；若 Vulkan 初始化失败，将自动切回 OpenGL")
+                .onlyOn(DESKTOP)
                 .build());
 
         // ---- 播放 -----------------------------------------------------------

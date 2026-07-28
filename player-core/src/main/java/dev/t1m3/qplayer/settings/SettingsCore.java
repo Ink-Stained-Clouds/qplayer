@@ -49,6 +49,9 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     /** Installed font families for the picker dialog. Not persisted. */
     public final Property<List<String>> availableFontFamilies =
             new Property<>(Collections.emptyList());
+    /** Desktop sets this when a requested Vulkan backend failed and startup
+     *  continued with OpenGL. Non-persistent; Main.qml presents the explanation. */
+    public final Property<Boolean> graphicsFallbackNotice = new Property<>(Boolean.FALSE);
 
     private final Map<String, SettingSpec> specsByKey = new LinkedHashMap<>();
     private final Map<String, Property<Object>> values = new HashMap<>();

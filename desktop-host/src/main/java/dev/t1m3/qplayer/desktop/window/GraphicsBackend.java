@@ -2,6 +2,8 @@ package dev.t1m3.qplayer.desktop.window;
 
 import io.github.timer_err.qml4j.render.SurfaceBackend;
 
+import dev.t1m3.qplayer.settings.SettingsCore;
+
 /**
  * Switchable GPU backend for the desktop host. Both implementations bridge a
  * GLFW window to a Skija {@code DirectContext} + window {@code Surface}, and are
@@ -21,10 +23,18 @@ public interface GraphicsBackend extends SurfaceBackend {
     enum Kind {
         GL, VULKAN;
 
-        /** Resolve the backend kind from {@code -Dqplayer.gfx=gl|vulkan} (default GL). */
-        static Kind fromProperty() {
-            String v = System.getProperty("qplayer.gfx", "gl").trim().toLowerCase();
-            return "vulkan".equals(v) || "vk".equals(v) ? VULKAN : GL;
+        /**
+         * Resolve the backend selected in desktop settings. The JVM property is
+         * intentionally an override so a user can recover from a persisted Vulkan
+         * choice that their driver cannot initialize.
+         */
+        static Kind resolve(SettingsCore settings) {
+            String override = System.getProperty("qplayer.gfx");
+            if (override != null && !override.trim().isEmpty()) {
+                String v = override.trim().toLowerCase();
+                return "vulkan".equals(v) || "vk".equals(v) ? VULKAN : GL;
+            }
+            return settings != null && settings.intOf("graphicsBackend") == 1 ? VULKAN : GL;
         }
     }
 

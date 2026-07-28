@@ -390,6 +390,23 @@ Rectangle {
         }
     }
 
+    Dialog {
+        id: graphicsFallbackDialog
+        title: "已切换到 OpenGL"
+        icon: "warning"
+        text: "Vulkan 图形后端初始化失败，QPlayer 已自动使用 OpenGL 继续运行，并已更新设置。"
+        acceptText: "知道了"
+        showRejectButton: false
+        Component.onCompleted: {
+            if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
+        }
+    }
+
+    property bool graphicsFallbackWatch: settings.graphicsFallbackNotice
+    onGraphicsFallbackWatchChanged: {
+        if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
+    }
+
     property bool updateWatch: player.updateAvailable
     onUpdateWatchChanged: if (player.updateAvailable) updateDialog.open()
 

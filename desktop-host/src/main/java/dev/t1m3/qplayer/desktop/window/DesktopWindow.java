@@ -49,7 +49,7 @@ public final class DesktopWindow {
     private final PlayerController controller;
     private final SettingsCore settings;
     private final LyricCompositor compositor = new LyricCompositor();
-    private final GraphicsBackend.Kind kind = GraphicsBackend.Kind.fromProperty();
+    private volatile GraphicsBackend.Kind kind;
 
     // Input events (main thread) marshalled onto the render thread; playback/tray
     // tasks (controller main executor + tray menu) run on the main event loop.
@@ -75,6 +75,7 @@ public final class DesktopWindow {
     private volatile RenderThread renderThread;
     private volatile boolean quitRequested;
     private volatile boolean hiddenToTray;
+    private boolean graphicsFallbackAttempted;
     // Whether a system tray actually installed. Without one, hiding the window would
     // make the app vanish with no way back, so the close button quits instead and
     // recovery is left to the window manager's minimise (the taskbar icon is set).
@@ -88,6 +89,7 @@ public final class DesktopWindow {
         this.resources = resources;
         this.controller = controller;
         this.settings = settings;
+        this.kind = GraphicsBackend.Kind.resolve(settings);
     }
 
     // --- accessors used by the render thread (all read cached/persistent state) ---
@@ -367,6 +369,10 @@ public final class DesktopWindow {
         java.io.StringWriter sw = new java.io.StringWriter();
         t.printStackTrace(new java.io.PrintWriter(sw));
         Logger.error(sw.toString());
+        if (kind == GraphicsBackend.Kind.VULKAN && !graphicsFallbackAttempted) {
+            graphicsFallbackAttempted = true;
+            postMainTask(this::fallbackToOpenGL);
+        }
     }
 
     // --- main-thread lifecycle -------------------------------------------------
@@ -377,6 +383,18 @@ public final class DesktopWindow {
         preferStablePlatform();
         if (!GLFW.glfwInit()) throw new IllegalStateException("glfwInit failed");
 
+        if (kind == GraphicsBackend.Kind.VULKAN
+                && !org.lwjgl.glfw.GLFWVulkan.glfwVulkanSupported()) {
+            Logger.warn("Vulkan is unavailable; falling back to OpenGL");
+            graphicsFallbackAttempted = true;
+            kind = GraphicsBackend.Kind.GL;
+            settings.put("graphicsBackend", 0);
+            settings.graphicsFallbackNotice.set(Boolean.TRUE);
+        }
+        createWindow();
+    }
+
+    private void createWindow() {
         GLFW.glfwDefaultWindowHints();
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
         GLFW.glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_TRUE);
@@ -406,6 +424,33 @@ public final class DesktopWindow {
         input = new InputBridge(this);
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
+    }
+
+    /**
+     * A Vulkan device/surface can fail after GLFW's basic availability probe.
+     * Recreate the window with an OpenGL context and keep the application alive.
+     * Runs on the GLFW-owning main thread after the failed render thread exits.
+     */
+    private void fallbackToOpenGL() {
+        if (kind != GraphicsBackend.Kind.VULKAN || quitRequested) return;
+        Logger.warn("Vulkan initialization failed; rebuilding the window with OpenGL");
+        stopRenderThread();
+        if (window != MemoryUtil.NULL) {
+            org.lwjgl.glfw.Callbacks.glfwFreeCallbacks(window);
+            GLFW.glfwDestroyWindow(window);
+            window = MemoryUtil.NULL;
+        }
+        kind = GraphicsBackend.Kind.GL;
+        settings.put("graphicsBackend", 0);
+        settings.graphicsFallbackNotice.set(Boolean.TRUE);
+        pendingResize = null;
+        try {
+            createWindow();
+            spawnRenderThread();
+        } catch (Throwable fallbackError) {
+            Logger.error("OpenGL fallback failed: {}", fallbackError);
+            requestQuit();
+        }
     }
 
     private void cacheRefreshRate() {
