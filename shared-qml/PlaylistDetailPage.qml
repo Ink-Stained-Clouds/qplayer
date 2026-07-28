@@ -57,14 +57,14 @@ Rectangle {
             // Change cover — own playlists only, its own top-right button (the header
             // no longer shows a cover thumbnail). Android opens a native gallery
             // picker; desktop has none, so it opens the path-entry dialog instead
-            // (same settings.musicFolder platform check used elsewhere).
+            // (same musicFolder platform check used elsewhere).
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
                 visible: player.loggedIn && !player.playlistLoading && player.playlistOwned
                 icon: "image"
                 onClicked: {
-                    if (typeof settings.musicFolder === "undefined") {
+                    if (!settings.has("musicFolder")) {
                         player.pickPlaylistCover(player.openPlaylistId)
                     } else {
                         coverPathField.text = ""

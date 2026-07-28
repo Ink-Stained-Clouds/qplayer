@@ -19,6 +19,8 @@ import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.audio.MetadataReader;
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.model.Track;
+import dev.t1m3.qplayer.settings.SettingsCatalog;
+import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.store.AppDirs;
 
 import java.io.ByteArrayOutputStream;
@@ -67,7 +69,7 @@ public final class QPlayerActivity extends Activity {
     private long pendingCoverPlaylistId;
 
     private PlayerController controller;
-    private AppSettings settings;
+    private SettingsCore settings;
     private QmlGLSurfaceView glView;
     private MetadataReader reader;
     private android.os.Handler mainHandler;
@@ -139,16 +141,22 @@ public final class QPlayerActivity extends Activity {
         // re-entering doesn't recompile/reload the whole UI.
         controller.setExitListener(() -> runOnUiThread(() -> moveTaskToBack(true)));
 
-        settings = new AppSettings();
-        settings.setDarkListener(dark -> runOnUiThread(() -> applySystemBars(dark)));
-        settings.setMonetListener(on -> controller.setMonetEnabled(on));
-        settings.setUnblockListener(on -> controller.setUnblockEnabled(on));
-        settings.setMirrorListener(on -> controller.setUpdateMirror(on));
-        settings.setFadeListener(on -> controller.setFadeEnabled(on));
-        settings.setHighQualityListener(on -> controller.setHighQualityEnabled(on));
-        settings.setCacheSizeListener(mb -> controller.setCacheMaxSizeMB(mb));
-        settings.setCustomApiListener(cfg -> controller.setCustomApiConfig(cfg));
-        settings.load(this);
+        // Settings: the catalog, the value plumbing and every side effect live in
+        // player-core (shared with the desktop host). This host contributes the
+        // SharedPreferences store, the platform id, and the actions/live text its
+        // own rows need.
+        settings = new SettingsCore();
+        settings.attach(controller);
+        settings.resolvedDark.addListener(dark ->
+                runOnUiThread(() -> applySystemBars(Boolean.TRUE.equals(dark))));
+        settings.setSystemDark(isSystemDark(this));
+        settings.registerAction("clearCache", controller::clearDiskCache);
+        settings.registerAction("checkUpdate", controller::checkForUpdateManual);
+        settings.registerAction("openRepo",
+                () -> controller.openExternalUrl("https://github.com/TIMER-err/qplayer"));
+        settings.registerInfo("version", () -> "v" + controller.appVersion.peek());
+        settings.registerInfo("cacheUsage", () -> controller.cacheSizeMB.peek() + " MB");
+        settings.load(new PrefsSettingsStore(this), SettingsCatalog.ANDROID);
 
         String qml;
         try {
@@ -508,6 +516,12 @@ public final class QPlayerActivity extends Activity {
 
     /** Keep the system bars transparent and flip the bar-icon contrast so they read on
      *  either light or dark content. */
+    /** Whether the OS is in night mode right now. */
+    private static boolean isSystemDark(android.content.Context ctx) {
+        int night = ctx.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return night == Configuration.UI_MODE_NIGHT_YES;
+    }
+
     private void applySystemBars(boolean dark) {
         android.view.Window w = getWindow();
         // The dark listener can fire during settings.load(), before setContentView
@@ -590,7 +604,7 @@ public final class QPlayerActivity extends Activity {
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         if (glView != null) {
-            glView.onSystemNightChanged(AppSettings.isSystemDark(this));
+            glView.onSystemNightChanged(isSystemDark(this));
         }
     }
 

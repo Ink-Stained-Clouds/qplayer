@@ -6,6 +6,7 @@ import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
+import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.util.Logger;
 
@@ -41,7 +42,7 @@ public final class DesktopWindow {
     private final String qmlSource;
     private final ResourceLoader resources;
     private final PlayerController controller;
-    private final DesktopSettings settings;
+    private final SettingsCore settings;
     private final LyricCompositor compositor = new LyricCompositor();
     private final GraphicsBackend.Kind kind = GraphicsBackend.Kind.fromProperty();
 
@@ -75,7 +76,7 @@ public final class DesktopWindow {
     private Runnable firstFrameListener;
 
     DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
-                  PlayerController controller, DesktopSettings settings) {
+                  PlayerController controller, SettingsCore settings) {
         this.engine = engine;
         this.qmlSource = qmlSource;
         this.resources = resources;
@@ -113,7 +114,7 @@ public final class DesktopWindow {
         return controller;
     }
 
-    DesktopSettings settings() {
+    SettingsCore settings() {
         return settings;
     }
 

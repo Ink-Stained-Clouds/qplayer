@@ -3,47 +3,34 @@ import QtQuick.Layouts
 import md3.Core
 import "."
 
-// App settings overlay: appearance (dark-mode policy + Monet dynamic color) and
-// an about section. Writes the `settings` context global, which drives
-// StyleManager through the Bindings in Main.qml. Section containers are plain
-// rounded rectangles sized to their content (md3 Card is fixed-size).
+// App settings overlay. Nothing here knows what a setting IS: the categories and
+// the rows come from player-core's SettingsCatalog through the `settings` context
+// global (SettingsCore), and each row is rendered by whichever Setting*Row
+// component matches its declared type. Adding a setting is a catalog entry —
+// no edit here, and none in either platform's host code.
 //
-// Each category's actual card content lives in its own top-level component
-// file (AppearanceSettingsCards.qml, PlaybackSettingsCards.qml + the older
-// CustomApiSettingsCard.qml, LyricSettingsCards.qml, LocalSettingsCards.qml,
-// AboutSettingsCards.qml) rather than inline here — qml4j compiles each QML
-// file's root to one JVM constructor, and all 5 panels' markup inline in this
-// one file pushed the generated method past the JVM's 64KB bytecode limit
-// (MethodTooLargeException at runtime, not caught by `mvn package`).
+// This also keeps the page well clear of the 64KB-per-QML-file constructor limit
+// that forced the old hand-written version to be split across six files: the
+// markup is now one Repeater plus one Component per row type.
 Rectangle {
     id: page
     signal back()
     color: Theme.color.surface
-    property bool fontPickerOpen: false
 
-    // Category tab bar (issue: settings had grown into one long scroll with just
-    // inline section labels — this replaces that with an explicit selector).
-    // Fixed 5-category list, always the same on every platform: 存储's cache
-    // controls are cross-platform (both Settings twins have maxCacheSizeMB) and
-    // now live under 本地 alongside the music-folder picker (that one card still
-    // individually typeof-guards itself for Android, same as before) — merging
-    // them meant one fewer tab than the original 6-category cut.
-    property string currentCategory: "外观"
-    property var categories: ["外观", "播放", "歌词", "本地", "关于"]
-    // md3 Tabs takes {icon, text} entries; these are label-only.
-    property var categoryTabModel: [
-        { text: "外观" }, { text: "播放" }, { text: "歌词" }, { text: "本地" }, { text: "关于" }
-    ]
+    property var categories: settings.categories()
+    property var categoryTabModel: {
+        var out = []
+        for (var i = 0; i < page.categories.length; i++) out.push({ text: page.categories[i] })
+        return out
+    }
 
-    // Category switching uses Main.qml's MD3 fade-through verbatim (fade the
-    // content out, swap, fade it back in while it rises) instead of the
-    // per-panel horizontal slide this page used to have on its own, so moving
-    // between settings categories reads the same as moving between the app's
-    // main pages. Only one panel is ever visible, so the panels no longer need
-    // opaque backings to occlude each other mid-transition either.
-    property string nextCategory: "外观"
+    // Category switching uses Main.qml's MD3 fade-through verbatim (fade out,
+    // swap, fade back in while rising), so it reads the same as switching pages.
+    property string currentCategory: page.categories.length > 0 ? page.categories[0] : ""
+    property string nextCategory: page.currentCategory
     property real panelOpacity: 1
     property real panelShift: 0
+    property var groups: settings.groups(page.currentCategory)
 
     function selectCategory(name) {
         if (!name || name === page.currentCategory) return
@@ -60,9 +47,6 @@ Rectangle {
         ScriptAction {
             onTrigger: {
                 page.currentCategory = page.nextCategory
-                // Each category scrolls independently, so the incoming one starts
-                // at its top rather than inheriting the previous panel's offset
-                // (which could be past the end of a shorter panel).
                 settingsFlickable.contentY = 0
                 page.panelShift = 28
             }
@@ -80,13 +64,11 @@ Rectangle {
     }
 
     // Tabs owns currentIndex (its Ripple writes it directly); mirror it into a
-    // plain property so this page has a change handler of its own to hang the
-    // transition off, the same way Main.qml watches player.toast.
+    // plain property so this page has a change handler to hang the transition off.
     property int tabIndex: categoryTabs.currentIndex
     onTabIndexChanged: page.selectCategory(page.categories[page.tabIndex])
 
     // Catch-all so taps on empty areas don't fall through to the page beneath.
-    // Declared first (lowest z); the controls above still receive their events.
     MouseArea { anchors.fill: parent }
 
     ColumnLayout {
@@ -114,12 +96,6 @@ Rectangle {
             }
         }
 
-        // Category selector: md3's own Tabs bar (secondary type — full-slot
-        // 2dp indicator, no icons), replacing the hand-rolled Repeater +
-        // arithmetic underline this page carried. Sized to the bar itself: the
-        // panels below scroll as one Flickable rather than living in Tabs' own
-        // StackLayout content area, since they differ in height and share the
-        // page's scroll position.
         Tabs {
             id: categoryTabs
             Layout.fillWidth: true
@@ -134,108 +110,75 @@ Rectangle {
             id: settingsFlickable
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // Breathing room under the tab bar so the first card doesn't sit on
+            // the indicator.
+            Layout.topMargin: 16
             clip: true
             contentWidth: width
-            // Bound to whichever panel is showing — the others are invisible and
-            // occupy no scroll range.
-            contentHeight: {
-                switch (page.currentCategory) {
-                case "外观": return panelAppearance.height + 24
-                case "播放": return panelPlayback.height + 24
-                case "歌词": return panelLyric.height + 24
-                case "本地": return panelLocal.height + 24
-                case "关于": return panelAbout.height + 24
-                default: return 0
+            contentHeight: groupsCol.implicitHeight + 24
+
+            ColumnLayout {
+                id: groupsCol
+                width: settingsFlickable.width
+                y: page.panelShift
+                opacity: page.panelOpacity
+                spacing: 14
+
+                // One card per group, one row per spec inside it — the grouping
+                // is declared in the catalog, so the page never names a setting.
+                Repeater {
+                    model: page.groups
+
+                    delegate: SettingCard {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: 12
+
+                        property var groupData: modelData
+
+                        Repeater {
+                            model: groupData.rows
+
+                            delegate: Loader {
+                                Layout.fillWidth: true
+
+                                // A row gated on another setting (the custom-API
+                                // block hangs off its own switch) collapses when
+                                // that's off, as the old card's block did.
+                                visible: modelData.dependsOn.length === 0
+                                         || settings.value(modelData.dependsOn) === true
+
+                                // Read inside the loaded component, the same way
+                                // MD3 Menu's delegates reach their item data.
+                                property var rowSpec: modelData
+
+                                sourceComponent: modelData.type === "switch" ? switchRow
+                                               : modelData.type === "stepper" ? stepperRow
+                                               : modelData.type === "segmented" ? segmentedRow
+                                               : modelData.type === "radio" ? radioRow
+                                               : modelData.type === "text" ? textRow
+                                               : actionRow
+                            }
+                        }
+                    }
                 }
             }
 
-            // Plain Item, not a Layout: the 5 category panels are stacked at the
-            // same origin and toggled by `visible`. height must be bound
-            // explicitly (plain Item doesn't default height to implicitHeight
-            // the way real Qt Quick does) — qml4j's hit-testing walks every
-            // ancestor's own width/height as a bounding-box check on the way
-            // down to a MouseArea/Button, so a 0-height Item here silently
-            // swallows every click to everything beneath it. y/opacity carry the
-            // fade-through for whichever panel is showing, exactly as pageBody
-            // does for the main pages in Main.qml.
+            // Components are Items and are NOT visible:false, so they'd take a
+            // slot (plus spacing) inside a layout — keep them under a plain Item.
             Item {
-                id: content
-                width: parent.width
-                height: parent.contentHeight
-                y: page.panelShift
-                opacity: page.panelOpacity
-
-                Item {
-                    id: panelAppearance
-                    width: parent.width
-                    height: appearanceCards.implicitHeight
-                    visible: page.currentCategory === "外观"
-
-                    AppearanceSettingsCards {
-                        id: appearanceCards
-                        width: parent.width
-                        onPickFont: page.fontPickerOpen = true
-                    }
-                } // end 外观
-
-                Item {
-                    id: panelPlayback
-                    width: parent.width
-                    height: playbackCards.implicitHeight
-                    visible: page.currentCategory === "播放"
-
-                    ColumnLayout {
-                        id: playbackCards
-                        width: parent.width
-                        spacing: 14
-                        PlaybackSettingsCards { Layout.fillWidth: true }
-                        // See CustomApiSettingsCard.qml — factored into its own file
-                        // for the same 64KB-method reason noted above.
-                        CustomApiSettingsCard {}
-                    }
-                } // end 播放
-
-                Item {
-                    id: panelLyric
-                    width: parent.width
-                    height: lyricCards.implicitHeight
-                    visible: page.currentCategory === "歌词"
-
-                    LyricSettingsCards {
-                        id: lyricCards
-                        width: parent.width
-                    }
-                } // end 歌词
-
-                Item {
-                    id: panelLocal
-                    width: parent.width
-                    height: localCards.implicitHeight
-                    visible: page.currentCategory === "本地"
-
-                    LocalSettingsCards {
-                        id: localCards
-                        width: parent.width
-                    }
-                } // end 本地
-
-                Item {
-                    id: panelAbout
-                    width: parent.width
-                    height: aboutCards.implicitHeight
-                    visible: page.currentCategory === "关于"
-
-                    AboutSettingsCards {
-                        id: aboutCards
-                        width: parent.width
-                    }
-                } // end 关于
+                Component { id: switchRow; SettingSwitchRow { spec: rowSpec } }
+                Component { id: stepperRow; SettingStepperRow { spec: rowSpec } }
+                Component { id: segmentedRow; SettingSegmentedRow { spec: rowSpec } }
+                Component { id: radioRow; SettingRadioRow { spec: rowSpec } }
+                Component { id: textRow; SettingTextRow { spec: rowSpec } }
+                Component { id: actionRow; SettingActionRow { spec: rowSpec } }
             }
         }
     }
 
     FontPickerDialog {
-        active: page.fontPickerOpen
-        onClosed: page.fontPickerOpen = false
+        active: settings.fontPickerOpen
+        onClosed: settings.fontPickerOpen = false
     }
 }

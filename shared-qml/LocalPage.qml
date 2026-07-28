@@ -217,7 +217,7 @@ Item {
     Text {
         anchors.centerIn: parent
         visible: player.libraryCount === 0
-        text: typeof settings.musicFolder !== "undefined"
+        text: settings.has("musicFolder")
             ? "未找到本地音乐\n可在设置 → 本地中修改音乐目录"
             : "未找到本地音乐\n把歌曲放进 Music 文件夹"
         horizontalAlignment: Text.AlignHCenter

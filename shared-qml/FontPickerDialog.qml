@@ -3,7 +3,8 @@ import QtQuick.Layouts
 import md3.Core
 
 // The app's one font picker (issue #15): the bundled font, the OS default, or any
-// installed family, writing settings.fontFamily ("" / "system" / family name).
+// installed family. The selection lives in SettingsCore (setFontSelection /
+// fontFamily(), "" = bundled, "system" = the OS default, else a family name).
 //
 // Virtualized the same way VirtualSongList.qml is (Repeater windowStart/
 // windowCount over a fixed rowH): the family list can be 100+ entries long and
@@ -82,13 +83,13 @@ Rectangle {
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: "内置字体 PingFang SC"
-                    color: settings.fontFamily === "" ? Theme.color.primary : Theme.color.onSurfaceColor
+                    color: settings.fontFamily() === "" ? Theme.color.primary : Theme.color.onSurfaceColor
                     fontSize: 14
                 }
                 MouseArea {
                     id: bundledMa
                     anchors.fill: parent
-                    onClicked: { settings.fontFamily = ""; dialog.closed() }
+                    onClicked: { settings.setFontSelection(""); dialog.closed() }
                 }
             }
 
@@ -102,13 +103,13 @@ Rectangle {
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: "系统默认字体"
-                    color: settings.fontFamily === "system" ? Theme.color.primary : Theme.color.onSurfaceColor
+                    color: settings.fontFamily() === "system" ? Theme.color.primary : Theme.color.onSurfaceColor
                     fontSize: 14
                 }
                 MouseArea {
                     id: systemMa
                     anchors.fill: parent
-                    onClicked: { settings.fontFamily = "system"; dialog.closed() }
+                    onClicked: { settings.setFontSelection("system"); dialog.closed() }
                 }
             }
 
@@ -156,7 +157,7 @@ Rectangle {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData || ""
                                 elide: Text.ElideRight
-                                color: settings.fontFamily === modelData
+                                color: settings.fontFamily() === modelData
                                        ? Theme.color.primary : Theme.color.onSurfaceColor
                                 fontSize: 14
                             }
@@ -164,7 +165,7 @@ Rectangle {
                             MouseArea {
                                 id: rowMa
                                 anchors.fill: parent
-                                onClicked: { settings.fontFamily = modelData; dialog.closed() }
+                                onClicked: { settings.setFontSelection(modelData); dialog.closed() }
                             }
                         }
                     }

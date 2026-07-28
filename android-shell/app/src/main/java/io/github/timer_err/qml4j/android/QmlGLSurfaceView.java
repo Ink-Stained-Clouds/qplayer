@@ -30,7 +30,7 @@ import io.github.timer_err.qml4j.render.items.core.Item;
 import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
-import dev.t1m3.qplayer.android.AppSettings;
+import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
@@ -48,7 +48,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private QmlView view;
     private SkijaGlSurface surface;
     private PlayerController controller;
-    private AppSettings settings;
+    private SettingsCore settings;
     private volatile boolean failed;
     private ErrorListener errorListener;
     private SplashListener splashListener;
@@ -290,7 +290,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     /** Expose app settings to QML as the {@code settings} context global. Set before
      *  the GL thread first lays out. */
-    public void setSettings(AppSettings s) {
+    public void setSettings(SettingsCore s) {
         this.settings = s;
     }
 
@@ -298,7 +298,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     public void onSystemNightChanged(final boolean dark) {
         queueEvent(new Runnable() {
             @Override public void run() {
-                if (settings != null) settings.applySystemDark(dark);
+                if (settings != null) settings.setSystemDark(dark);
             }
         });
     }

@@ -9,6 +9,8 @@ import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.model.Track;
+import dev.t1m3.qplayer.settings.SettingsCatalog;
+import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.util.Logger;
 import org.jetbrains.annotations.NotNull;
@@ -98,15 +100,22 @@ public final class Main {
         // startup instead.
         deleteRecursive(new File(AppDirs.cacheBase(), "updates"));
 
-        DesktopSettings settings = new DesktopSettings();
-        settings.setMonetListener(controller::setMonetEnabled);
-        settings.setUnblockListener(controller::setUnblockEnabled);
-        settings.setMirrorListener(controller::setUpdateMirror);
-        settings.setFadeListener(controller::setFadeEnabled);
-        settings.setHighQualityListener(controller::setHighQualityEnabled);
-        settings.setCacheSizeListener(controller::setCacheMaxSizeMB);
-        settings.setCustomApiListener(controller::setCustomApiConfig);
-        settings.load();
+        // Settings: the catalog, the value plumbing and every side effect live in
+        // player-core (shared with Android). The host contributes a store, the
+        // platform id, the defaults only it knows, and the actions/live text its
+        // own rows need.
+        SettingsCore settings = new SettingsCore();
+        settings.attach(controller);
+        settings.setDefault("musicFolder",
+                new File(System.getProperty("user.home", "."), "Music").getAbsolutePath());
+        settings.setDefault("cacheFolder", AppDirs.cacheBase());
+        settings.setSystemDark(detectSystemDark());
+        settings.registerAction("clearCache", controller::clearDiskCache);
+        settings.registerAction("checkUpdate", controller::checkForUpdateManual);
+        settings.registerAction("openRepo", () -> openUrl("https://github.com/TIMER-err/qplayer"));
+        settings.registerInfo("version", () -> "v" + controller.appVersion.peek());
+        settings.registerInfo("cacheUsage", () -> controller.cacheSizeMB.peek() + " MB");
+        settings.load(new JsonSettingsStore(), SettingsCatalog.DESKTOP);
 
         // Fonts for the host-drawn lyric renderer (the QML scene fonts are set on the
         // view in DesktopWindow.ensureView).
@@ -159,16 +168,15 @@ public final class Main {
 
         // Wire the music-folder change listener so Settings page edits trigger a rescan.
         // Must be wired after window.init() so postRenderTask() is available.
-        Object rawFolder = settings.musicFolder.peek();
-        String initialFolder = rawFolder instanceof String ? (String) rawFolder : "";
+        String initialFolder = settings.str("musicFolder");
         // Watches the folder tree so adding/removing files is picked up on its own —
         // without this, a rescan only ever ran when the user re-touched the Settings
         // folder field or restarted the app. Each rescan the watcher triggers reuses
         // LibraryScanner's per-file cache, so it stays cheap even on a large library.
         LibraryWatcher watcher = new LibraryWatcher(
-                () -> startLibraryScan(controller, reader, window, settings.musicFolder.peek() instanceof String
-                        ? (String) settings.musicFolder.peek() : ""));
-        settings.setMusicFolderListener(folder -> {
+                () -> startLibraryScan(controller, reader, window, settings.str("musicFolder")));
+        settings.onChange("musicFolder", v -> {
+            String folder = String.valueOf(v);
             startLibraryScan(controller, reader, window, folder);
             watcher.start(folder);
         });
@@ -178,17 +186,16 @@ public final class Main {
         // above, so a persisted custom folder must be re-applied here before anything
         // reads/writes through it; a later edit re-points it and rescans so the
         // change is visible without a restart.
-        Object rawCacheFolder = settings.cacheFolder.peek();
-        String initialCacheFolder = rawCacheFolder instanceof String ? (String) rawCacheFolder : "";
+        String initialCacheFolder = settings.str("cacheFolder");
         if (!initialCacheFolder.isEmpty()) {
             AppDirs.setCacheBase(initialCacheFolder);
             controller.diskCache.setBaseDir(initialCacheFolder);
         }
-        settings.setCacheFolderListener(folder -> {
+        settings.onChange("cacheFolder", v -> {
+            String folder = String.valueOf(v);
             AppDirs.setCacheBase(folder);
             controller.diskCache.setBaseDir(folder);
-            Object currentFolder = settings.musicFolder.peek();
-            startLibraryScan(controller, reader, window, currentFolder instanceof String ? (String) currentFolder : "");
+            startLibraryScan(controller, reader, window, settings.str("musicFolder"));
         });
 
         // Initial content + a background scan of the local music folder.
@@ -221,6 +228,13 @@ public final class Main {
         window.shutdown();
         Logger.info("QPlayer desktop exited");
         killSelf();
+    }
+
+    /** Best-effort desktop dark-theme probe: a GTK theme-name hint, else light.
+     *  Unlike Android there's no live signal to observe, so this is read once. */
+    private static boolean detectSystemDark() {
+        String t = System.getenv("GTK_THEME");
+        return t != null && t.toLowerCase().contains("dark");
     }
 
     /** Open a URL in the system default browser via the OS handler (no AWT). */

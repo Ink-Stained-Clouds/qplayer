@@ -196,7 +196,7 @@ Item {
             Button {
                 id: minusBtn
                 type: "outlined"; text: "−"
-                onClicked: settings.lyricOffsetMs = Math.max(-5000, settings.lyricOffsetMs - 50)
+                onClicked: settings.bump("lyricOffsetMs", -1)
             }
             Text {
                 width: 72
@@ -205,14 +205,14 @@ Item {
                 // centered, so anchor directly to a sibling button's centre instead.
                 anchors.verticalCenter: minusBtn.verticalCenter
                 horizontalAlignment: Text.AlignHCenter
-                text: (settings.lyricOffsetMs > 0 ? "+" : "") + settings.lyricOffsetMs + " ms"
+                text: (settings.value("lyricOffsetMs") > 0 ? "+" : "") + settings.value("lyricOffsetMs") + " ms"
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.bodyLarge.family
                 font.pixelSize: Theme.typography.bodyLarge.size
             }
             Button {
                 type: "outlined"; text: "+"
-                onClicked: settings.lyricOffsetMs = Math.min(5000, settings.lyricOffsetMs + 50)
+                onClicked: settings.bump("lyricOffsetMs", 1)
             }
         }
         Button {
@@ -222,7 +222,7 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: 12
             type: "text"; text: "重置"
-            onClicked: settings.lyricOffsetMs = 0
+            onClicked: settings.setValue("lyricOffsetMs", 0)
         }
     }
 
