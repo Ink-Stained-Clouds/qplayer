@@ -58,7 +58,7 @@ public final class SettingsCatalog {
                 .desc("随封面动态生成主题配色")
                 .accessory("swatch")
                 .build());
-        out.add(SettingSpec.action("pickFont", APPEARANCE, "字体", "选择…")
+        out.add(SettingSpec.action("pickFont", APPEARANCE, "字体", "选择")
                 .provider("fontName")
                 .desc("歌词页立即生效（字重设置对可变字体和多字重字体同样有效）；其余界面文字需要重启软件")
                 .build());

@@ -36,6 +36,28 @@ Rectangle {
     // Main.qml uses to swap the bottom bar for the rail.
     property bool twoColumn: page.width >= 600
 
+    // The two columns pack INDEPENDENTLY (each is its own ColumnLayout), rather
+    // than sharing grid rows: a grid row is as tall as its tallest card, so a
+    // short card next to a tall one left a hole under it. Cards are dealt out
+    // greedily to whichever column is currently shorter, estimating a card's
+    // height from its row count — close enough to keep the two columns even
+    // without measuring anything, and stable (it doesn't depend on layout).
+    property var leftGroups: page.column(0)
+    property var rightGroups: page.column(1)
+
+    function column(which) {
+        var out = []
+        if (!page.twoColumn) return which === 0 ? page.groups : out
+        var load = [0, 0]
+        for (var i = 0; i < page.groups.length; i++) {
+            var g = page.groups[i]
+            var target = load[0] <= load[1] ? 0 : 1
+            load[target] += g.rows.length
+            if (target === which) out.push(g)
+        }
+        return out
+    }
+
     function selectCategory(name) {
         if (!name || name === page.currentCategory) return
         page.nextCategory = name
@@ -119,67 +141,78 @@ Rectangle {
             Layout.topMargin: 16
             clip: true
             contentWidth: width
-            contentHeight: groupsGrid.implicitHeight + 24
+            contentHeight: groupsRow.implicitHeight + 24
 
-            GridLayout {
-                id: groupsGrid
+            RowLayout {
+                id: groupsRow
                 x: 12
                 width: settingsFlickable.width - 24
                 y: page.panelShift
                 opacity: page.panelOpacity
-                columns: page.twoColumn ? 2 : 1
-                columnSpacing: 14
-                rowSpacing: 14
+                spacing: 14
 
-                // One card per group, one row per spec inside it — the grouping
-                // is declared in the catalog, so the page never names a setting.
-                Repeater {
-                    model: page.groups
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 14
 
-                    delegate: SettingCard {
-                        // Long cards (the whole 歌词 card, the custom-API block)
-                        // take the full width instead of stretching one column
-                        // and leaving the other empty beside them.
-                        property bool fullWidth: page.twoColumn && modelData.rows.length >= 4
+                    Repeater {
+                        model: page.leftGroups
+                        delegate: SettingCard {
+                            Layout.fillWidth: true
+                            property var groupData: modelData
+                            Repeater {
+                                model: groupData.rows
+                                delegate: Loader {
+                                    Layout.fillWidth: true
 
-                        Layout.fillWidth: true
-                        // A grid row is as tall as its tallest card; without this
-                        // a short card would float in the middle of that row.
-                        Layout.alignment: Qt.AlignTop
-                        Layout.columnSpan: fullWidth ? 2 : 1
-                        // A spanning cell does NOT take part in this engine's
-                        // column sizing (only span-1 fillWidth children grow a
-                        // track), so a category whose only card spans — 歌词 —
-                        // ended up with two zero-width columns and a card
-                        // collapsed to a line at the left edge, unclickable.
-                        // Asking for the full width makes the span itself widen
-                        // the tracks it covers.
-                        Layout.preferredWidth: fullWidth ? groupsGrid.width : -1
+                                    // A row gated on another setting (the
+                                    // custom-API block hangs off its own switch)
+                                    // collapses when that's off.
+                                    visible: modelData.dependsOn.length === 0
+                                             || settings.value(modelData.dependsOn) === true
 
-                        property var groupData: modelData
+                                    // Read inside the loaded component, the same
+                                    // way MD3 Menu's delegates reach their data.
+                                    property var rowSpec: modelData
 
-                        Repeater {
-                            model: groupData.rows
+                                    sourceComponent: modelData.type === "switch" ? switchRow
+                                                   : modelData.type === "stepper" ? stepperRow
+                                                   : modelData.type === "segmented" ? segmentedRow
+                                                   : modelData.type === "radio" ? radioRow
+                                                   : modelData.type === "text" ? textRow
+                                                   : actionRow
+                                }
+                            }
+                        }
+                    }
+                }
 
-                            delegate: Loader {
-                                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 14
+                    visible: page.twoColumn
 
-                                // A row gated on another setting (the custom-API
-                                // block hangs off its own switch) collapses when
-                                // that's off, as the old card's block did.
-                                visible: modelData.dependsOn.length === 0
-                                         || settings.value(modelData.dependsOn) === true
-
-                                // Read inside the loaded component, the same way
-                                // MD3 Menu's delegates reach their item data.
-                                property var rowSpec: modelData
-
-                                sourceComponent: modelData.type === "switch" ? switchRow
-                                               : modelData.type === "stepper" ? stepperRow
-                                               : modelData.type === "segmented" ? segmentedRow
-                                               : modelData.type === "radio" ? radioRow
-                                               : modelData.type === "text" ? textRow
-                                               : actionRow
+                    Repeater {
+                        model: page.rightGroups
+                        delegate: SettingCard {
+                            Layout.fillWidth: true
+                            property var groupData: modelData
+                            Repeater {
+                                model: groupData.rows
+                                delegate: Loader {
+                                    Layout.fillWidth: true
+                                    visible: modelData.dependsOn.length === 0
+                                             || settings.value(modelData.dependsOn) === true
+                                    property var rowSpec: modelData
+                                    sourceComponent: modelData.type === "switch" ? switchRow
+                                                   : modelData.type === "stepper" ? stepperRow
+                                                   : modelData.type === "segmented" ? segmentedRow
+                                                   : modelData.type === "radio" ? radioRow
+                                                   : modelData.type === "text" ? textRow
+                                                   : actionRow
+                                }
                             }
                         }
                     }
