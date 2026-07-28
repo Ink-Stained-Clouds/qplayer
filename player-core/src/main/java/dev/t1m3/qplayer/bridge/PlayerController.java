@@ -1860,6 +1860,19 @@ public final class PlayerController {
         return backend.position();
     }
 
+    /**
+     * Position intended for a host media session. Unlike {@link #position()},
+     * this also sees a queue's saved resume point before the asynchronous UI
+     * queue has published it and before the audio backend has started.
+     */
+    public long mediaSessionPosition() {
+        long backendPosition = Math.max(0L, backend.position());
+        if (playingIntent || backendPosition > 0L) return backendPosition;
+        if (pendingResumeIndex == playIndex) return Math.max(0L, pendingResumeMs);
+        Long propertyPosition = positionMs.peek();
+        return propertyPosition != null ? Math.max(0L, propertyPosition) : 0L;
+    }
+
     public void setVolume(float v) {
         float clamped = Math.max(0f, Math.min(1f, v));
         backend.setVolume(clamped);

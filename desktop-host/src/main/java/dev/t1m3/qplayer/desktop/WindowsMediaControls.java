@@ -116,6 +116,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
             check(call(smtc, 11, (byte) 1), "SetIsEnabled");
             timeline = activate(
                     "Windows.Media.SystemMediaTransportControlsTimelineProperties");
+            pausedPositionMs = pausedControllerPosition();
             running = true;
             publish();
             startTimelineUpdates();
@@ -150,7 +151,7 @@ final class WindowsMediaControls implements DesktopMediaControls {
 
     @Override
     public void onPlaybackChanged() {
-        if (!controller.isPlaying()) pausedPositionMs = Math.max(0L, controller.position());
+        if (!controller.isPlaying()) pausedPositionMs = pausedControllerPosition();
         publish();
     }
 
@@ -404,6 +405,14 @@ final class WindowsMediaControls implements DesktopMediaControls {
 
     private long positionMs() {
         return controller.isPlaying() ? Math.max(0L, controller.position()) : pausedPositionMs;
+    }
+
+    /**
+     * Before the restored track is played, the audio backend clock is still zero
+     * while PlayerController.positionMs already contains the saved resume point.
+     */
+    private long pausedControllerPosition() {
+        return controller.mediaSessionPosition();
     }
 
     private String metadataKey(Track track) {

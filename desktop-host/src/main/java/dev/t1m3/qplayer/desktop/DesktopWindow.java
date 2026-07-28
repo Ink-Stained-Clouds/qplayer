@@ -16,11 +16,15 @@ import org.lwjgl.glfw.GLFWImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -465,30 +469,72 @@ public final class DesktopWindow {
     private void setWindowIcon() {
         byte[] png = resources.load("app-icon.png");
         if (png == null) return;
+        List<ByteBuffer> pixelBuffers = new ArrayList<>();
         try {
-            BufferedImage img = javax.imageio.ImageIO.read(new ByteArrayInputStream(png));
-            if (img == null) return;
-            int w = img.getWidth(), h = img.getHeight();
-            ByteBuffer pixels = MemoryUtil.memAlloc(w * h * 4);
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    int p = img.getRGB(x, y);          // ARGB
-                    pixels.put((byte) ((p >> 16) & 0xFF)); // R
-                    pixels.put((byte) ((p >> 8) & 0xFF));  // G
-                    pixels.put((byte) (p & 0xFF));         // B
-                    pixels.put((byte) ((p >> 24) & 0xFF)); // A
-                }
-            }
-            pixels.flip();
+            BufferedImage source = javax.imageio.ImageIO.read(new ByteArrayInputStream(png));
+            if (source == null) return;
+            int[] sizes = {16, 20, 24, 32, 40, 48, 64, 256};
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                GLFWImage.Buffer icons = GLFWImage.malloc(1, stack);
-                icons.position(0).width(w).height(h).pixels(pixels);
+                GLFWImage.Buffer icons = GLFWImage.malloc(sizes.length, stack);
+                for (int i = 0; i < sizes.length; i++) {
+                    BufferedImage image = smoothScale(source, sizes[i], sizes[i]);
+                    ByteBuffer pixels = rgba(image);
+                    pixelBuffers.add(pixels);
+                    icons.position(i)
+                            .width(image.getWidth())
+                            .height(image.getHeight())
+                            .pixels(pixels);
+                }
+                icons.position(0);
                 GLFW.glfwSetWindowIcon(window, icons);
             }
-            MemoryUtil.memFree(pixels);
         } catch (Throwable t) {
             Logger.warn("window icon load failed: {}", t);
+        } finally {
+            for (ByteBuffer pixels : pixelBuffers) MemoryUtil.memFree(pixels);
         }
+    }
+
+    private static BufferedImage smoothScale(BufferedImage source, int width, int height) {
+        BufferedImage current = source;
+        while (current.getWidth() / 2 >= width && current.getHeight() / 2 >= height) {
+            current = scale(current,
+                    Math.max(width, current.getWidth() / 2),
+                    Math.max(height, current.getHeight() / 2));
+        }
+        return current.getWidth() == width && current.getHeight() == height
+                ? current : scale(current, width, height);
+    }
+
+    private static BufferedImage scale(BufferedImage source, int width, int height) {
+        BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = result.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING,
+                    RenderingHints.VALUE_RENDER_QUALITY);
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        return result;
+    }
+
+    private static ByteBuffer rgba(BufferedImage image) {
+        ByteBuffer pixels = MemoryUtil.memAlloc(image.getWidth() * image.getHeight() * 4);
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                int p = image.getRGB(x, y);
+                pixels.put((byte) ((p >> 16) & 0xFF));
+                pixels.put((byte) ((p >> 8) & 0xFF));
+                pixels.put((byte) (p & 0xFF));
+                pixels.put((byte) ((p >> 24) & 0xFF));
+            }
+        }
+        return pixels.flip();
     }
 
     void spawnRenderThread() {
