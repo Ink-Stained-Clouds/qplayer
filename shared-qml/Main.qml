@@ -21,6 +21,10 @@ Rectangle {
     property bool settingsOpen: false
     property bool accountOpen: false
     property bool showLog: false
+    // Menu.open() registers the one top-level popup currently attached to this
+    // scene. Song rows each own a lazy menu instance, so without a scene-wide
+    // owner repeated right-clicks can leave every row's overlay open at once.
+    property var activeMenu: null
 
     property var titles: ["推荐", "搜索", "我的", "最近", "本地"]
 

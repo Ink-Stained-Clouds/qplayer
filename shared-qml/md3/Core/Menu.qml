@@ -13,6 +13,10 @@ Item {
     property real maxWidth: 280
     // Cap the popup height; a longer list (many playlists) scrolls inside.
     property real maxHeight: 360
+    // A submenu belongs to its parent popup and therefore must not evict it from
+    // the scene-wide active-menu slot.
+    property var ownerMenu: null
+    property var activeSubMenu: null
 
     // Anchor for the popup, in menuRoot coordinates. open() records the raw desired
     // position; popupContainer.x/y then CLAMP it against menuRoot reactively, so the
@@ -92,7 +96,7 @@ Item {
             }
             ParallelAnimation {
                 id: exitAnim
-                onFinished: { overlayLayer.forceClose(); control.closed() }
+                onFinished: control._finishClose()
                 NumberAnimation { target: popupContainer; property: "opacity"; from: 1.0; to: 0.0; duration: 150 }
                 NumberAnimation { target: popupContainer; property: "scale"; from: 1.0; to: 0.8; duration: 150; easing.type: Easing.InCubic }
             }
@@ -208,6 +212,7 @@ Item {
                 source: "md3/Core/Menu.qml"
                 onLoaded: {
                     item.model = itemData.subItems
+                    item.ownerMenu = control
                 }
             }
             
@@ -319,6 +324,22 @@ Item {
         }
         
         if (root) {
+            // Every song row owns its own Menu instance. Enforce one top-level
+            // popup per scene before reparenting this overlay, otherwise repeated
+            // right-clicks accumulate independent full-window overlays and menus.
+            if (control.ownerMenu) {
+                if (control.ownerMenu.activeSubMenu
+                        && control.ownerMenu.activeSubMenu !== control) {
+                    control.ownerMenu.activeSubMenu.dismissImmediately()
+                }
+                control.ownerMenu.activeSubMenu = control
+            } else {
+                if (root.activeMenu && root.activeMenu !== control) {
+                    root.activeMenu.dismissImmediately()
+                }
+                root.activeMenu = control
+            }
+
             overlayLayer.parent = root
             overlayLayer.z = 99999
             overlayLayer.anchors.fill = root
@@ -337,5 +358,26 @@ Item {
     
     function close() {
         overlayLayer.close()
+    }
+
+    function dismissImmediately() {
+        enterAnim.stop()
+        exitAnim.stop()
+        _finishClose()
+    }
+
+    function _finishClose() {
+        if (control.activeSubMenu) {
+            control.activeSubMenu.dismissImmediately()
+            control.activeSubMenu = null
+        }
+        overlayLayer.forceClose()
+        if (control.ownerMenu) {
+            if (control.ownerMenu.activeSubMenu === control)
+                control.ownerMenu.activeSubMenu = null
+        } else if (control.menuRoot && control.menuRoot.activeMenu === control) {
+            control.menuRoot.activeMenu = null
+        }
+        control.closed()
     }
 }
