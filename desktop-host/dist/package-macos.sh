@@ -57,7 +57,7 @@ rm -rf "$T/pkg"
 # otherwise runs main() on a thread it spawns itself.
 jpackage --type dmg \
   --name QPlayer --app-version "$BUNDLE_VERSION" --vendor t1m3 --description "QPlayer" \
-  --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.Main \
+  --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main \
   --dest "$T/pkg" "${ICON_ARG[@]}" \
   --mac-package-identifier dev.t1m3.qplayer --mac-package-name QPlayer \
   --java-options -XstartOnFirstThread \

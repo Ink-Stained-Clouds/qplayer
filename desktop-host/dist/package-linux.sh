@@ -31,7 +31,7 @@ rm -rf "$T/pkg" "$T/AppDir"
 # there is nothing to hand-place here.
 jpackage --type app-image \
   --name qplayer --app-version "$VERSION" --vendor t1m3 --description "QPlayer" \
-  --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.Main \
+  --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main \
   --dest "$T/pkg" \
   --add-modules "$MODS" \
   --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"

@@ -34,7 +34,7 @@ Remove-Item -Recurse -Force $out, $dir -ErrorAction SilentlyContinue
 # parent terminal's console when started from a shell, so logs still stream there.
 & jpackage --type app-image `
     --name qplayer --app-version $ver --vendor t1m3 --description "QPlayer" `
-    --input $app --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.Main `
+    --input $app --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main `
     --dest $out --icon "$PSScriptRoot\..\src\main\resources\app-icon.ico" `
     --add-modules $mods `
     --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"

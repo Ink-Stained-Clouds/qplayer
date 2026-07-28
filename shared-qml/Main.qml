@@ -2,6 +2,10 @@ import QtQuick
 import QtQuick.Layouts
 import md3.Core
 import "."
+import "components"
+import "dialogs"
+import "pages"
+import "settings"
 
 // Phone shell: TopAppBar + paged content + mini player + bottom navigation,
 // with a playlist-detail overlay, QR login dialog, a Snackbar for transient

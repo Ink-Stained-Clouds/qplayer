@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
-        android:name="dev.t1m3.qplayer.android.QPlayerApplication"
+        android:name="dev.t1m3.qplayer.android.app.QPlayerApplication"
         android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -21,7 +21,7 @@
         android:usesCleartextTraffic="true"
         android:supportsRtl="true">
         <activity
-            android:name="dev.t1m3.qplayer.android.QPlayerActivity"
+            android:name="dev.t1m3.qplayer.android.ui.QPlayerActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/AppTheme"
@@ -33,7 +33,7 @@
         </activity>
 
         <service
-            android:name="dev.t1m3.qplayer.android.PlaybackService"
+            android:name="dev.t1m3.qplayer.android.playback.PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="true">

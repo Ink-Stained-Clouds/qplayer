@@ -1,0 +1,686 @@
+package dev.t1m3.qplayer.android.ui;
+
+import dev.t1m3.qplayer.android.graphics.AndroidColorExtractor;
+import dev.t1m3.qplayer.android.library.AndroidLibraryScanner;
+import dev.t1m3.qplayer.android.library.AndroidMetadataReader;
+import dev.t1m3.qplayer.android.playback.AndroidAudioBackend;
+import dev.t1m3.qplayer.android.playback.PlaybackService;
+import dev.t1m3.qplayer.android.resources.FileResourceLoader;
+import dev.t1m3.qplayer.android.settings.PrefsSettingsStore;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
+import android.os.Build;
+import android.os.Bundle;
+
+import io.github.timer_err.qml4j.android.DexClassLoaderBackend;
+import io.github.timer_err.qml4j.android.QmlGLSurfaceView;
+import io.github.timer_err.qml4j.engine.QmlEngine;
+
+import dev.t1m3.qplayer.audio.AudioBackend;
+import dev.t1m3.qplayer.audio.MetadataReader;
+import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.model.Track;
+import dev.t1m3.qplayer.settings.SettingsCatalog;
+import dev.t1m3.qplayer.settings.SettingsCore;
+import dev.t1m3.qplayer.store.AppDirs;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+/**
+ * Music player entry point: builds the {@link PlayerController} over the
+ * Android audio backend, hands it to a {@link QmlGLSurfaceView} running
+ * {@code Main.qml}, and kicks off a scan of the device music folder once the
+ * audio-read permission is granted.
+ */
+public final class QPlayerActivity extends Activity {
+
+    static {
+        // Same Skija JNI bring-up as the qml4j demo: we ship the .so via
+        // jniLibs and bypass the auto-loader, so _nAfterLoad() must run
+        // explicitly or every object-returning native call crashes.
+        System.setProperty("skija.staticLoad", "false");
+        System.loadLibrary("skija");
+        io.github.humbleui.skija.impl.Library._nAfterLoad();
+        try {
+            Class.forName("io.github.humbleui.skija.ImageInfo");
+            Class.forName("io.github.humbleui.skija.ColorInfo");
+            Class.forName("io.github.humbleui.skija.ColorSpace");
+            Class.forName("io.github.humbleui.skija.Color4f");
+            Class.forName("io.github.humbleui.skija.Image");
+            Class.forName("io.github.humbleui.skija.Canvas");
+            Class.forName("io.github.humbleui.skija.Paint");
+            Class.forName("io.github.humbleui.skija.Font");
+            Class.forName("io.github.humbleui.types.Rect");
+            Class.forName("io.github.humbleui.types.IRect");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static final int REQ_AUDIO = 1;
+    private static final int REQ_NOTIF = 2;
+    private static final int REQ_COVER_PICK = 3;
+
+    /** Playlist id awaiting a picked cover image, set right before launching the
+     *  gallery picker and consumed in {@link #onActivityResult}. */
+    private long pendingCoverPlaylistId;
+
+    private PlayerController controller;
+    private SettingsCore settings;
+    private QmlGLSurfaceView glView;
+    private MetadataReader reader;
+    private android.os.Handler mainHandler;
+
+    /** Singleton controller — survives Activity recreations (PiP, config changes)
+     *  so playback state and the foreground service stay connected across them. */
+    private static volatile PlayerController sharedController;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        // Cookies / config live in app-private storage on Android.
+        AppDirs.setBase(getFilesDir().getAbsolutePath());
+
+        AudioBackend backend = new AndroidAudioBackend(this);
+        reader = new AndroidMetadataReader(this);
+
+        // Reuse the existing controller across Activity recreations (PiP, config
+        // changes). Without this, each recreation builds a fresh controller with
+        // empty state — disconnected from the PlaybackService's static reference
+        // to the old one, causing UI/notification desync.
+        controller = sharedController;
+        if (controller == null) {
+            controller = new PlayerController(backend, reader);
+            sharedController = controller;
+        }
+        controller.setColorExtractor(new AndroidColorExtractor());
+        // Copy-to-clipboard sink for the song menu's "复制链接". The QML action fires on
+        // the render thread; ClipboardManager wants the main thread, so hop there.
+        controller.setClipboard(text -> runOnUiThread(() -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("link", text));
+        }));
+
+        // App update check: feed the running version + a url opener so the controller
+        // can compare against the latest GitHub release and the dialog can launch the
+        // APK download. The check itself is kicked off in onSceneReady (network-safe).
+        try {
+            controller.setCurrentVersion(
+                    getPackageManager().getPackageInfo(getPackageName(), 0).versionName);
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
+        controller.setUrlOpener(url -> runOnUiThread(() -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Throwable e) {
+                dev.t1m3.qplayer.util.Logger.error("open update url failed: {}", e.toString());
+            }
+        }));
+        controller.setInstaller(this::downloadAndInstallUpdate);
+        controller.setCoverPicker(this::pickPlaylistCover);
+
+        // Playback control runs on the main thread (alive in the background, unlike
+        // the GL render thread); the service mirrors state to the media session and
+        // keeps playback foregrounded so it survives + auto-advances when backgrounded.
+        mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        controller.setMainExecutor(mainHandler::post);
+        PlaybackService.controller = controller;
+        // Boot-start listener: starts the foreground service (from the foreground, on
+        // first play). Once alive the service registers itself and handles refreshes
+        // in-process, so this only fires before the service exists.
+        PlayerController.PlaybackListener bootstrap = this::onPlaybackChanged;
+        PlaybackService.bootstrapListener = bootstrap;
+        controller.setPlaybackListener(bootstrap);
+        // Back on the home screen sends the app to the background (like Home) instead
+        // of finishing — playback keeps running and the QML scene survives, so
+        // re-entering doesn't recompile/reload the whole UI.
+        controller.setExitListener(() -> runOnUiThread(() -> moveTaskToBack(true)));
+
+        // Settings: the catalog, the value plumbing and every side effect live in
+        // player-core (shared with the desktop host). This host contributes the
+        // SharedPreferences store, the platform id, and the actions/live text its
+        // own rows need.
+        settings = new SettingsCore();
+        settings.attach(controller);
+        settings.resolvedDark.addListener(dark ->
+                runOnUiThread(() -> applySystemBars(Boolean.TRUE.equals(dark))));
+        settings.setSystemDark(isSystemDark(this));
+        settings.registerAction("clearCache", controller::clearDiskCache);
+        settings.registerAction("checkUpdate", controller::checkForUpdateManual);
+        settings.registerAction("openRepo",
+                () -> controller.openExternalUrl("https://github.com/TIMER-err/qplayer"));
+        settings.registerInfo("version", () -> "v" + controller.appVersion.peek());
+        settings.registerInfo("cacheUsage", () -> controller.cacheSizeMB.peek() + " MB");
+        settings.load(new PrefsSettingsStore(this), SettingsCatalog.ANDROID);
+
+        String qml;
+        try {
+            qml = readAsset("Main.qml");
+        } catch (IOException e) {
+            throw new RuntimeException("failed to read Main.qml", e);
+        }
+
+        // Lyric renderer fonts: the bundled PingFang SC weights from shared-qml
+        // (the lyric face must itself cover CJK + Latin — no automatic fallback).
+        try {
+            dev.t1m3.qplayer.lyric.skia.Fonts.init(
+                    readAssetBytes("fonts/PingFangSC-Thin.otf"),
+                    readAssetBytes("fonts/PingFangSC-Light.otf"),
+                    readAssetBytes("fonts/PingFangSC-Regular.otf"),
+                    readAssetBytes("fonts/PingFangSC-Medium.otf"));
+            // Material Symbols for the host-drawn lyric transport icons (drawn by
+            // shaped ligature name, same as the QML scene's icons).
+            dev.t1m3.qplayer.lyric.skia.Fonts.initIcon(
+                    readAssetBytes("fonts/MaterialSymbolsRounded.ttf"));
+        } catch (IOException ignored) {
+        }
+
+        // Cache D8-dexed QML across launches (dexing is the slow part of startup);
+        // wipe it whenever the apk is (re)installed so stale dex never loads.
+        java.io.File dexCache = new java.io.File(getCacheDir(), "qml-dex");
+        invalidateDexCacheOnReinstall(dexCache);
+        QmlEngine engine = new QmlEngine(
+                new DexClassLoaderBackend(getClass().getClassLoader(), 26, dexCache));
+        float density = getResources().getDisplayMetrics().density;
+        glView = new QmlGLSurfaceView(this, engine, qml,
+                new FileResourceLoader(getAssets()), density);
+        glView.setController(controller);
+        glView.setSettings(settings);
+        glView.setErrorListener(trace -> runOnUiThread(() -> showError(trace)));
+
+        // glView under a splash overlay shown while the QML tree compiles (slow
+        // on first launch: parse -> bytecode -> dex). The splash advances with
+        // per-component compile progress and fades out at the first painted frame.
+        android.widget.FrameLayout rootView = new android.widget.FrameLayout(this);
+        rootView.addView(glView, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        splashView = buildSplash();
+        rootView.addView(splashView, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        glView.setSplashListener(new QmlGLSurfaceView.SplashListener() {
+            @Override public void onProgress(String name, int count) {
+                runOnUiThread(() -> splashStatus.setText("正在编译界面组件… " + count));
+            }
+            @Override public void onReady() {
+                runOnUiThread(QPlayerActivity.this::onSceneReady);
+            }
+        });
+        setContentView(rootView);
+        enableEdgeToEdge();
+        attachInsetListener(rootView);
+        applySystemBars(settings.resolvedDarkValue());
+
+        controller.loadHome();
+        // The audio-permission dialog is deferred to onSceneReady: requesting it
+        // here pops a system dialog during the QML compile, and the resulting
+        // pause/resume + the concurrent MediaStore scan racing the dex compile
+        // crashes on first launch. Once the scene has rendered, it's safe.
+    }
+
+    /** Download the update APK to app storage with progress, trying each candidate url
+     *  (fastest mirror first, then the direct github url) until one succeeds, then hand
+     *  it to the system package installer. Off the main thread. */
+    private void downloadAndInstallUpdate(String[] urls) {
+        new Thread(() -> {
+            java.io.File out = new java.io.File(getExternalFilesDir(null), "updates/qplayer-update.apk");
+            java.io.File dir = out.getParentFile();
+            if (dir != null) dir.mkdirs();
+            for (String url : urls) {
+                if (downloadOne(url, out)) {
+                    controller.setUpdateProgress(100);
+                    runOnUiThread(() -> installApk(out));
+                    return;
+                }
+                dev.t1m3.qplayer.util.Logger.warn("update source failed, trying next: {}", url);
+            }
+            controller.setUpdateProgress(-2);
+        }, "qplayer-update-dl").start();
+    }
+
+    /** Download a single url into {@code out}, reporting progress; false on any failure
+     *  (so the caller can try the next mirror). */
+    private boolean downloadOne(String url, java.io.File out) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(15_000);
+            conn.setReadTimeout(30_000);
+            conn.setRequestProperty("User-Agent", "qplayer-updater");
+            int code = conn.getResponseCode();
+            if (code >= 400) return false;
+            int total = conn.getContentLength();
+            try (InputStream in = conn.getInputStream();
+                 java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                byte[] buf = new byte[16384];
+                long read = 0;
+                int n;
+                int lastPct = -1;
+                while ((n = in.read(buf)) > 0) {
+                    fos.write(buf, 0, n);
+                    read += n;
+                    if (total > 0) {
+                        int pct = (int) (read * 100 / total);
+                        if (pct != lastPct) {
+                            lastPct = pct;
+                            controller.setUpdateProgress(pct);
+                        }
+                    }
+                }
+            }
+            return out.length() > 0;
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.warn("update download failed {}: {}", url, e.toString());
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** A downloaded APK awaiting the "install unknown apps" grant; onResume retries it
+     *  (without re-downloading) once the user returns from the settings screen. */
+    private java.io.File pendingInstallApk;
+
+    /** Launch the system package installer for the downloaded APK, requesting the
+     *  unknown-sources grant first when needed (Android O+). */
+    private void installApk(java.io.File apk) {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            // Park the APK and send the user to grant the permission; onResume resumes
+            // the install when they come back, so they needn't re-download.
+            pendingInstallApk = apk;
+            controller.setUpdateProgress(-1);
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:" + getPackageName()))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Throwable e) {
+                dev.t1m3.qplayer.util.Logger.error("open install-sources settings failed: {}", e.toString());
+                controller.setUpdateProgress(-2);
+            }
+            return;
+        }
+        doInstallApk(apk);
+    }
+
+    private void doInstallApk(java.io.File apk) {
+        try {
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", apk);
+            startActivity(new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
+            controller.setUpdateProgress(-1);
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.error("install apk failed: {}", e.toString());
+            controller.setUpdateProgress(-2);
+        }
+    }
+
+    /** First painted frame: the QML tree is fully built and rendering. Now hide the
+     *  splash and request the audio permission (and scan) — see onCreate. */
+    private void onSceneReady() {
+        hideSplash();
+        requestAudioPermission();
+        requestNotificationPermission();
+        // Don't auto-check for updates on debug builds — only release builds nag.
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            controller.checkForUpdate();
+        }
+    }
+
+    /** Playback state / track changed (main thread): poke the foreground service to
+     *  refresh the media session + notification. */
+    private void onPlaybackChanged() {
+        try {
+            Intent i = new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_REFRESH);
+            androidx.core.content.ContextCompat.startForegroundService(this, i);
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.error("startForegroundService failed: {}", e.toString());
+        }
+    }
+
+    /** Android 13+ needs runtime POST_NOTIFICATIONS for the media notification to show.
+     *  Best-effort: playback still works if denied, just without the notification UI. */
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
+        }
+    }
+
+    private android.view.View splashView;
+    private android.widget.TextView splashStatus;
+
+    private android.view.View buildSplash() {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setGravity(android.view.Gravity.CENTER);
+        box.setBackgroundColor(0xFF1A1F26);
+
+        android.widget.TextView title = new android.widget.TextView(this);
+        title.setText("qplayer");
+        title.setTextColor(0xFFE6E1E5);
+        title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 34);
+        title.setGravity(android.view.Gravity.CENTER);
+        box.addView(title);
+
+        android.widget.ProgressBar bar = new android.widget.ProgressBar(
+                this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setIndeterminate(true);
+        android.widget.LinearLayout.LayoutParams blp = new android.widget.LinearLayout.LayoutParams(
+                Math.round(getResources().getDisplayMetrics().density * 200),
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.topMargin = Math.round(getResources().getDisplayMetrics().density * 24);
+        bar.setLayoutParams(blp);
+        box.addView(bar);
+
+        splashStatus = new android.widget.TextView(this);
+        splashStatus.setText("正在加载…");
+        splashStatus.setTextColor(0xFF9A9499);
+        splashStatus.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+        splashStatus.setGravity(android.view.Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams slp = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        slp.topMargin = Math.round(getResources().getDisplayMetrics().density * 12);
+        splashStatus.setLayoutParams(slp);
+        box.addView(splashStatus);
+
+        return box;
+    }
+
+    private void hideSplash() {
+        if (splashView == null) return;
+        final android.view.View v = splashView;
+        splashView = null;
+        v.animate().alpha(0f).setDuration(280).withEndAction(() -> {
+            android.view.ViewParent p = v.getParent();
+            if (p instanceof android.view.ViewGroup) ((android.view.ViewGroup) p).removeView(v);
+        }).start();
+    }
+
+    private void requestAudioPermission() {
+        String perm = Build.VERSION.SDK_INT >= 33
+                ? Manifest.permission.READ_MEDIA_AUDIO
+                : Manifest.permission.READ_EXTERNAL_STORAGE;
+        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) {
+            scanMusic();
+        } else {
+            requestPermissions(new String[]{perm}, REQ_AUDIO);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_AUDIO && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            scanMusic();
+        }
+    }
+
+    /** Launch the system image picker for a new playlist cover ({@link PlayerController.CoverPicker}
+     *  host hook); the result is read and uploaded in {@link #onActivityResult}. */
+    private void pickPlaylistCover(long playlistId) {
+        pendingCoverPlaylistId = playlistId;
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("image/*");
+        try {
+            startActivityForResult(intent, REQ_COVER_PICK);
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.error("no gallery app to pick a cover: {}", e.toString());
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_COVER_PICK || resultCode != Activity.RESULT_OK || data == null) return;
+        android.net.Uri uri = data.getData();
+        if (uri == null) return;
+        final long playlistId = pendingCoverPlaylistId;
+        new Thread(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) return;
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                byte[] chunk = new byte[16384];
+                int n;
+                while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+                controller.setPlaylistCoverBytes(playlistId, buf.toByteArray(), queryDisplayName(uri));
+            } catch (Throwable e) {
+                dev.t1m3.qplayer.util.Logger.warn("read picked cover failed: {}", e.toString());
+            }
+        }, "qplayer-cover-pick").start();
+    }
+
+    /** Best-effort display name for a picked content:// image (used as the upload
+     *  filename); falls back to a generic name when the provider doesn't report one. */
+    private String queryDisplayName(android.net.Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = c.getString(idx);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "cover.jpg";
+    }
+
+    /** Draw the app behind the system bars (edge-to-edge) with transparent bars. */
+    private void enableEdgeToEdge() {
+        android.view.Window w = getWindow();
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+        } else {
+            w.getDecorView().setSystemUiVisibility(
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+    }
+
+    /** Feed the system-bar insets (in QML logical units) to the scene so the chrome
+     *  can avoid the status bar and gesture/navigation bar. */
+    private void attachInsetListener(android.view.View root) {
+        final float density = getResources().getDisplayMetrics().density;
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int top, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars =
+                        insets.getInsets(android.view.WindowInsets.Type.systemBars());
+                top = bars.top;
+                bottom = bars.bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            final double t = top / density;
+            final double b = bottom / density;
+            if (glView != null) glView.queueEvent(() -> settings.setInsets(t, b));
+            return insets;
+        });
+        root.requestApplyInsets();
+    }
+
+    /** Keep the system bars transparent and flip the bar-icon contrast so they read on
+     *  either light or dark content. */
+    /** Whether the OS is in night mode right now. */
+    private static boolean isSystemDark(android.content.Context ctx) {
+        int night = ctx.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return night == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    private void applySystemBars(boolean dark) {
+        android.view.Window w = getWindow();
+        // The dark listener can fire during settings.load(), before setContentView
+        // has created the decor view; getInsetsController() NPEs then. Skip until the
+        // window is ready -- the post-setContentView call applies the initial state.
+        if (w == null || w.peekDecorView() == null) return;
+        w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = w.getInsetsController();
+            if (c != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                c.setSystemBarsAppearance(dark ? 0 : mask, mask);
+            }
+        } else {
+            android.view.View dv = w.getDecorView();
+            int flags = dv.getSystemUiVisibility();
+            if (dark) {
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            } else {
+                flags |= android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                flags |= android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+            dv.setSystemUiVisibility(flags);
+        }
+    }
+
+    /** Clear the QML dex cache when the apk's install timestamp changes (install,
+     *  reinstall, or update), so a new build never loads dex compiled from the old one. */
+    private void invalidateDexCacheOnReinstall(java.io.File dexCache) {
+        try {
+            long lastUpdate = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            android.content.SharedPreferences p =
+                    getSharedPreferences("qplayer.cache", MODE_PRIVATE);
+            if (p.getLong("apkStamp", -1L) != lastUpdate) {
+                deleteRecursively(dexCache);
+                p.edit().putLong("apkStamp", lastUpdate).apply();
+            }
+        } catch (Exception e) {
+            deleteRecursively(dexCache); // on any doubt, recompile from scratch
+        }
+    }
+
+    private static void deleteRecursively(java.io.File f) {
+        if (f == null || !f.exists()) return;
+        java.io.File[] kids = f.listFiles();
+        if (kids != null) {
+            for (java.io.File k : kids) deleteRecursively(k);
+        }
+        f.delete();
+    }
+
+    private void showError(String trace) {
+        android.widget.TextView tv = new android.widget.TextView(this);
+        tv.setText(trace);
+        tv.setTextSize(11f);
+        tv.setTextIsSelectable(true);
+        tv.setPadding(24, 24, 24, 24);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(tv);
+        setContentView(sv);
+    }
+
+    private void scanMusic() {
+        // Android 11+ Scoped Storage: Files.walk() cannot traverse external storage.
+        // Use MediaStore API instead — it works with READ_MEDIA_AUDIO permission.
+        // Run off the main thread to avoid ANR on large libraries.
+        AndroidLibraryScanner scanner = new AndroidLibraryScanner(
+                getContentResolver(), reader);
+        new Thread(() -> {
+            List<Track> tracks = scanner.scan();
+            runOnUiThread(() -> controller.scanTracks(tracks));
+        }, "qplayer-scan").start();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (glView != null) {
+            glView.onSystemNightChanged(isSystemDark(this));
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (glView != null) glView.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (glView != null) glView.onResume();
+        // Returning from the unknown-sources grant: resume the parked install (no
+        // re-download) now that the permission is in place.
+        if (pendingInstallApk != null
+                && (Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls())) {
+            java.io.File apk = pendingInstallApk;
+            pendingInstallApk = null;
+            if (apk.isFile()) doInstallApk(apk);
+        }
+        // Returning from PiP / background: force-sync the notification bar with
+        // the current controller state so they never drift apart.
+        if (controller != null && controller.isPlaying()) {
+            onPlaybackChanged();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Route every back press (hardware + gesture) into QML, which pops the topmost
+        // overlay/page and calls controller.requestExit() -> finish() when empty.
+        if (controller != null) {
+            controller.pressBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Release the controller when idle (not playing). This covers both:
+        //   - owner Activities on normal exit
+        //   - non-owner Activities (PiP recreations) that outlive the owner
+        // Playing controllers must survive for background/foreground-service use;
+        // stopWithTask="true" handles the force-stop case via PlaybackService.onDestroy().
+        if (controller != null && !controller.isPlaying()) {
+            controller.shutdown();
+            sharedController = null;
+        }
+        if (glView != null) {
+            glView = null;
+        }
+        reader = null;
+    }
+
+    private String readAsset(String name) throws IOException {
+        return new String(readAssetBytes(name), StandardCharsets.UTF_8);
+    }
+
+    private byte[] readAssetBytes(String name) throws IOException {
+        try (InputStream in = getAssets().open(name)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return out.toByteArray();
+        }
+    }
+}
