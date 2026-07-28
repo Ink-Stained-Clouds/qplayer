@@ -72,7 +72,10 @@ final class GLBackend implements GraphicsBackend {
 
     @Override
     public void present() {
-        context.flush();
+        // flush() only records the pending work into the GL command stream.
+        // Submit it explicitly before swapping so the compositor never observes
+        // an intermittently late Skia frame (especially through XWayland).
+        context.flushAndSubmit(surface);
         GLFW.glfwSwapBuffers(window);
     }
 
