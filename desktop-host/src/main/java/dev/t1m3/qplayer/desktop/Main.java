@@ -158,6 +158,17 @@ public final class Main {
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
         // Windows tray: hand it the multi-size .ico the installer also uses.
         tray.setIcoBytes(resources.load("app-icon.ico"));
+        MprisControls mpris = MprisControls.isSupported()
+                ? new MprisControls(controller, window) : null;
+
+        // PlayerController intentionally has one host callback (Android installs its
+        // media-session service there). Combine the two desktop consumers here so
+        // bringing up MPRIS never steals playback updates from the tray.
+        MprisControls finalMpris = mpris;
+        controller.setPlaybackListener(() -> {
+            tray.onPlaybackChanged();
+            if (finalMpris != null) finalMpris.onPlaybackChanged();
+        });
 
         window.init();
         // Start rendering immediately — the render thread is the core; the tray is
@@ -215,13 +226,17 @@ public final class Main {
         // Tray init on a daemon thread so a GTK/AppIndicator hang can't freeze the app.
         // (-Dqplayer.tray=false disables it, e.g. for headless rendering checks.)
         if (!"false".equals(System.getProperty("qplayer.tray", "true"))) {
-            Thread trayThread = getTrayThread(tray, window, controller);
+            Thread trayThread = getTrayThread(tray, window);
             trayThread.start();
+        }
+        if (mpris != null && !"false".equals(System.getProperty("qplayer.mpris", "true"))) {
+            mpris.start();
         }
 
         window.runEventLoop(); // blocks on the main thread until quit
 
         watcher.stop();
+        if (mpris != null) mpris.shutdown();
         tray.shutdown();
         try {
             controller.shutdown();
@@ -373,7 +388,7 @@ public final class Main {
     }
 
     @NotNull
-    private static Thread getTrayThread(TrayController tray, DesktopWindow window, PlayerController controller) {
+    private static Thread getTrayThread(TrayController tray, DesktopWindow window) {
         Thread trayThread = new Thread(() -> {
             boolean ok = false;
             try {
@@ -384,7 +399,6 @@ public final class Main {
                 Logger.warn("tray install threw: {}", t);
             }
             window.setTrayAvailable(ok);
-            if (ok) controller.setPlaybackListener(tray);
         }, "qplayer-tray-init");
         trayThread.setDaemon(true);
         return trayThread;

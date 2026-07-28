@@ -68,8 +68,14 @@ public final class DesktopAudioBackend implements AudioBackend {
     @Override
     public void play(String src, long startMs) {
         if (src == null || src.isEmpty()) return;
+        long target = Math.max(0L, startMs);
         this.source = src;
-        seekTargetMs.set(Math.max(0L, startMs));
+        // Publish the new track's baseline synchronously. Until the audio thread
+        // opens/decodes/primes the source it would otherwise keep exposing the old
+        // track's final position, which makes MPRIS clients start the new progress
+        // bar several seconds ahead.
+        seekTargetMs.set(target);
+        positionMs = target;
         playing.set(true);
         ensureAudioThread();
     }
@@ -91,7 +97,9 @@ public final class DesktopAudioBackend implements AudioBackend {
 
     @Override
     public void seek(long ms) {
-        seekTargetMs.set(Math.max(0L, ms));
+        long target = Math.max(0L, ms);
+        seekTargetMs.set(target);
+        positionMs = target;
     }
 
     @Override
@@ -219,7 +227,7 @@ public final class DesktopAudioBackend implements AudioBackend {
 
                 if (!playing.get()) {
                     if (alGetSourcei(sourceId, AL_SOURCE_STATE) == AL_PLAYING) alSourcePause(sourceId);
-                    publishPosition();
+                    publishPosition(openSrc);
                     Thread.sleep(20L);
                     continue;
                 }
@@ -245,14 +253,14 @@ public final class DesktopAudioBackend implements AudioBackend {
                 int queued = alGetSourcei(sourceId, AL_BUFFERS_QUEUED);
                 int state = alGetSourcei(sourceId, AL_SOURCE_STATE);
                 if (draining && queued == 0) {
-                    publishPosition();
+                    publishPosition(openSrc);
                     return true; // natural end of track
                 }
                 if (state == AL_STOPPED && queued > 0) {
                     alSourcePlay(sourceId); // underran — kick it back to life
                 }
 
-                publishPosition();
+                publishPosition(openSrc);
                 Thread.sleep(8L);
             }
             return false;
@@ -300,7 +308,11 @@ public final class DesktopAudioBackend implements AudioBackend {
         return got / frameBytes;
     }
 
-    private void publishPosition() {
+    private void publishPosition(String expectedSource) {
+        // A play/seek request can arrive between this loop's source check and its
+        // position publication. Do not overwrite the synchronous new baseline
+        // with samples belonging to the previous source/seek epoch.
+        if (!expectedSource.equals(source) || seekTargetMs.get() >= 0L) return;
         int offset = alGetSourcei(sourceId, AL_SAMPLE_OFFSET); // frames into the head buffer
         long frames = framesSinceBase + Math.max(0, offset);
         positionMs = seekBaseMs + frames * 1000L / sampleRate;

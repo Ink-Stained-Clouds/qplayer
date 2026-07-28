@@ -1789,7 +1789,14 @@ public final class PlayerController {
 
     /** Cycle list-loop -> shuffle -> repeat-one -> list-loop. */
     public void cyclePlayMode() {
-        playMode.set((playMode.peek() + 1) % 3);
+        setPlayMode((playMode.peek() + 1) % 3);
+    }
+
+    /** Select list-loop (0), shuffle (1), or repeat-one (2). Host media-session
+     *  adapters use this for their explicit shuffle/repeat properties. */
+    public void setPlayMode(int mode) {
+        playMode.set(Math.max(0, Math.min(2, mode)));
+        notifyPlayback();
     }
 
     // A different queue slot than the current one (shuffle never repeats a track
