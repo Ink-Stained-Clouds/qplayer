@@ -13,6 +13,7 @@ import dev.t1m3.qplayer.util.Logger;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.glfw.GLFWImage;
+import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -61,6 +62,7 @@ public final class DesktopWindow {
     // never has to call GLFW.
     private volatile int fbW = INITIAL_W;
     private volatile int fbH = INITIAL_H;
+    private volatile int refreshHz = 60;
     private volatile int[] pendingResize;
 
     // Persistent across render-thread respawns (built once, on the render thread).
@@ -112,6 +114,10 @@ public final class DesktopWindow {
 
     int[] framebufferSize() {
         return new int[]{fbW, fbH};
+    }
+
+    int refreshHz() {
+        return refreshHz;
     }
 
     PlayerController controller() {
@@ -395,10 +401,21 @@ public final class DesktopWindow {
 
         setWindowIcon();
         cacheFramebufferAndScale();
+        cacheRefreshRate();
         installCallbacks();
         input = new InputBridge(this);
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
+    }
+
+    private void cacheRefreshRate() {
+        long monitor = GLFW.glfwGetPrimaryMonitor();
+        GLFWVidMode mode = monitor != MemoryUtil.NULL ? GLFW.glfwGetVideoMode(monitor) : null;
+        int hz = mode != null ? mode.refreshRate() : 0;
+        // Broken/virtual displays occasionally report zero or nonsense. Keep the
+        // fallback conservative while allowing modern high-refresh panels.
+        refreshHz = hz >= 30 && hz <= 360 ? hz : 60;
+        Logger.info("display refresh rate = {} Hz", refreshHz);
     }
 
     // Rendering happens on a dedicated thread while the main thread pumps events.

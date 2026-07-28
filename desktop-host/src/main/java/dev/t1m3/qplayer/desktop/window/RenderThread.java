@@ -9,6 +9,8 @@ import io.github.timer_err.qml4j.render.Renderer;
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 
+import java.util.concurrent.locks.LockSupport;
+
 /**
  * The disposable render thread. It owns the GPU stack — a {@link GraphicsBackend}
  * (GL or Vulkan) plus its Skija {@code DirectContext} — and runs the per-frame
@@ -68,6 +70,15 @@ final class RenderThread extends Thread {
 
             PlayerController controller = win.controller();
             LyricCompositor compositor = win.compositor();
+            // glfwSwapInterval normally blocks present until vblank. Some X11/
+            // XWayland drivers only honour it for processes launched from an
+            // interactive shell, however; a .desktop/AppImage launch then runs this
+            // loop thousands of times per second and produces visibly oscillating
+            // animation/scroll presentation. Pace independently to the monitor as a
+            // ceiling. If swapBuffers already blocked, the deadline has passed and
+            // this adds no second wait.
+            final long frameNanos = 1_000_000_000L / Math.max(30, win.refreshHz());
+            long nextFrame = System.nanoTime();
 
             while (running) {
                 // Re-read uiScale each frame so a DPI change (e.g. moving between
@@ -103,6 +114,22 @@ final class RenderThread extends Thread {
                     }
                 } finally {
                     dq.uninstall();
+                }
+
+                nextFrame += frameNanos;
+                long remaining = nextFrame - System.nanoTime();
+                if (remaining > 0L) {
+                    // parkNanos can return early; finish the short remainder so
+                    // frame intervals do not alternate around the deadline.
+                    while (remaining > 0L && running) {
+                        LockSupport.parkNanos(remaining);
+                        remaining = nextFrame - System.nanoTime();
+                    }
+                } else if (remaining < -frameNanos * 4L) {
+                    // A resize, shader compilation or suspended compositor may
+                    // take many frames. Rebase instead of trying to "catch up"
+                    // with a burst of unpaced frames.
+                    nextFrame = System.nanoTime();
                 }
             }
         } catch (Throwable t) {
