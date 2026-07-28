@@ -227,6 +227,11 @@ public final class PlayerController {
     // after a restore, applying the offset only when the index still matches.
     private volatile long pendingResumeMs = 0L;
     private volatile int pendingResumeIndex = -1;
+    // Set by autoAdvance() just before it calls playAt() for a track that finished on
+    // its own, so the scrobble this playAt() fires for the *outgoing* track can tell a
+    // natural finish from a manual skip. Consumed (reset) unconditionally on every
+    // playAt() call, same one-shot pattern as pendingResumeMs/-Index above.
+    private volatile boolean pendingNaturalEnd = false;
     private volatile String playLevel = "exhigh";
     private volatile boolean unblockEnabled = true;
     // --- Volume fade in/out (Settings toggle) ------------------------------
@@ -1384,8 +1389,30 @@ public final class PlayerController {
     // Runs on the main thread (via onMain). Updates the plain playIndex synchronously,
     // marshals UI Property writes to the render thread via post(), and drives the
     // backend directly so playback advances even while the GL pump is paused.
+    /** Reports the track being switched away from to netease's play-report endpoint,
+     *  so its own server-side 最近播放/play-count history reflects plays made through
+     *  qplayer (see {@link NeteaseClient#scrobble}). Only netease tracks qualify —
+     *  local/custom-API sources have no netease-side record to update. Skips a track
+     *  abandoned within its first few seconds (accidental clicks, rapid browsing),
+     *  same rough threshold the official client applies. Reads the *live* backend
+     *  clock, not the {@link #positionMs} Property (which only refreshes from
+     *  pump() and can be stale right at a transition) — same reasoning as
+     *  {@link #saveQueue()}'s position capture. */
+    private void scrobbleOutgoingTrack(boolean naturalEnd) {
+        if (playIndex < 0 || playIndex >= queue.size()) return;
+        Track t = queue.get(playIndex);
+        if (t.source != Track.Source.NETEASE || t.neteaseId == 0) return;
+        long seconds = Math.max(0L, backend.position()) / 1000L;
+        if (seconds < 3) return;
+        long songId = t.neteaseId;
+        String end = naturalEnd ? "playend" : "ui";
+        worker.submit(() -> netease.scrobble(songId, 0L, seconds, end));
+    }
+
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        scrobbleOutgoingTrack(pendingNaturalEnd);
+        pendingNaturalEnd = false;
         playIndex = i;
         // Consumed unconditionally on every call (see field comment), so a saved
         // session position only ever gets one shot at applying, and only to the
@@ -1855,6 +1882,7 @@ public final class PlayerController {
     // doesn't fight a user's manual skip. Already on the main thread (onComplete).
     private void autoAdvance() {
         if (queue.isEmpty()) return;
+        pendingNaturalEnd = true;
         switch (playMode.peek()) {
             case 2:
                 playAt(playIndex);
@@ -3169,7 +3197,7 @@ public final class PlayerController {
         if (uid == 0) return;
         worker.submit(() -> {
             try {
-                List<NeteaseSong> rec = netease.userRecord(uid, 0);
+                List<NeteaseSong> rec = netease.recentPlayed(100);
                 post(() -> recentSongs.set(rec));
             } catch (Throwable e) {
                 Logger.warn("recent failed: {}", e.getMessage());

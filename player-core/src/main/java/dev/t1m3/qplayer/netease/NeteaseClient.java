@@ -963,28 +963,92 @@ public final class NeteaseClient {
     }
 
     /**
-     * Recent-play song list. {@code type=1} = weekly (last 7 days),
-     * {@code type=0} = all-time. Netease wraps each entry as
-     * {@code {song: {...}, playCount: N, score: M}}; we just unwrap the
-     * {@code song} child into a {@link NeteaseSong}. Returns an empty list
-     * when the user has hidden their play history (privacy setting).
+     * True recently-played song list, newest first. {@code /weapi/v1/play/record}
+     * (formerly used here) is actually "听歌排行" — an all-time/weekly play-count
+     * ranking, not a chronological history; its own reference-implementation
+     * source comment says so verbatim, and in practice it barely moves from a
+     * handful of casual plays. {@code /weapi/play-record/song/list} is the real
+     * one: each entry carries a genuine {@code playTime} epoch-ms timestamp and
+     * {@code multiTerminalInfo} naming the device that played it, confirmed
+     * against this account's actual mobile-app history. Uses the logged-in
+     * cookie's identity implicitly — no uid parameter, unlike the old endpoint.
+     *
+     * <p>Note: a play reported through {@link #scrobble} returns success from
+     * {@code feedback/weblog} but has not been observed to appear here even
+     * after repeated tries — this endpoint appears to validate a play's
+     * legitimacy (device/session fingerprint) beyond just accepting the log
+     * entry, so qplayer's own plays currently will not show up in this list
+     * even though the report itself is accepted server-side.
      */
-    public List<NeteaseSong> userRecord(long uid, int type) throws IOException {
+    public List<NeteaseSong> recentPlayed(int limit) throws IOException {
         Map<String, Object> body = new HashMap<>();
-        body.put("uid", uid);
-        body.put("type", type);
-        JsonObject obj = weapiJson("v1/play/record", body);
+        body.put("limit", limit);
+        JsonObject obj = weapiJson("play-record/song/list", body);
         List<NeteaseSong> out = new ArrayList<>();
-        String key = type == 1 ? "weekData" : "allData";
-        if (obj.has(key) && obj.get(key).isJsonArray()) {
-            for (JsonElement el : obj.getAsJsonArray(key)) {
-                if (!el.isJsonObject()) continue;
-                JsonObject row = el.getAsJsonObject();
-                if (!row.has("song") || !row.get("song").isJsonObject()) continue;
-                out.add(parseSong(row.getAsJsonObject("song")));
-            }
+        if (!obj.has("data") || !obj.get("data").isJsonObject()) return out;
+        JsonObject data = obj.getAsJsonObject("data");
+        if (!data.has("list") || !data.get("list").isJsonArray()) return out;
+        for (JsonElement el : data.getAsJsonArray("list")) {
+            if (!el.isJsonObject()) continue;
+            JsonObject row = el.getAsJsonObject();
+            String type = row.has("resourceType") && !row.get("resourceType").isJsonNull()
+                    ? row.get("resourceType").getAsString() : "";
+            if (!"SONG".equals(type)) continue;
+            if (!row.has("data") || !row.get("data").isJsonObject()) continue;
+            out.add(parseSong(row.getAsJsonObject("data")));
         }
         return out;
+    }
+
+    /**
+     * Report a play to netease's private {@code feedback/weblog} endpoint — the
+     * same call the official web/desktop client fires on every track change, and
+     * the exact payload shape a maintained community "听歌 300 首" leveling bot
+     * (chaunsin/netease-cloud-music, {@code internal/ncmctl/scrobble.go}) uses to
+     * reliably bump an account's server-side play count, confirming this shape
+     * genuinely registers with netease's stats/leveling pipeline. {@code
+     * sourceId} is the playlist/album the track was played from (0 if none);
+     * {@code seconds} is how long it was actually listened to; {@code end} is
+     * {@code "playend"} for a natural finish or {@code "ui"} for a manual
+     * skip/stop, mirroring the two reasons the official client itself sends.
+     *
+     * <p><b>Does not currently make a play show up in {@link #recentPlayed}</b>:
+     * this endpoint returning success (code 200, {@code "success"}) only confirms
+     * the log entry was accepted, not that it passed whatever validates a play's
+     * legitimacy for the recently-played list — repeated reports for real tracks
+     * played through qplayer were accepted here but never appeared there, while
+     * genuine plays from the official mobile app (carrying real device/session
+     * identity) do. Kept anyway since the stats/leveling effect is real and
+     * confirmed; closing the recently-played gap would need replicating a real
+     * client's device fingerprint, not attempted. Best-effort: swallows failures
+     * so a flaky report never disrupts playback.
+     */
+    public void scrobble(long songId, long sourceId, long seconds, String end) {
+        if (!isLoggedIn()) return;
+        try {
+            JsonObject j = new JsonObject();
+            j.addProperty("type", "song");
+            j.addProperty("wifi", 0);
+            j.addProperty("download", 0);
+            j.addProperty("id", songId);
+            j.addProperty("time", seconds);
+            j.addProperty("end", end);
+            j.addProperty("source", "list");
+            j.addProperty("sourceId", sourceId);
+            j.addProperty("mainsite", 1);
+            j.addProperty("content", sourceId != 0 ? ("id=" + sourceId) : "");
+            JsonObject entry = new JsonObject();
+            entry.addProperty("action", "play");
+            entry.add("json", j);
+            JsonArray logs = new JsonArray();
+            logs.add(entry);
+            Map<String, Object> body = new HashMap<>();
+            body.put("logs", logs.toString());
+            JsonObject resp = weapiJson("feedback/weblog", body, false);
+            Logger.info("scrobble {} ({}s, end={}) -> {}", songId, seconds, end, resp);
+        } catch (IOException e) {
+            Logger.warn("scrobble failed for song {}: {}", songId, e.getMessage());
+        }
     }
 
     // ---- Lyrics ----
