@@ -30,33 +30,60 @@ Rectangle {
     // them meant one fewer tab than the original 6-category cut.
     property string currentCategory: "外观"
     property var categories: ["外观", "播放", "歌词", "本地", "关于"]
+    // md3 Tabs takes {icon, text} entries; these are label-only.
+    property var categoryTabModel: [
+        { text: "外观" }, { text: "播放" }, { text: "歌词" }, { text: "本地" }, { text: "关于" }
+    ]
 
-    // Single-panel slide+fade: only the ENTERING panel ever animates (from a
-    // parked offset back to 0, opacity 0 -> 1); the outgoing one just
-    // disappears instantly via `visible`. An earlier version kept both
-    // panels visible and animating during the transition (a true
-    // cross-slide) — measured as dropping frames on real hardware (two full
-    // card-stack subtrees repainting every frame, every frame, for the whole
-    // transition; qml4j has no cheap layer-cache to offset that, see the
-    // qml4j-gotchas memory items 9/10). This halves the simultaneous render
-    // cost by construction while still giving the switch some motion instead
-    // of an instant hard cut. Always enters from the right (fixed direction,
-    // not tied to which side the underline moved from) per explicit request.
-    property real slideOffset: 48
+    // Category switching uses Main.qml's MD3 fade-through verbatim (fade the
+    // content out, swap, fade it back in while it rises) instead of the
+    // per-panel horizontal slide this page used to have on its own, so moving
+    // between settings categories reads the same as moving between the app's
+    // main pages. Only one panel is ever visible, so the panels no longer need
+    // opaque backings to occlude each other mid-transition either.
+    property string nextCategory: "外观"
+    property real panelOpacity: 1
+    property real panelShift: 0
 
     function selectCategory(name) {
-        if (name === page.currentCategory) return
-        page.currentCategory = name
+        if (!name || name === page.currentCategory) return
+        page.nextCategory = name
+        categoryAnim.restart()
     }
 
-    // 0 once settled; starts parked to the right otherwise.
-    function panelX(catName) {
-        return page.currentCategory === catName ? 0 : page.slideOffset
+    SequentialAnimation {
+        id: categoryAnim
+        NumberAnimation {
+            target: page; property: "panelOpacity"; to: 0
+            duration: 90; easing.type: Easing.OutCubic
+        }
+        ScriptAction {
+            onTrigger: {
+                page.currentCategory = page.nextCategory
+                // Each category scrolls independently, so the incoming one starts
+                // at its top rather than inheriting the previous panel's offset
+                // (which could be past the end of a shorter panel).
+                settingsFlickable.contentY = 0
+                page.panelShift = 28
+            }
+        }
+        ParallelAnimation {
+            NumberAnimation {
+                target: page; property: "panelOpacity"; from: 0; to: 1
+                duration: 220; easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: page; property: "panelShift"; from: 28; to: 0
+                duration: 220; easing.type: Easing.OutCubic
+            }
+        }
     }
 
-    function panelOpacity(catName) {
-        return page.currentCategory === catName ? 1 : 0
-    }
+    // Tabs owns currentIndex (its Ripple writes it directly); mirror it into a
+    // plain property so this page has a change handler of its own to hang the
+    // transition off, the same way Main.qml watches player.toast.
+    property int tabIndex: categoryTabs.currentIndex
+    onTabIndexChanged: page.selectCategory(page.categories[page.tabIndex])
 
     // Catch-all so taps on empty areas don't fall through to the page beneath.
     // Declared first (lowest z); the controls above still receive their events.
@@ -87,68 +114,20 @@ Rectangle {
             }
         }
 
-        // Category selector: a plain Item (not a Flickable — 5 categories at
-        // equal width always fits in one row, even on a narrow phone screen, so
-        // there's nothing to scroll).
-        Item {
+        // Category selector: md3's own Tabs bar (secondary type — full-slot
+        // 2dp indicator, no icons), replacing the hand-rolled Repeater +
+        // arithmetic underline this page carried. Sized to the bar itself: the
+        // panels below scroll as one Flickable rather than living in Tabs' own
+        // StackLayout content area, since they differ in height and share the
+        // page's scroll position.
+        Tabs {
+            id: categoryTabs
             Layout.fillWidth: true
-            Layout.preferredHeight: 46
-            Layout.topMargin: 2
-            Layout.bottomMargin: 4
+            Layout.preferredHeight: 48
             Layout.leftMargin: 12
             Layout.rightMargin: 12
-
-            // Even division of this Item's own width — every category label is
-            // exactly 2 characters, so equal-width slots read as intentional
-            // rather than cramped, and (more importantly) let the underline
-            // below be pure arithmetic instead of having to introspect a
-            // Repeater delegate's actual on-screen geometry.
-            property int currentIndex: page.categories.indexOf(page.currentCategory)
-            property real tabWidth: width / Math.max(1, page.categories.length)
-
-            RowLayout {
-                anchors.fill: parent
-                spacing: 0
-                Repeater {
-                    model: page.categories
-                    Item {
-                        id: tabSlot
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        property bool active: modelData === page.currentCategory
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData
-                            fontSize: 15
-                            color: tabSlot.active ? Theme.color.primary : Theme.color.onSurfaceVariantColor
-                            font.family: tabSlot.active
-                                ? Theme.typography.titleSmall.family
-                                : Theme.typography.bodyLarge.family
-                            Behavior on color { ColorAnimation { duration: 200 } }
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: page.selectCategory(modelData)
-                        }
-                    }
-                }
-            }
-
-            // Selection indicator: a short underline that slides + resizes to the
-            // active tab's slot, Apple/Material "underlined tab" style, rather
-            // than the earlier filled-pill chips.
-            Rectangle {
-                id: tabUnderline
-                height: 2
-                radius: 1
-                color: Theme.color.primary
-                y: parent.height - height - 2
-                width: parent.tabWidth * 0.7
-                x: parent.tabWidth * parent.currentIndex + (parent.tabWidth - width) / 2
-                Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
-                Behavior on width { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
-            }
+            type: "secondary"
+            model: page.categoryTabModel
         }
 
         Flickable {
@@ -157,8 +136,8 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
             contentWidth: width
-            // Bound to whichever panel is active (not a sum of all 5 — only one
-            // is ever "settled"; the exiting one is on its way off-screen).
+            // Bound to whichever panel is showing — the others are invisible and
+            // occupy no scroll range.
             contentHeight: {
                 switch (page.currentCategory) {
                 case "外观": return panelAppearance.height + 24
@@ -170,41 +149,31 @@ Rectangle {
                 }
             }
 
-            // Plain Item, not a Layout: the 5 category panels are absolutely
-            // positioned (x-offset) rather than stacked. height must be bound
+            // Plain Item, not a Layout: the 5 category panels are stacked at the
+            // same origin and toggled by `visible`. height must be bound
             // explicitly (plain Item doesn't default height to implicitHeight
             // the way real Qt Quick does) — qml4j's hit-testing walks every
             // ancestor's own width/height as a bounding-box check on the way
             // down to a MouseArea/Button, so a 0-height Item here silently
-            // swallows every click to everything beneath it.
+            // swallows every click to everything beneath it. y/opacity carry the
+            // fade-through for whichever panel is showing, exactly as pageBody
+            // does for the main pages in Main.qml.
             Item {
                 id: content
                 width: parent.width
                 height: parent.contentHeight
+                y: page.panelShift
+                opacity: page.panelOpacity
 
                 Item {
                     id: panelAppearance
                     width: parent.width
                     height: appearanceCards.implicitHeight
                     visible: page.currentCategory === "外观"
-                    x: page.panelX("外观")
-                    z: page.currentCategory === "外观" ? 1 : 0
-                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                    // Opaque backing so this panel fully occludes the other one
-                    // still sliding out behind it — without it, gaps around/
-                    // between cards let the other panel's cards show through
-                    // mid-slide, which read as the two pages' items overlapping.
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.color.surface
-                    }
 
                     AppearanceSettingsCards {
                         id: appearanceCards
                         width: parent.width
-                        opacity: page.panelOpacity("外观")
-                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                         onPickFont: page.fontPickerOpen = true
                     }
                 } // end 外观
@@ -214,21 +183,11 @@ Rectangle {
                     width: parent.width
                     height: playbackCards.implicitHeight
                     visible: page.currentCategory === "播放"
-                    x: page.panelX("播放")
-                    z: page.currentCategory === "播放" ? 1 : 0
-                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.color.surface
-                    }
 
                     ColumnLayout {
                         id: playbackCards
                         width: parent.width
                         spacing: 14
-                        opacity: page.panelOpacity("播放")
-                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                         PlaybackSettingsCards { Layout.fillWidth: true }
                         // See CustomApiSettingsCard.qml — factored into its own file
                         // for the same 64KB-method reason noted above.
@@ -241,20 +200,10 @@ Rectangle {
                     width: parent.width
                     height: lyricCards.implicitHeight
                     visible: page.currentCategory === "歌词"
-                    x: page.panelX("歌词")
-                    z: page.currentCategory === "歌词" ? 1 : 0
-                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.color.surface
-                    }
 
                     LyricSettingsCards {
                         id: lyricCards
                         width: parent.width
-                        opacity: page.panelOpacity("歌词")
-                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                     }
                 } // end 歌词
 
@@ -263,20 +212,10 @@ Rectangle {
                     width: parent.width
                     height: localCards.implicitHeight
                     visible: page.currentCategory === "本地"
-                    x: page.panelX("本地")
-                    z: page.currentCategory === "本地" ? 1 : 0
-                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.color.surface
-                    }
 
                     LocalSettingsCards {
                         id: localCards
                         width: parent.width
-                        opacity: page.panelOpacity("本地")
-                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                     }
                 } // end 本地
 
@@ -285,20 +224,10 @@ Rectangle {
                     width: parent.width
                     height: aboutCards.implicitHeight
                     visible: page.currentCategory === "关于"
-                    x: page.panelX("关于")
-                    z: page.currentCategory === "关于" ? 1 : 0
-                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: Theme.color.surface
-                    }
 
                     AboutSettingsCards {
                         id: aboutCards
                         width: parent.width
-                        opacity: page.panelOpacity("关于")
-                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                     }
                 } // end 关于
             }
