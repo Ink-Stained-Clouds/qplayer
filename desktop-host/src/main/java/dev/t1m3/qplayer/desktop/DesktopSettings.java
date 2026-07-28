@@ -71,8 +71,9 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
     public final Property<Boolean> lyricGlow = new Property<>(Boolean.TRUE);
     /** Plain-LRC (no real per-syllable timing) lines: on synthesizes an evenly-
      *  spaced per-character sweep (linear front-to-back); off lights the whole
-     *  line up together as one block. See LyricConfig#linearAnimForPlainLrc. */
-    public final Property<Boolean> lyricLinearAnim = new Property<>(Boolean.TRUE);
+     *  line up together as one block (default). See
+     *  LyricConfig#linearAnimForPlainLrc. */
+    public final Property<Boolean> lyricLinearAnim = new Property<>(Boolean.FALSE);
     public final Property<Boolean> lyricEdgeBlur = new Property<>(Boolean.FALSE);
     public final Property<Boolean> lyricBgStatic = new Property<>(Boolean.FALSE);
     /** Manual lyric-timing offset in ms; see {@link LyricConfig#offsetMs}. */
@@ -245,7 +246,7 @@ public final class DesktopSettings extends QObject implements LyricCompositor.Se
         lyricSpring.set(getBool("lyricSpring", true));
         lyricScale.set(getBool("lyricScale", true));
         lyricGlow.set(getBool("lyricGlow", true));
-        lyricLinearAnim.set(getBool("lyricLinearAnim", true));
+        lyricLinearAnim.set(getBool("lyricLinearAnim", false));
         lyricEdgeBlur.set(getBool("lyricEdgeBlur", false));
         lyricBgStatic.set(getBool("lyricBgStatic", false));
         lyricOffsetMs.set(getInt("lyricOffsetMs", 0));

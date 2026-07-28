@@ -44,9 +44,11 @@ public final class LyricConfig {
     /** Plain LRC (no real per-syllable timing) lines: true synthesizes an evenly-
      *  spaced per-character timing (spread across the line's real start/duration)
      *  so the same sweep/lift/glow a real per-syllable source gets runs on it too,
-     *  giving a linear front-to-back reveal. False lights the whole line up
-     *  together as one block instead (still gets scaleEmphasis/glow, just no
-     *  per-character sweep motion). No effect on lines that already have real
-     *  per-syllable timing (YRC/LYS/TTML/QRC). */
-    public final Val<Boolean> linearAnimForPlainLrc = new Val<>(Boolean.TRUE);
+     *  giving a linear front-to-back reveal. False (default) lights the whole
+     *  line up together as one block instead (still gets scaleEmphasis/glow,
+     *  just no per-character sweep motion) — the synthetic timing is only an
+     *  even split of the line's duration, so it never matches how the line is
+     *  actually sung. No effect on lines that already have real per-syllable
+     *  timing (YRC/LYS/TTML/QRC). */
+    public final Val<Boolean> linearAnimForPlainLrc = new Val<>(Boolean.FALSE);
 }

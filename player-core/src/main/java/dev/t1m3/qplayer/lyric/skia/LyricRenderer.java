@@ -2091,9 +2091,9 @@ public class LyricRenderer {
     /**
      * Park sweepX outside the row before/after the line plays so the mask
      * presents a stable bright (post-finish) or dark (pre-start) state.
-     * During playback, sweepX lerps between consecutive syllables' left
-     * edges by {@code (pos - sStart) / (nextSStart - sStart)} — gives a
-     * continuous head that never pauses at syllable boundaries.
+     * During playback, sweepX lerps across each syllable's own width by
+     * {@code (pos - sStart) / (sStart + duration - sStart)}, then holds at
+     * the next syllable's left edge through any gap before it starts.
      */
     private static float computeSweepX(List<Syllable> syllables, int from, int to,
                                        float[] sylLeft, long pos) {
@@ -2110,9 +2110,14 @@ public class LyricRenderer {
         for (int s = 0; s < n; s++) {
             Syllable syl = syllables.get(from + s);
             long sStart = syl.startMs;
-            long sEnd = (s + 1 < n)
-                    ? syllables.get(from + s + 1).startMs
-                    : syl.startMs + Math.max(0L, syl.durationMs);
+            // Finish a syllable at its OWN end, not the next one's start. Stretching
+            // the fill to the next start kept the head creeping through the silence
+            // after the word was already sung, so the sweep visibly trailed the
+            // vocal. Zero-duration tokens (QRC's word separators) have no span of
+            // their own and still bridge to the next syllable's start.
+            long sEnd = syl.durationMs > 0L
+                    ? sStart + syl.durationMs
+                    : ((s + 1 < n) ? syllables.get(from + s + 1).startMs : sStart);
             if (sEnd <= sStart) sEnd = sStart + 1L;
             if (pos < sStart) return sylLeft[s];
             if (pos < sEnd) {

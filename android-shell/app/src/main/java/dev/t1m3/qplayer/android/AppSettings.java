@@ -68,8 +68,9 @@ public final class AppSettings extends QObject
     public final Property<Boolean> lyricGlow = new Property<>(Boolean.TRUE);
     /** Plain-LRC (no real per-syllable timing) lines: on synthesizes an evenly-
      *  spaced per-character sweep (linear front-to-back); off lights the whole
-     *  line up together as one block. See LyricConfig#linearAnimForPlainLrc. */
-    public final Property<Boolean> lyricLinearAnim = new Property<>(Boolean.TRUE);
+     *  line up together as one block (default). See
+     *  LyricConfig#linearAnimForPlainLrc. */
+    public final Property<Boolean> lyricLinearAnim = new Property<>(Boolean.FALSE);
     /** Apple-Music edge blur: unfocused lyric lines blur progressively toward the edges. */
     public final Property<Boolean> lyricEdgeBlur = new Property<>(Boolean.FALSE);
     /** Static fluid background (render once + cache) vs. animated. */
@@ -280,7 +281,7 @@ public final class AppSettings extends QObject
         lyricSpring.set(prefs.getBoolean("lyricSpring", true));
         lyricScale.set(prefs.getBoolean("lyricScale", true));
         lyricGlow.set(prefs.getBoolean("lyricGlow", true));
-        lyricLinearAnim.set(prefs.getBoolean("lyricLinearAnim", true));
+        lyricLinearAnim.set(prefs.getBoolean("lyricLinearAnim", false));
         lyricEdgeBlur.set(prefs.getBoolean("lyricEdgeBlur", false));
         lyricBgStatic.set(prefs.getBoolean("lyricBgStatic", false));
         lyricOffsetMs.set(prefs.getInt("lyricOffsetMs", 0));
