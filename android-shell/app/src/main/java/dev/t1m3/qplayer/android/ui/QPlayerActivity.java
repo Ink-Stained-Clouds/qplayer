@@ -93,6 +93,18 @@ public final class QPlayerActivity extends Activity {
         // Cookies / config live in app-private storage on Android.
         AppDirs.setBase(getFilesDir().getAbsolutePath());
 
+        // A downloaded update APK (see downloadAndInstallUpdate below) has served its
+        // purpose once the app relaunches -- it's never deleted right after handing it
+        // to the system installer (that Intent may still be reading the file), and
+        // getExternalFilesDir(null)/updates isn't covered by 清除缓存 (that only clears
+        // DiskCache's own tree), so it just sits there taking up space forever. Sweep
+        // it at every startup instead, same pattern as the desktop host's own installer
+        // sweep; log the reclaimed size so it's visible in the in-app debug log panel.
+        java.io.File updatesDir = new java.io.File(getExternalFilesDir(null), "updates");
+        long updatesBytes = dirSizeBytes(updatesDir);
+        dev.t1m3.qplayer.util.Logger.info("updates cache: {} bytes before sweep", updatesBytes);
+        deleteRecursive(updatesDir);
+
         AudioBackend backend = new AndroidAudioBackend(this);
         reader = new AndroidMetadataReader(this);
 
@@ -329,6 +341,26 @@ public final class QPlayerActivity extends Activity {
             dev.t1m3.qplayer.util.Logger.error("install apk failed: {}", e.toString());
             controller.setUpdateProgress(-2);
         }
+    }
+
+    private static long dirSizeBytes(java.io.File f) {
+        if (!f.exists()) return 0L;
+        if (f.isFile()) return f.length();
+        java.io.File[] children = f.listFiles();
+        long total = 0L;
+        if (children != null) {
+            for (java.io.File c : children) total += dirSizeBytes(c);
+        }
+        return total;
+    }
+
+    private static void deleteRecursive(java.io.File f) {
+        if (!f.exists()) return;
+        java.io.File[] children = f.listFiles();
+        if (children != null) {
+            for (java.io.File c : children) deleteRecursive(c);
+        }
+        f.delete();
     }
 
     /** First painted frame: the QML tree is fully built and rendering. Now hide the
