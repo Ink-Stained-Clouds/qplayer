@@ -108,9 +108,7 @@ final class TrayController implements PlayerController.PlaybackListener {
                 shutdown();
                 win.requestQuit();
             }));
-            // Double-click bypasses the menu and restores the window directly, same
-            // action as the "显示窗口" item.
-            winTray.setDoubleClickAction(() -> win.postMainTask(win::restoreFromTray));
+            winTray.setLeftClickAction(() -> win.postMainTask(win::restoreFromTray));
             if (winTray.install()) return true;
             winTray = null;
             return false;
@@ -191,7 +189,24 @@ final class TrayController implements PlayerController.PlaybackListener {
             trayIcon = new TrayIcon(img, "QPlayer");
             trayIcon.setImageAutoSize(true);
             trayIcon.addMouseListener(new MouseAdapter() {
-                @Override public void mouseReleased(MouseEvent e) { showPopupAt(e.getX(), e.getY()); }
+                @Override public void mousePressed(MouseEvent e) {
+                    maybeShowPopup(e);
+                }
+
+                @Override public void mouseReleased(MouseEvent e) {
+                    if (javax.swing.SwingUtilities.isLeftMouseButton(e) && !e.isPopupTrigger()) {
+                        win.postMainTask(win::restoreFromTray);
+                    } else {
+                        maybeShowPopup(e);
+                    }
+                }
+
+                private void maybeShowPopup(MouseEvent e) {
+                    if ((e.isPopupTrigger() || javax.swing.SwingUtilities.isRightMouseButton(e))
+                            && (popup == null || !popup.isVisible())) {
+                        showPopupAt(e.getX(), e.getY());
+                    }
+                }
             });
             SystemTray.getSystemTray().add(trayIcon);
             Logger.info("system tray initialized: AWT (font={})",

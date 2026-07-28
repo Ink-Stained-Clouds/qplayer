@@ -37,8 +37,8 @@ import java.util.List;
  * the bare binary has no JDK lib dir).
  *
  * <p>A message-only window on a dedicated pump thread receives the tray callback
- * ({@code WM_TRAYICON}); right/left click opens the menu with {@code TPM_RETURNCMD}
- * so the selected command comes back inline and we run its action.
+ * ({@code WM_TRAYICON}); left-click restores the window, while right-click opens
+ * the menu with {@code TPM_RETURNCMD} so the selected command comes back inline.
  */
 final class WinTray {
 
@@ -50,8 +50,6 @@ final class WinTray {
     private static final int WM_LBUTTONDBLCLK = 0x0203;
     private static final int WM_RBUTTONUP = 0x0205;
     private static final int WM_DESTROY = 0x0002;
-    private static final int WM_TIMER = 0x0113;
-    private static final int CLICK_TIMER_ID = 1;
 
     private static final int NIM_ADD = 0x0;
     private static final int NIM_MODIFY = 0x1;
@@ -99,9 +97,6 @@ final class WinTray {
         boolean DestroyMenu(HMENU menu);
         HANDLE LoadImageW(HINSTANCE inst, WString name, int type, int cx, int cy, int load);
         boolean DestroyIcon(HICON icon);
-        UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, int uElapse, Pointer lpTimerFunc);
-        boolean KillTimer(HWND hWnd, UINT_PTR nIDEvent);
-        int GetDoubleClickTime();
         int GetSystemMetrics(int index);
     }
 
@@ -181,20 +176,16 @@ final class WinTray {
     // before that -- guards against a second trigger landing while one is tracking.
     private final java.util.concurrent.atomic.AtomicBoolean menuOpen =
             new java.util.concurrent.atomic.AtomicBoolean(false);
-    // Run on a genuine WM_LBUTTONDBLCLK (see the WM_TRAYICON handling below for why
-    // the menu can't just be shown straight off WM_LBUTTONUP).
-    private volatile Runnable doubleClickAction;
+    private volatile Runnable leftClickAction;
 
-    /** Action for a real double-click on the icon (distinct from the single-click
-     *  menu) — e.g. restoring the window straight away without the menu in the way. */
-    void setDoubleClickAction(Runnable r) {
-        this.doubleClickAction = r;
+    /** Action for a left-click on the icon; the popup menu belongs to right-click. */
+    void setLeftClickAction(Runnable r) {
+        this.leftClickAction = r;
     }
 
     // Only ever touched on the pump thread (wndProc callback), so no synchronization
     // needed despite being read/written across the UP/DBLCLK branches above.
     private boolean suppressNextUp = false;
-
     private volatile HWND hWnd;
     private volatile HICON hIcon;
     private volatile byte[] iconIco;
@@ -281,32 +272,17 @@ final class WinTray {
                     if (evt == WM_RBUTTONUP) {
                         openMenuOnce();
                     } else if (evt == WM_LBUTTONUP) {
-                        // Explorer sends UP, DBLCLK, UP for one double-click -- the
-                        // second UP is that click's release and must NOT re-arm the
-                        // timer (it did before this check, so the menu would still
-                        // pop up ~GetDoubleClickTime() after a double-click's window
-                        // already showed). Might instead be the first click of a
-                        // double-click, so showing the menu straight off it can
-                        // never tell a single click from the first half of a double
-                        // one either way -- defer to a timer matching the user's
-                        // actual double-click speed; WM_LBUTTONDBLCLK below cancels
-                        // it if a second click lands in time.
                         if (suppressNextUp) {
                             suppressNextUp = false;
                         } else {
-                            U32.I.SetTimer(w, new UINT_PTR(CLICK_TIMER_ID), U32.I.GetDoubleClickTime(), null);
+                            Runnable r = leftClickAction;
+                            if (r != null) r.run();
                         }
                     } else if (evt == WM_LBUTTONDBLCLK) {
-                        U32.I.KillTimer(w, new UINT_PTR(CLICK_TIMER_ID));
+                        // The first UP already performed the action. Explorer sends
+                        // one more UP after DBLCLK, so suppress that duplicate.
                         suppressNextUp = true;
-                        Runnable r = doubleClickAction;
-                        if (r != null) r.run();
                     }
-                    return new LRESULT(0);
-                }
-                if (msg == WM_TIMER && wParam.intValue() == CLICK_TIMER_ID) {
-                    U32.I.KillTimer(w, new UINT_PTR(CLICK_TIMER_ID));
-                    openMenuOnce();
                     return new LRESULT(0);
                 }
                 if (msg == WM_QUIT_TRAY) {
@@ -387,12 +363,17 @@ final class WinTray {
     // case of a second call arriving while one is already tracking -- Win32 silently
     // cancels whatever popup is currently open when TrackPopupMenu is called again.
     private void openMenuOnce() {
+        POINT pt = new POINT();
+        if (U32.I.GetCursorPos(pt)) openMenuOnce(pt.x, pt.y);
+    }
+
+    private void openMenuOnce(int x, int y) {
         if (menuOpen.compareAndSet(false, true)) {
-            try { showMenu(); } finally { menuOpen.set(false); }
+            try { showMenu(x, y); } finally { menuOpen.set(false); }
         }
     }
 
-    private void showMenu() {
+    private void showMenu(int x, int y) {
         HMENU menu = U32.I.CreatePopupMenu();
         if (menu == null) return;
         try {
@@ -403,12 +384,10 @@ final class WinTray {
                     U32.I.AppendMenuW(menu, MF_STRING, new UINT_PTR(it.id), new WString(it.label));
                 }
             }
-            POINT pt = new POINT();
-            U32.I.GetCursorPos(pt);
             // Required Win32 dance so the menu dismisses when clicking elsewhere.
             U32.I.SetForegroundWindow(hWnd);
             int cmd = U32.I.TrackPopupMenu(menu,
-                    TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, null);
+                    TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, hWnd, null);
             U32.I.PostMessageW(hWnd, 0 /* WM_NULL */, new WPARAM(0), new LPARAM(0));
             if (cmd > 0) {
                 for (Item it : items) {
