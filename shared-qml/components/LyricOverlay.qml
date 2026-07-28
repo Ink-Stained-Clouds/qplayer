@@ -19,7 +19,13 @@ Item {
     // lyrics<->cover toggle (the button below / tapping the cover to return).
     property bool coverOnly: player.lyricsCoverOnly || player.coverModeManual
     property bool offsetPanelOpen: false
-    onOffsetPanelOpenChanged: player.setLyricOffsetPanelOpen(offsetPanelOpen)
+    onOffsetPanelOpenChanged: {
+        player.setLyricOffsetPanelOpen(offsetPanelOpen)
+        // Synchronize once on entry. Do not feed every player property change back
+        // into Slider.value while its MouseArea is dragging: that re-entrant write
+        // interrupts qml4j's active gesture as soon as the thumb moves one step.
+        if (offsetPanelOpen) offsetSlider.value = player.lyricOffsetMs
+    }
     // The page can also close via Esc / Android back, which bypasses this QML
     // entirely (PlayerController.pressBack), so mirror the other direction too. A
     // plain binding + local onChanged, not Connections { target: player }: player is
@@ -139,35 +145,60 @@ Item {
         onClicked: overlay.offsetPanelOpen = false
     }
 
-    // Plain anchored Items throughout, not Layout/ColumnLayout: nesting a wrapping
-    // Text inside this engine's Layout components silently drops the wrap (known
-    // qml4j limitation — Layout keeps reasserting the child's implicit/unwrapped
-    // width on relayout). Row (a positioner, not a Layout) is fine for the stepper.
+    // Fixed-step slider: one control scales cleanly down to phone width, unlike the
+    // previous row of four buttons which could overflow this card.
     Rectangle {
         id: offsetPanel
-        visible: overlay.offsetPanelOpen
+        // Keep painting until the exit fade reaches zero; binding visible directly
+        // to offsetPanelOpen would cut the zoom-out off on its first frame.
+        visible: overlay.offsetPanelOpen || opacity > 0.01
+        opacity: overlay.offsetPanelOpen ? 1 : 0
+        scale: overlay.offsetPanelOpen ? 1 : 0.9
+        transformOrigin: Item.TopRight
+        Behavior on opacity {
+            NumberAnimation { duration: overlay.offsetPanelOpen ? 160 : 120; easing.type: Easing.OutCubic }
+        }
+        Behavior on scale {
+            NumberAnimation {
+                duration: overlay.offsetPanelOpen ? 220 : 150
+                easing.type: overlay.offsetPanelOpen ? Easing.OutBack : Easing.InCubic
+            }
+        }
         z: 2
         anchors.top: offsetBtn.bottom
         anchors.topMargin: 8
         anchors.right: parent.right
         anchors.rightMargin: 6
-        width: 260
-        height: resetBtn.y + resetBtn.height + 12
-        radius: 16
+        width: Math.min(320, parent.width - 24)
+        height: 176
+        radius: 20
         color: Theme.color.surfaceContainerHigh
+        border.width: 1
+        border.color: Theme.color.outlineVariant
 
         MouseArea { anchors.fill: parent }
 
         Text {
             id: offsetTitle
             anchors.top: parent.top
+            anchors.topMargin: 18
             anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.margins: 12
+            anchors.leftMargin: 18
             text: "歌词偏移"
             color: Theme.color.onSurfaceColor
             font.family: Theme.typography.titleSmall.family
             font.pixelSize: Theme.typography.titleSmall.size
+        }
+        Text {
+            anchors.top: parent.top
+            anchors.topMargin: 16
+            anchors.right: parent.right
+            anchors.rightMargin: 18
+            text: (offsetSlider.value > 0 ? "+" : "") + offsetSlider.value + " ms"
+            color: Theme.color.primary
+            font.family: Theme.typography.titleMedium.family
+            font.pixelSize: Theme.typography.titleMedium.size
+            font.weight: Theme.typography.titleMedium.weight
         }
         Text {
             id: offsetCaption
@@ -175,54 +206,76 @@ Item {
             anchors.topMargin: 4
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            // A literal line break, not just wrapMode: Text.WordWrap — automatic
-            // wrapping of a Text sized by anchors (not a Layout) still doesn't
-            // reliably re-wrap on width changes in this engine, so force the split.
-            text: "对不上时微调；\n数值越大歌词越慢，越小/负值越快"
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            text: "仅对当前歌曲生效 · 负值提前，正值延后"
             color: Theme.color.onSurfaceVariantColor
             font.family: Theme.typography.bodySmall.family
             font.pixelSize: Theme.typography.bodySmall.size
-            wrapMode: Text.WordWrap
+            elide: Text.ElideRight
         }
-        Row {
-            id: stepperRow
+
+        Slider {
+            id: offsetSlider
             anchors.top: offsetCaption.bottom
             anchors.topMargin: 10
             anchors.left: parent.left
-            anchors.leftMargin: 12
-            spacing: 10
-            Button {
-                id: minusBtn
-                type: "outlined"; text: "−"
-                onClicked: settings.bump("lyricOffsetMs", -1)
-            }
-            Text {
-                width: 72
-                // Row top-aligns children by default; a plain height binding to the
-                // row's own (child-derived) height is circular and doesn't land
-                // centered, so anchor directly to a sibling button's centre instead.
-                anchors.verticalCenter: minusBtn.verticalCenter
-                horizontalAlignment: Text.AlignHCenter
-                text: (settings.value("lyricOffsetMs") > 0 ? "+" : "") + settings.value("lyricOffsetMs") + " ms"
-                color: Theme.color.onSurfaceColor
-                font.family: Theme.typography.bodyLarge.family
-                font.pixelSize: Theme.typography.bodyLarge.size
-            }
-            Button {
-                type: "outlined"; text: "+"
-                onClicked: settings.bump("lyricOffsetMs", 1)
-            }
+            anchors.right: parent.right
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            from: -5000
+            to: 5000
+            stepSize: 50
+            snapMode: true
+            value: 0
+            // Keep dragging entirely local. Updating PlayerController on every 50 ms
+            // step re-enters the QML tree (lyric index + persistence) during the
+            // pointer callback and interrupts the gesture in qml4j.
+            onEditingFinished: player.setLyricOffset(value)
+        }
+
+        Text {
+            anchors.top: offsetSlider.bottom
+            anchors.topMargin: 1
+            anchors.left: parent.left
+            anchors.leftMargin: 18
+            text: "提前 5 秒"
+            color: Theme.color.onSurfaceVariantColor
+            font.family: Theme.typography.labelSmall.family
+            font.pixelSize: Theme.typography.labelSmall.size
+        }
+        Text {
+            anchors.top: offsetSlider.bottom
+            anchors.topMargin: 1
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "0"
+            color: Theme.color.onSurfaceVariantColor
+            font.family: Theme.typography.labelSmall.family
+            font.pixelSize: Theme.typography.labelSmall.size
+        }
+        Text {
+            anchors.top: offsetSlider.bottom
+            anchors.topMargin: 1
+            anchors.right: parent.right
+            anchors.rightMargin: 18
+            text: "延后 5 秒"
+            color: Theme.color.onSurfaceVariantColor
+            font.family: Theme.typography.labelSmall.family
+            font.pixelSize: Theme.typography.labelSmall.size
         }
         Button {
             id: resetBtn
-            anchors.top: stepperRow.bottom
-            anchors.topMargin: 8
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 8
             anchors.right: parent.right
-            anchors.rightMargin: 12
-            type: "text"; text: "重置"
-            onClicked: settings.setValue("lyricOffsetMs", 0)
+            anchors.rightMargin: 10
+            type: "text"
+            text: "重置为 0"
+            enabled: offsetSlider.value !== 0
+            onClicked: {
+                offsetSlider.value = 0
+                player.resetLyricOffset()
+            }
         }
     }
 

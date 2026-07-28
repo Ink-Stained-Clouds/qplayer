@@ -119,6 +119,10 @@ public final class PlayerController {
                     return size() > LYRIC_MEM_MAX;
                 }
             });
+    /** Per-track lyric timing corrections. The live LyricConfig value still feeds
+     *  both renderers, but it is replaced whenever the current track changes. */
+    private final Map<String, Integer> lyricOffsets =
+            java.util.Collections.synchronizedMap(new HashMap<String, Integer>());
     // Same idea as lyricMem, keyed by the custom-API source's String id instead
     // of a netease long songId — kept separate since the key types differ.
     private final Map<String, List<LyricLine>> customLyricMem = java.util.Collections.synchronizedMap(
@@ -305,6 +309,8 @@ public final class PlayerController {
      *  is normally recognized before any QML dispatch; while this is true the input
      *  layer skips that recognition so taps land on the panel's QML controls instead. */
     public final Property<Boolean> lyricOffsetPanelOpen = new Property<>(false);
+    /** Timing correction for the current song only, in milliseconds. */
+    public final Property<Integer> lyricOffsetMs = new Property<>(0);
     /** True from a track switch until the new source actually starts playing — the
      *  progress bars show a moving "loading" sweep while the (possibly async) source
      *  resolves. Cleared by the backend's onStarted, or on a failed/absent url. */
@@ -467,6 +473,7 @@ public final class PlayerController {
         // tracks fall through to autoAdvance.
         backend.setOnError(() -> onMain(this::onPlaybackError));
         worker.submit(this::loadSearchHistory);
+        loadLyricOffsets();
         songMetaIndex.load();
         playlistCacheIndex.load();
         loadQueue();
@@ -680,6 +687,19 @@ public final class PlayerController {
 
     public void setLyricOffsetPanelOpen(boolean open) {
         lyricOffsetPanelOpen.set(open);
+    }
+
+    /** Set from the fixed-step lyric-page slider. */
+    public void setLyricOffset(int valueMs) {
+        Track track = currentTrack();
+        if (track == null) return;
+        int snapped = Math.round(valueMs / 50f) * 50;
+        setCurrentLyricOffset(track, Math.max(-5000, Math.min(5000, snapped)));
+    }
+
+    public void resetLyricOffset() {
+        Track track = currentTrack();
+        if (track != null) setCurrentLyricOffset(track, 0);
     }
 
     /** LyricOverlay.qml's manual lyrics/cover switch — see {@link #coverModeManual}. */
@@ -1390,6 +1410,7 @@ public final class PlayerController {
         final int idx = i;
         final Track t = queue.get(i);
         post(() -> {
+            applyTrackLyricOffset(t);
             index.set(idx);
             title.set(orEmpty(t.title));
             artist.set(orEmpty(t.artist));
@@ -2387,6 +2408,7 @@ public final class PlayerController {
                 final int finalIdx = idx;
                 final Track cur = loaded.get(idx);
                 post(() -> {
+                    applyTrackLyricOffset(cur);
                     queueTracks.set(snap);
                     index.set(finalIdx);
                     title.set(cur.title != null ? cur.title : "");
@@ -2413,6 +2435,79 @@ public final class PlayerController {
             }
         } catch (Throwable e) {
             Logger.warn("loadQueue failed: {}", e.getMessage());
+        }
+    }
+
+    private void applyTrackLyricOffset(Track track) {
+        String key = lyricOffsetKey(track);
+        Integer saved = key != null ? lyricOffsets.get(key) : null;
+        int value = saved != null ? saved : 0;
+        lyricOffsetMs.set(value);
+        LyricConfig.instance.offsetMs.setValue(value);
+    }
+
+    private void setCurrentLyricOffset(Track track, int value) {
+        String key = lyricOffsetKey(track);
+        if (key == null) return;
+        if (value == 0) lyricOffsets.remove(key);
+        else lyricOffsets.put(key, value);
+        lyricOffsetMs.set(value);
+        LyricConfig.instance.offsetMs.setValue(value);
+        Long pos = positionMs.peek();
+        updateLyricIndex((pos != null ? pos : 0L) - value);
+        worker.submit(this::saveLyricOffsets);
+    }
+
+    private static String lyricOffsetKey(Track track) {
+        if (track == null || track.source == null) return null;
+        if (track.source == Track.Source.NETEASE && track.neteaseId != 0)
+            return "netease:" + track.neteaseId;
+        if (track.source == Track.Source.CUSTOM_API
+                && track.customId != null && !track.customId.isEmpty())
+            return "custom:" + track.customId;
+        if (track.source == Track.Source.LOCAL) {
+            String source = track.contentUri != null && !track.contentUri.isEmpty()
+                    ? track.contentUri : track.filePath;
+            if (source != null && !source.isEmpty()) return "local:" + source;
+        }
+        return null;
+    }
+
+    private void loadLyricOffsets() {
+        try {
+            java.io.File file = new java.io.File(
+                    dev.t1m3.qplayer.store.AppDirs.base(), "lyric_offsets.json");
+            if (!file.isFile()) return;
+            String json = new String(java.nio.file.Files.readAllBytes(file.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            JsonObject root = new JsonParser().parse(json).getAsJsonObject();
+            synchronized (lyricOffsets) {
+                lyricOffsets.clear();
+                for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
+                    int value = Math.max(-5000, Math.min(5000, entry.getValue().getAsInt()));
+                    if (value != 0) lyricOffsets.put(entry.getKey(), value);
+                }
+            }
+        } catch (Throwable e) {
+            Logger.warn("load lyric offsets failed: {}", e.getMessage());
+        }
+    }
+
+    private void saveLyricOffsets() {
+        try {
+            JsonObject root = new JsonObject();
+            synchronized (lyricOffsets) {
+                for (Map.Entry<String, Integer> entry : lyricOffsets.entrySet())
+                    root.addProperty(entry.getKey(), entry.getValue());
+            }
+            java.io.File file = new java.io.File(
+                    dev.t1m3.qplayer.store.AppDirs.base(), "lyric_offsets.json");
+            java.io.File parent = file.getParentFile();
+            if (parent != null) parent.mkdirs();
+            java.nio.file.Files.write(file.toPath(), root.toString().getBytes(
+                    java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable e) {
+            Logger.warn("save lyric offsets failed: {}", e.getMessage());
         }
     }
 
@@ -3300,6 +3395,9 @@ public final class PlayerController {
         // Capture the final position before release() tears down the backend (a
         // released MediaPlayer's position() is undefined/0).
         saveSessionState();
+        // A just-clicked lyric adjustment may still be queued behind network work;
+        // persist the current in-memory map synchronously before stopping the worker.
+        saveLyricOffsets();
         backend.release();
         worker.shutdownNow();
         customWorker.shutdownNow();

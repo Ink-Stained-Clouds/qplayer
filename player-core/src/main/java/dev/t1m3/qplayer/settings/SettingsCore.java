@@ -412,7 +412,6 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         c.glow.setValue(bool("lyricGlow"));
         c.linearAnimForPlainLrc.setValue(bool("lyricLinearAnim"));
         c.edgeBlur.setValue(bool("lyricEdgeBlur"));
-        c.offsetMs.setValue(intOf("lyricOffsetMs"));
     }
 
     // ---- fonts --------------------------------------------------------------

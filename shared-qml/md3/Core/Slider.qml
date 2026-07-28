@@ -27,6 +27,9 @@ Item {
     signal moved()
     signal firstMoved()
     signal secondMoved()
+    /** Emitted once when a pointer edit ends; useful when live writes would trigger
+     *  expensive or re-entrant state updates in the value's owner. */
+    signal editingFinished()
     
     implicitWidth: 200
     implicitHeight: 44 // Touch target height
@@ -48,6 +51,22 @@ Item {
     // Logic for interacting with handles
     property int _draggingHandle: 0 // 0: None, 1: First/Value, 2: Second
     property int _closestHandle: 1 // 1 or 2, determines which handle is targeted by hover/click
+    property bool _proxyDragActive: false
+    property real _proxyDragStartValue: 0
+
+    // Pointer motion while pressed is tracked through Drag.target rather than the
+    // MouseArea positionChanged signal. This is qml4j's engine-level drag path and
+    // remains active independently of whether the cursor is still over the thumb.
+    Item {
+        id: dragProxy
+        x: 0
+        visible: false
+        onXChanged: {
+            if (!control._proxyDragActive || control.rangeMode) return
+            var usable = Math.max(1, trackContainer.availableWidth)
+            control.setValue(control._proxyDragStartValue + x / usable * control._range)
+        }
+    }
 
     function setValue(v) {
         var newValue = Math.max(from, Math.min(to, v))
@@ -99,7 +118,7 @@ Item {
         var relativeX = mouseX - padding
         var pos = Math.max(0, Math.min(1, relativeX / availableWidth))
         var rawValue = from + (pos * _range)
-        
+
         if (!rangeMode) {
             setValue(rawValue)
         } else {
@@ -378,20 +397,40 @@ Item {
         hoverEnabled: true
         enabled: control.enabled
         preventStealing: true
+        drag.target: dragProxy
+        // qml4j Drag.axis is a String property ("XAxis"/"YAxis"/"XAndYAxis");
+        // the Qt-style Drag.XAxis enum evaluates to a Long and crashes applyDrag.
+        drag.axis: "XAxis"
+        drag.minimumX: -100000
+        drag.maximumX: 100000
         
         onPressed: (mouse) => {
             var localPos = trackContainer.mapFromItem(mouseArea, mouse.x, mouse.y)
             control.updateFromMouse(localPos.x)
+            if (!control.rangeMode) {
+                control._proxyDragStartValue = control.value
+                dragProxy.x = 0
+                control._proxyDragActive = true
+            }
         }
         
         onReleased: {
+            control._proxyDragActive = false
+            dragProxy.x = 0
+            control._draggingHandle = 0
+            control.editingFinished()
+        }
+
+        onCanceled: {
+            control._proxyDragActive = false
+            dragProxy.x = 0
             control._draggingHandle = 0
         }
-        
+
         onPositionChanged: (mouse) => {
             var localPos = trackContainer.mapFromItem(mouseArea, mouse.x, mouse.y)
             
-            if (pressed) {
+            if (pressed && control.rangeMode) {
                 control.updateFromMouse(localPos.x)
             } else {
                 // Update closest handle for hover effect
@@ -415,4 +454,3 @@ Item {
         }
     }
 }
-

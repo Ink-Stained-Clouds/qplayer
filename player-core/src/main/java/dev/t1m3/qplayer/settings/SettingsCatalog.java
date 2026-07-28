@@ -120,11 +120,6 @@ public final class SettingsCatalog {
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
                 .desc("动态流动 / 静态(渲染一次,更省电)")
                 .build());
-        // Adjusted from the lyric page's own control, not from this page.
-        out.add(SettingSpec.hidden("lyricOffsetMs", SettingSpec.STEPPER, 0)
-                .range(-5000, 5000, 50)
-                .build());
-
         // ---- 本地 -----------------------------------------------------------
         out.add(SettingSpec.stepper("maxCacheSizeMB", LOCAL, "最大缓存", 200, 50, 1024, 50)
                 .unit(" MB").group("cache")
