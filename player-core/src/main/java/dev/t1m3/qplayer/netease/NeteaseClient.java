@@ -1003,25 +1003,30 @@ public final class NeteaseClient {
     /**
      * Report a play to netease's private {@code feedback/weblog} endpoint — the
      * same call the official web/desktop client fires on every track change, and
-     * the exact payload shape a maintained community "听歌 300 首" leveling bot
-     * (chaunsin/netease-cloud-music, {@code internal/ncmctl/scrobble.go}) uses to
-     * reliably bump an account's server-side play count, confirming this shape
-     * genuinely registers with netease's stats/leveling pipeline. {@code
-     * sourceId} is the playlist/album the track was played from (0 if none);
-     * {@code seconds} is how long it was actually listened to; {@code end} is
-     * {@code "playend"} for a natural finish or {@code "ui"} for a manual
-     * skip/stop, mirroring the two reasons the official client itself sends.
+     * the exact payload shape three independent community references
+     * (chaunsin/netease-cloud-music's leveling bot, and two separate
+     * NeteaseCloudMusicApi-derived {@code scrobble.js}/{@code weblog.js} modules)
+     * all converge on, confirming it genuinely registers with netease's
+     * stats/leveling pipeline. {@code sourceId} is the playlist/album the track
+     * was played from (0 if none); {@code seconds} is how long it was actually
+     * listened to; {@code end} is {@code "playend"} for a natural finish or
+     * {@code "ui"} for a manual skip/stop, mirroring the two reasons the
+     * official client itself sends.
      *
-     * <p><b>Does not currently make a play show up in {@link #recentPlayed}</b>:
-     * this endpoint returning success (code 200, {@code "success"}) only confirms
-     * the log entry was accepted, not that it passed whatever validates a play's
-     * legitimacy for the recently-played list — repeated reports for real tracks
-     * played through qplayer were accepted here but never appeared there, while
-     * genuine plays from the official mobile app (carrying real device/session
-     * identity) do. Kept anyway since the stats/leveling effect is real and
-     * confirmed; closing the recently-played gap would need replicating a real
-     * client's device fingerprint, not attempted. Best-effort: swallows failures
-     * so a flaky report never disrupts playback.
+     * <p><b>Does not currently make a play show up in {@link #recentPlayed}</b>,
+     * confirmed with both weapi and eapi (mobile-transport, full simulated
+     * iPhone device header) transports across ~30 real plays over roughly an
+     * hour — identical result either way: code 200 {@code "success"}, zero
+     * effect on the recently-played list. Genuine plays from the official
+     * mobile app (multiTerminalInfo naming a real device) do show up. Likely
+     * cause: {@code recentPlayed()}'s validation needs a real mobile-session
+     * auth token (a distinct {@code MUSIC_A} cookie, only obtainable through an
+     * actual phone/SMS login) that qplayer's QR-login flow never acquires — not
+     * something a device-header simulation on top of the existing MUSIC_U
+     * session can fake. Kept anyway since the stats/leveling effect is real;
+     * closing the recently-played gap would need qplayer to support a different
+     * login flow entirely, out of scope here. Best-effort: swallows failures so
+     * a flaky report never disrupts playback.
      */
     public void scrobble(long songId, long sourceId, long seconds, String end) {
         if (!isLoggedIn()) return;
@@ -1044,8 +1049,7 @@ public final class NeteaseClient {
             logs.add(entry);
             Map<String, Object> body = new HashMap<>();
             body.put("logs", logs.toString());
-            JsonObject resp = weapiJson("feedback/weblog", body, false);
-            Logger.info("scrobble {} ({}s, end={}) -> {}", songId, seconds, end, resp);
+            weapiJson("feedback/weblog", body, false);
         } catch (IOException e) {
             Logger.warn("scrobble failed for song {}: {}", songId, e.getMessage());
         }

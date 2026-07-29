@@ -92,6 +92,19 @@ public final class PlayerController {
         t.setDaemon(true);
         return t;
     });
+    // Bulk, non-urgent disk-cache downloads (full audio files, thumbnails) get their
+    // own queue for the exact same head-of-line-blocking reason customWorker above
+    // was split off: a full-track FLAC download is tens of MB and can take many
+    // seconds, and every track played queues one right after it starts. Anything
+    // that shares `worker` with these — a quick loadRecent()/search() the user is
+    // actively waiting on — would otherwise sit stuck behind however many downloads
+    // happened to be queued first, looking like the feature itself is slow/broken
+    // when it's actually just waiting in line.
+    private final ExecutorService cacheWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "qplayer-cache");
+        t.setDaemon(true);
+        return t;
+    });
 
     /** Unified disk cache (audio / lyrics / images) with LRU eviction. */
     public final DiskCache diskCache = new DiskCache(200); // default 200 MB
@@ -2071,7 +2084,7 @@ public final class PlayerController {
         // it later, regardless of whether it was ever a search result itself
         // (played from a playlist/recommendation/liked list, say).
         songMetaIndex.upsert(nid, t.title, t.artist, t.album, t.coverUrl, t.durationMs);
-        worker.submit(() -> {
+        cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
             songMetaIndex.save();
         });
@@ -2088,15 +2101,15 @@ public final class PlayerController {
      *  disk-side cap keeps total thumbnail storage/count bounded regardless of
      *  how many different playlists get browsed over time. Idempotent and safe
      *  to call from any thread — only the actual download runs on
-     *  {@link #worker}. Called from {@link #openPlaylist} for every track in a
-     *  freshly (re)opened playlist, and from {@link #cacheAudioAsync} / playAt()'s
+     *  {@link #cacheWorker}. Called from {@link #openPlaylist} for every track in
+     *  a freshly (re)opened playlist, and from {@link #cacheAudioAsync} / playAt()'s
      *  already-cached fast path so a track actually played still gets one even
      *  if it was evicted (or never browsed) since. */
     private void cacheThumb64Async(String coverUrl) {
         if (coverUrl == null || coverUrl.isEmpty()) return;
         String thumb64 = thumbUrl(coverUrl, "64");
         if (diskCache.hasThumb64(thumb64)) return;
-        worker.submit(() -> diskCache.cacheThumb64(thumb64));
+        cacheWorker.submit(() -> diskCache.cacheThumb64(thumb64));
     }
 
     private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs) {
@@ -3429,6 +3442,7 @@ public final class PlayerController {
         backend.release();
         worker.shutdownNow();
         customWorker.shutdownNow();
+        cacheWorker.shutdownNow();
     }
 
     // --- Disk cache management (called from QML settings page) -------------
