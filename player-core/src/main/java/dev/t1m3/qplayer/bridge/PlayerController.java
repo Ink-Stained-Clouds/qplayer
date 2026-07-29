@@ -2561,7 +2561,7 @@ public final class PlayerController {
                 List<String> hot = netease.searchHot();
                 post(() -> hotSearches.set(hot));
             } catch (Throwable e) {
-                Logger.warn("loadHotSearches failed: {}", e.getMessage());
+                Logger.warn("loadHotSearches failed: {}", e.toString());
             }
         });
     }
@@ -2848,7 +2848,7 @@ public final class PlayerController {
                 }
                 post(() -> recommendPlaylists.set(picks));
             } catch (Throwable e) {
-                Logger.warn("personalized playlists failed: {}", e.getMessage());
+                Logger.warn("personalized playlists failed: {}", e.toString());
             }
             if (netease.isLoggedIn()) {
                 try {
@@ -2857,7 +2857,7 @@ public final class PlayerController {
                     buildSongThumbs(daily, "128");
                     post(() -> recommendations.set(daily));
                 } catch (Throwable e) {
-                    Logger.warn("daily recommend failed: {}", e.getMessage());
+                    Logger.warn("daily recommend failed: {}", e.toString());
                 }
             }
             post(() -> homeLoading.set(false));
@@ -3386,7 +3386,7 @@ public final class PlayerController {
                     refreshLiked();
                 }
             } catch (Throwable e) {
-                Logger.warn("refreshLogin failed: {}", e.getMessage());
+                Logger.warn("refreshLogin failed: {}", e.toString());
                 // Offline (or the API's just down) but cookies say we were logged in
                 // last session: don't fall back to a logged-out UI just because the
                 // live refresh couldn't reach the network -- still surface it as

@@ -1013,20 +1013,39 @@ public final class NeteaseClient {
      * {@code "ui"} for a manual skip/stop, mirroring the two reasons the
      * official client itself sends.
      *
-     * <p><b>Does not currently make a play show up in {@link #recentPlayed}</b>,
-     * confirmed with both weapi and eapi (mobile-transport, full simulated
-     * iPhone device header) transports across ~30 real plays over roughly an
-     * hour — identical result either way: code 200 {@code "success"}, zero
-     * effect on the recently-played list. Genuine plays from the official
-     * mobile app (multiTerminalInfo naming a real device) do show up. Likely
-     * cause: {@code recentPlayed()}'s validation needs a real mobile-session
-     * auth token (a distinct {@code MUSIC_A} cookie, only obtainable through an
-     * actual phone/SMS login) that qplayer's QR-login flow never acquires — not
-     * something a device-header simulation on top of the existing MUSIC_U
-     * session can fake. Kept anyway since the stats/leveling effect is real;
-     * closing the recently-played gap would need qplayer to support a different
-     * login flow entirely, out of scope here. Best-effort: swallows failures so
-     * a flaky report never disrupts playback.
+     * <p><b>Does not currently make a play show up in {@link #recentPlayed}</b>.
+     * Investigated thoroughly (2026-07-29) before giving up on it:
+     * <ul>
+     *   <li>weapi and eapi (mobile transport, full simulated iPhone device
+     *       header: deviceId/appver/osver) — identical result, ~30 real plays
+     *       over roughly an hour: code 200 {@code "success"}, zero effect.</li>
+     *   <li>xeapi (the newest mobile transport, already used for {@link #like}
+     *       and playlist subscribe once eapi stopped clearing risk control) —
+     *       same result again.</li>
+     *   <li>Registering this install for a real, server-issued {@code MUSIC_A}
+     *       anonymous-session cookie via {@code weapi/register/anonimous} on
+     *       {@code interface.music.163.com}, tried twice: the first attempt's
+     *       encoding (ported from a JS reference) came back {@code
+     *       {"code":400}}; cross-checked byte-for-byte against
+     *       chaunsin/netease-cloud-music's Go implementation and fixed three
+     *       real bugs (XOR must hash the deviceId's raw UTF-8 bytes directly,
+     *       not re-UTF-8-encode the XOR result as text; both base64 steps must
+     *       be URL-safe, not standard; the host is interface.music.163.com, not
+     *       music.163.com) — the corrected version then hung indefinitely on a
+     *       live test (no response, no timeout, blocking every other netease
+     *       call behind the same synchronized lock) rather than failing
+     *       cleanly, worse than not having it at all. Reverted both rounds.</li>
+     * </ul>
+     * Genuine plays from the official mobile app (their own
+     * {@code multiTerminalInfo} naming a real device) do show up in
+     * {@link #recentPlayed}, so whatever gates entry is a real, deliberate
+     * check — not a missing header or transport quirk client-side code can
+     * route around. Kept anyway since the stats/leveling effect is real and
+     * confirmed (three independent community references converge on this
+     * exact payload shape for that purpose); closing the recently-played gap
+     * specifically would need something qplayer doesn't have any way to
+     * produce from here. Best-effort: swallows failures so a flaky report
+     * never disrupts playback.
      */
     public void scrobble(long songId, long sourceId, long seconds, String end) {
         if (!isLoggedIn()) return;
