@@ -216,13 +216,19 @@ Item {
                 }
             }
 
-            // Trailing Icon / Password Toggle
+            // Trailing Icon / Password Toggle / Clear
             Item {
-                visible: control.trailingIcon !== "" || control.isPassword
+                // Auto "clear text" (×), MD3's own recommendation for a text field
+                // with content: only when nothing else already claims this slot
+                // (a caller-supplied trailingIcon, or the password visibility
+                // toggle) and there's something to clear.
+                property bool showClear: control.trailingIcon === "" && !control.isPassword
+                        && control.hasContent && !control.readOnly && control.enabled
+                visible: control.trailingIcon !== "" || control.isPassword || showClear
                 Layout.preferredWidth: 24
                 Layout.preferredHeight: 24
                 Layout.leftMargin: 16
-                
+
                 // Custom Trailing Icon
                 Text {
                     text: control.trailingIcon
@@ -236,7 +242,7 @@ Item {
 
                     MouseArea {
                         anchors.fill: parent
-                        // Only clickable if it's meant to be interactive? 
+                        // Only clickable if it's meant to be interactive?
                         // MD3 doesn't specify strictly, but clear buttons usually are.
                         // Increase touch target slightly
                         anchors.margins: -12
@@ -254,7 +260,19 @@ Item {
                     onClicked: control.passwordVisible = !control.passwordVisible
                     type: "standard" // Use standard (no background) for icon button
                 }
-                
+
+                // Clear (auto)
+                IconButton {
+                    visible: parent.showClear
+                    icon: "close"
+                    anchors.centerIn: parent
+                    type: "standard"
+                    onClicked: {
+                        textInput.text = ""
+                        textInput.forceActiveFocus()
+                    }
+                }
+
                 // Error Icon (if error and no other trailing icon/password)
                 Text {
                     text: "error"
