@@ -161,12 +161,37 @@ Item {
         // Connections removed, handler moved to root
 
         
-        // Wait for layout to settle
+        // Wait for layout to settle. A single fixed-delay shot raced the very first
+        // app launch (QML still compiling/laying out its first frame alongside
+        // everything else starting up) and lost -- the tab row's width was still 0
+        // at the 10ms mark, so the indicator computed a 0-width rect and never
+        // became visible until the next manual tab switch. Retry instead of
+        // trusting one delay: keep ticking until the current tab actually has a
+        // measured width, with a capped number of attempts so a genuinely empty
+        // model doesn't spin forever.
         Timer {
-            interval: 10
+            id: indicatorSettleTimer
+            interval: 50
             running: true
-            repeat: false
-            onTriggered: tabBar.updateIndicator(true)
+            repeat: true
+            property int attempts: 0
+            onTriggered: {
+                var currentTab = tabRepeater.itemAt(root.currentIndex)
+                attempts++
+                if (currentTab && currentTab.width > 0) {
+                    tabBar.updateIndicator(true)
+                    running = false
+                } else if (attempts >= 60) {
+                    // Genuinely gave up (60 * 50ms = 3s) -- leave the timer running
+                    // rather than settling for a no-op updateIndicator() call that
+                    // would otherwise leave the indicator permanently stuck at 0
+                    // width until the next real tab switch. Reset the counter and
+                    // keep trying at the same cadence; harmless once the row is
+                    // actually laid out, since the very next tick then succeeds
+                    // and stops the timer for good.
+                    attempts = 0
+                }
+            }
         }
         
         // Bottom border
