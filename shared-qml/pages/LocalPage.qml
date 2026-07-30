@@ -8,10 +8,14 @@ import "../components"
 // group-filter toolbar. Playback deliberately still plays through the ORIGINAL
 // scan-order queue (player.play(i) indexes into player.tracks/library) rather
 // than a reordered queue matching the current sort/filter — tapping a track
-// resolves back to its original index by filePath (unique per local file) — so
-// "now playing" highlighting also only lines up while the default (sortMode 0,
-// groupMode 0) view is showing; VirtualSongList's highlightCurrent is switched
-// off for any other view rather than risk highlighting the wrong row.
+// resolves back to its original index by filePath (unique per local file).
+// "Now playing" highlighting matches by that same filePath (VirtualSongList's
+// highlightByFilePath) rather than by row index, since this list is always the
+// full library regardless of what's actually queued/playing — an index match
+// alone would coincidentally light up an unrelated row whenever something
+// else (a netease playlist, search results, ...) happens to be playing at the
+// same position. Comparing by filePath also means it stays correct under any
+// sort/filter, not just the default view.
 //
 // Plain tap-chips rather than a ComboBox/dropdown throughout: this app has no
 // existing QML using a signal with parameters (onActivated(index) etc.), so
@@ -77,10 +81,6 @@ Item {
         }
         return list;
     }
-    // Only the untouched default view lines up 1:1 with player.tracks' indices —
-    // see the file-level comment.
-    property bool isDefaultView: sortMode === 0 && groupMode === 0
-
     ColumnLayout {
         anchors.fill: parent
         spacing: 8
@@ -190,7 +190,8 @@ Item {
             // builds nothing.
             list: page.visible ? page.displayTracks : null
             isLocal: true
-            highlightCurrent: page.isDefaultView
+            highlightCurrent: true
+            highlightByFilePath: true
             // Long-press → add/remove this file from the custom playlist (issue #15's
             // local-favorites ask) — see SongContextMenu's filePath branch.
             songMenu: true

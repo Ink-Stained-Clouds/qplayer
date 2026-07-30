@@ -298,6 +298,13 @@ public final class PlayerController {
     public final Property<Long> durationMs = new Property<>(0L);
     public final Property<Long> positionMs = new Property<>(0L);
     public final Property<Integer> index = new Property<>(-1);
+    /** Playing track's local filePath, or "" when the current track isn't a LOCAL
+     *  one. {@link #index} alone isn't enough to tell a local list's row it's the
+     *  one playing: it's a position in whatever queue is currently loaded (a
+     *  netease playlist, search results, ...), which coincidentally can equal a
+     *  given row's position in an unrelated local-library view. Comparing by
+     *  filePath instead of index sidesteps that — see VirtualSongList.highlightByFilePath. */
+    public final Property<String> currentFilePath = new Property<>("");
     public final Property<Float> volume = new Property<>(0.8f);
     public final Property<Boolean> currentLiked = new Property<>(false);
     /** Whether the current track can be liked — netease only; local files have no
@@ -1065,6 +1072,7 @@ public final class PlayerController {
         if (queue.isEmpty()) {
             playIndex = -1;
             index.set(-1);
+            currentFilePath.set("");
             return;
         }
         if (i < cur) {
@@ -1452,6 +1460,7 @@ public final class PlayerController {
         post(() -> {
             applyTrackLyricOffset(t);
             index.set(idx);
+            currentFilePath.set(t.source == Track.Source.LOCAL && t.filePath != null ? t.filePath : "");
             title.set(orEmpty(t.title));
             artist.set(orEmpty(t.artist));
             album.set(orEmpty(t.album));
@@ -2465,6 +2474,7 @@ public final class PlayerController {
                     applyTrackLyricOffset(cur);
                     queueTracks.set(snap);
                     index.set(finalIdx);
+                    currentFilePath.set(cur.source == Track.Source.LOCAL && cur.filePath != null ? cur.filePath : "");
                     title.set(cur.title != null ? cur.title : "");
                     artist.set(cur.artist != null ? cur.artist : "");
                     album.set(cur.album != null ? cur.album : "");

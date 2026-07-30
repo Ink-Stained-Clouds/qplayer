@@ -26,6 +26,13 @@ Flickable {
     // (isLocal) without actually being the live queue (e.g. the custom-playlist tab),
     // so "now playing" highlighting needs its own opt-out for those.
     property bool highlightCurrent: true
+    // player.index is a position in whatever queue is currently loaded, not in
+    // THIS list -- for a list that isn't guaranteed to BE the live queue (e.g.
+    // LocalPage's full library view, always visible regardless of what's actually
+    // playing), matching by index alone can coincidentally light up an unrelated
+    // row. Set true to match by modelData.filePath against player.currentFilePath
+    // instead -- correct for any local-file list, live queue or not.
+    property bool highlightByFilePath: false
     property bool removable: false
     // Long-press menu opt-in for the rows (netease-backed lists set songMenu true).
     // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
@@ -83,7 +90,9 @@ Flickable {
                 lazyLoad: true
                 flickContentY: view.contentY
                 flickHeight: view.height
-                highlighted: view.isLocal && view.highlightCurrent && index === player.index
+                highlighted: view.isLocal && view.highlightCurrent && (view.highlightByFilePath
+                    ? (player.currentFilePath !== "" && modelData.filePath === player.currentFilePath)
+                    : index === player.index)
                 removable: view.removable
                 song: view.songMenu ? modelData : null
                 menuEnabled: view.songMenu
