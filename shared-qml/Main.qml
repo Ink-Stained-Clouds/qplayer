@@ -26,7 +26,7 @@ Rectangle {
     // owner repeated right-clicks can leave every row's overlay open at once.
     property var activeMenu: null
 
-    property var titles: ["推荐", "搜索", "我的", "最近", "本地"]
+    property var titles: ["推荐", "搜索", "我的", "本地"]
 
     // Responsive breakpoints (MD3): compact < 600, medium 600–839, expanded ≥ 840.
     // The wide layout (a NavigationRail on the left instead of the bottom bar) is
@@ -40,7 +40,6 @@ Rectangle {
         { icon: "recommend",     text: "推荐" },
         { icon: "search",        text: "搜索" },
         { icon: "library_music", text: "我的" },
-        { icon: "history",       text: "最近" },
         { icon: "folder",        text: "本地" }
     ]
 
@@ -96,7 +95,6 @@ Rectangle {
         if (idx === app.page) return;
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
-        else if (idx === 3) player.loadRecent();
         pageAnim.restart();
     }
 
@@ -259,14 +257,9 @@ Rectangle {
                 onOpenPlaylist: { player.openPlaylist(library.pendingPlaylist.id); app.openOverlay("detail") }
                 onRequestLogin: app.loginOpen = true
             }
-            RecentPage {
-                anchors.fill: parent
-                visible: app.page === 3
-                onRequestLogin: app.loginOpen = true
-            }
             LocalPage {
                 anchors.fill: parent
-                visible: app.page === 4
+                visible: app.page === 3
             }
 
             // Overlays animate in: detail drills in from the right, queue and

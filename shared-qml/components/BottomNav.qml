@@ -1,7 +1,7 @@
 import QtQuick
 import md3.Core
 
-// MD3-style bottom navigation bar (phone): five items spread evenly, each with
+// MD3-style bottom navigation bar (phone): items spread evenly, each with
 // an animated selection pill + ripple. Parameterless signal + property payload
 // (qml4j can't read cross-file signal params). Absolute positioning, not a
 // RowLayout: this bar is always visible and the 5x/s play clock forces a
@@ -17,7 +17,6 @@ Rectangle {
         { icon: "recommend",     label: "推荐" },
         { icon: "search",        label: "搜索" },
         { icon: "library_music", label: "我的" },
-        { icon: "history",       label: "最近" },
         { icon: "folder",        label: "本地" }
     ]
 
@@ -29,7 +28,7 @@ Rectangle {
         anchors.fill: parent
         anchors.topMargin: 8
         anchors.bottomMargin: 8
-        property real itemW: width / 5
+        property real itemW: width / bar.items.length
 
         Repeater {
             model: bar.items
