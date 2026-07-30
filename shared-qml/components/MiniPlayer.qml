@@ -139,6 +139,14 @@ Rectangle {
         radius: 8
         // Prefer the on-disk cached cover (shows offline) over the network url.
         source: player.coverPath !== "" ? player.coverPath : player.coverUrl
+
+        // Tapping the cover itself opens the lyric page too — the title/artist
+        // MouseArea below only spans cover.right onward, so the cover was dead
+        // space on its own.
+        MouseArea {
+            anchors.fill: parent
+            onClicked: mini.lyricsRequested()
+        }
     }
 
     // Cover + title/artist: tap anywhere here to open the lyric page.
