@@ -45,6 +45,12 @@ public final class PlaylistCacheIndex {
         public String coverUrl;
         public int trackCount;
         public List<NeteaseSong> songs = new ArrayList<>();
+        /** True only for playlists that actually appeared in the signed-in user's
+         *  own 我的列表 (set from {@code loadMyPlaylists}). A playlist merely opened
+         *  from elsewhere (推荐, search, a shared link) still gets upserted here so
+         *  its song list/cover survive offline, but must never leak into the
+         *  offline substitute for 我的 — see {@code offlineMyPlaylistsFallback}. */
+        public boolean mine;
     }
 
     private static final int MAX_ENTRIES = 300;
@@ -79,8 +85,10 @@ public final class PlaylistCacheIndex {
 
     /** Record/refresh a playlist's summary fields and (optionally) its song
      *  list. Pass {@code songs} null from a summary-only refresh (loadMyPlaylists)
-     *  to leave a previously-cached song list untouched. */
-    public void upsert(long id, String name, String coverUrl, int trackCount, List<NeteaseSong> songs) {
+     *  to leave a previously-cached song list untouched. {@code mine} marks this
+     *  as one of the signed-in user's own playlists; once set it's sticky (a later
+     *  {@code openPlaylist} upsert with {@code mine=false} must not clear it). */
+    public void upsert(long id, String name, String coverUrl, int trackCount, List<NeteaseSong> songs, boolean mine) {
         if (id == 0 || name == null || name.isEmpty()) return;
         synchronized (byId) {
             Cached e = byId.get(id);
@@ -92,6 +100,7 @@ public final class PlaylistCacheIndex {
             e.name = name;
             e.coverUrl = coverUrl;
             e.trackCount = trackCount;
+            e.mine = e.mine || mine;
             if (songs != null) e.songs = stripThumbs(songs);
         }
         dirty = true;

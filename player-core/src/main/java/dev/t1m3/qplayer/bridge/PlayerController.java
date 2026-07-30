@@ -2112,6 +2112,19 @@ public final class PlayerController {
         cacheWorker.submit(() -> diskCache.cacheThumb64(thumb64));
     }
 
+    /** Same idea as {@link #cacheThumb64Async}, but at 512 instead of 64 —
+     *  a playlist's own cover is shown at a much larger size than a track row's
+     *  (PlaylistCard tiles, the playlist-detail header), so a 64px cache fallback
+     *  looked visibly blurry next to the CDN image it was standing in for. Still
+     *  keyed by url (same DiskCache thumb64 sub-cache and file-count cap — the
+     *  size lives in the url's own ?param= query, not a separate cache dir). */
+    private void cachePlaylistCoverAsync(String coverUrl) {
+        if (coverUrl == null || coverUrl.isEmpty()) return;
+        String thumb = thumbUrl(coverUrl, "512");
+        if (diskCache.hasThumb64(thumb)) return;
+        cacheWorker.submit(() -> diskCache.cacheThumb64(thumb));
+    }
+
     private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs) {
         long songId = t.neteaseId;
         worker.submit(() -> {
@@ -2885,8 +2898,23 @@ public final class PlayerController {
                 List<NeteaseSong> songs = netease.playlistTracks(playlistId, 200);
                 fillMissingCovers(songs);
                 buildSongThumbs(songs, "128");
+                // Thumbnails are keyed by coverUrl, not by playlist, so a track already
+                // cached from being seen in another playlist is reused here rather than
+                // re-fetched over the network; getThumb64 also touches it, so a song
+                // that keeps showing up across playlists stays recently-used and
+                // survives THUMB64_MAX_COUNT eviction instead of aging out unnoticed.
+                for (NeteaseSong s : songs) {
+                    if (s.coverUrl == null || s.coverUrl.isEmpty()) continue;
+                    String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+                    if (localThumb != null) s.coverThumbPath = localThumb;
+                }
                 String name = detail != null ? detail.name : "";
-                String cover = detail != null
+                // Same cache-preference as loadMyPlaylists: this playlist's cover was
+                // very likely already 512-cached from appearing in 我的, so prefer
+                // that over the CDN url to survive a mid-session network drop.
+                String localCover = detail != null && detail.coverUrl != null
+                        ? diskCache.getThumb64(thumbUrl(detail.coverUrl, "512")) : null;
+                String cover = localCover != null ? localCover : detail != null
                         ? (detail.coverThumbPath != null ? detail.coverThumbPath : detail.coverUrl) : null;
                 boolean subscribed = detail != null && detail.subscribed;
                 boolean owned = detail != null && uid != 0 && detail.creatorUid == uid;
@@ -2900,8 +2928,14 @@ public final class PlayerController {
                     playlistDeletable.set(owned && favoritePid != 0L && playlistId != favoritePid);
                     playlistLoading.set(false);
                 });
+                // mine=false: opening a playlist (推荐, search, a shared link, or one of
+                // 我的 own) doesn't by itself prove membership in 我的 — only
+                // loadMyPlaylists's own enumeration does, and that upsert is sticky
+                // (see PlaylistCacheIndex.upsert), so an actually-owned playlist keeps
+                // its mine=true from there regardless of this call.
                 playlistCacheIndex.upsert(playlistId, name,
-                        detail != null ? detail.coverUrl : null, songs.size(), songs);
+                        detail != null ? detail.coverUrl : null, songs.size(), songs, false);
+                cachePlaylistCoverAsync(detail != null ? detail.coverUrl : null);
                 // One download per track (DiskCache's thumb64 count-cap bounds
                 // total storage/downloads over time, not this call).
                 for (NeteaseSong s : songs) cacheThumb64Async(s.coverUrl);
@@ -2930,7 +2964,7 @@ public final class PlayerController {
         }
         List<NeteaseSong> offline = new ArrayList<>(cached.songs.size());
         for (NeteaseSong s : cached.songs) offline.add(withLocalThumb(s));
-        String cover = cached.coverUrl != null ? diskCache.getThumb64(thumbUrl(cached.coverUrl, "64")) : null;
+        String cover = cached.coverUrl != null ? diskCache.getThumb64(thumbUrl(cached.coverUrl, "512")) : null;
         final String name = cached.name;
         post(() -> {
             if (currentPlaylistId != playlistId) return;
@@ -3008,12 +3042,18 @@ public final class PlayerController {
                 List<NeteasePlaylist> pls = netease.userPlaylists(uid, 100);
                 long favPid = 0L;
                 for (NeteasePlaylist p : pls) {
-                    p.coverThumbPath = thumbUrl(p.coverUrl, "512");
+                    // Prefer an already-cached thumbnail over the CDN url: a playlist
+                    // browsed before survives the network dropping mid-session without
+                    // needing an app restart to fall back to offlineMyPlaylistsFallback.
+                    // Playlist covers are cached at 512 (matches the online display size,
+                    // unlike the small per-track thumbnails) — see cachePlaylistCoverAsync.
+                    String local = diskCache.getThumb64(thumbUrl(p.coverUrl, "512"));
+                    p.coverThumbPath = local != null ? local : thumbUrl(p.coverUrl, "512");
                     p.owned = p.creatorUid == uid;
                     // The "我喜欢的音乐" default is the first playlist the user owns.
                     if (favPid == 0L && p.owned) favPid = p.id;
-                    playlistCacheIndex.upsert(p.id, p.name, p.coverUrl, p.trackCount, null);
-                    cacheThumb64Async(p.coverUrl);
+                    playlistCacheIndex.upsert(p.id, p.name, p.coverUrl, p.trackCount, null, true);
+                    cachePlaylistCoverAsync(p.coverUrl);
                 }
                 favoritePid = favPid;
                 playlistCacheIndex.save();
@@ -3037,13 +3077,17 @@ public final class PlayerController {
         if (cached.isEmpty()) return;
         List<NeteasePlaylist> offline = new ArrayList<>(cached.size());
         for (PlaylistCacheIndex.Cached e : cached) {
+            // playlistCacheIndex also holds playlists merely opened from 推荐/search/a
+            // shared link — those aren't actually part of 我的 and must not show up
+            // here just because their song list happened to get cached too.
+            if (!e.mine) continue;
             NeteasePlaylist p = new NeteasePlaylist();
             p.id = e.id;
             p.name = e.name;
             p.coverUrl = e.coverUrl;
             p.trackCount = e.trackCount;
             if (e.coverUrl != null && !e.coverUrl.isEmpty()) {
-                String local = diskCache.getThumb64(thumbUrl(e.coverUrl, "64"));
+                String local = diskCache.getThumb64(thumbUrl(e.coverUrl, "512"));
                 p.coverThumbPath = local != null ? local : "";
             }
             offline.add(p);
