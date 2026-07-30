@@ -69,14 +69,19 @@ Item {
             visible: query.text.length === 0
 
             property int rowH: 44
+            // Collapsed view stays short (a quick glance, not a full list); "展开更多"
+            // reveals the rest, up to however much PlayerController.HISTORY_MAX keeps.
+            property int collapsedCount: 5
             property int histCount: player.searchHistory
-                ? (player.searchHistory.length <= 10 || page.historyExpanded
-                   ? player.searchHistory.length : 10)
+                ? (player.searchHistory.length <= collapsedCount || page.historyExpanded
+                   ? player.searchHistory.length : collapsedCount)
                 : 0
             property int hotCount: player.hotSearches ? player.hotSearches.length : 0
             property bool hasHistory: player.searchHistory && player.searchHistory.length > 0
-            property bool showExpand: player.searchHistory
-                ? (player.searchHistory.length > 10 && !page.historyExpanded) : false
+            // Row shows either way once there's more than a collapsed screenful —
+            // "展开更多" while collapsed, "收起" once expanded.
+            property bool showExpandToggle: player.searchHistory
+                ? player.searchHistory.length > collapsedCount : false
 
             // section y-offsets (explicit, no Column)
             property int histHeaderY: hasHistory ? 16 : 0
@@ -84,7 +89,7 @@ Item {
             property int histRowsY: histHeaderY + histHeaderH
             property int histRowsH: histCount * rowH
             property int expandY: histRowsY + histRowsH
-            property int expandH: showExpand ? 40 : 0
+            property int expandH: showExpandToggle ? 40 : 0
             property int dividerY: expandY + expandH + (hasHistory && hotCount > 0 ? 8 : 0)
             property int dividerH: hasHistory && hotCount > 0 ? 1 : 0
             property int hotHeaderY: dividerY + dividerH + (hotCount > 0 ? 8 : 0)
@@ -187,20 +192,25 @@ Item {
                     }
                 }
 
-                // --- Expand button ---
+                // --- Expand / collapse button ---
                 Item {
                     x: 16; y: hotArea.expandY
                     width: hotArea.width - 32; height: hotArea.expandH
-                    visible: hotArea.showExpand
+                    visible: hotArea.showExpandToggle
 
                     Rectangle {
                         anchors.fill: parent; radius: 8
                         color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
                         Text {
                             anchors.centerIn: parent
-                            text: "展开更多"; font.pixelSize: 14; color: Theme.color.primary
+                            text: page.historyExpanded ? "收起" : "展开更多"
+                            font.pixelSize: 14; color: Theme.color.primary
                         }
-                        MouseArea { id: expandMA; anchors.fill: parent; onClicked: page.historyExpanded = true }
+                        MouseArea {
+                            id: expandMA
+                            anchors.fill: parent
+                            onClicked: page.historyExpanded = !page.historyExpanded
+                        }
                     }
                 }
 

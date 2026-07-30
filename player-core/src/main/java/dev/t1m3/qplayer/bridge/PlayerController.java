@@ -190,7 +190,7 @@ public final class PlayerController {
     }
 
     // --- Search history ---------------------------------------------------
-    private static final int HISTORY_MAX = 50;
+    private static final int HISTORY_MAX = 100;
     private final List<String> historyList = new ArrayList<>();
 
     // --- Search cache ------------------------------------------------------
