@@ -152,6 +152,14 @@ Rectangle {
         // beside the name (extended rail) on the same 200ms curve the rail's own
         // width animates with; the name itself just fades, so the two states
         // don't fight over the 80px collapsed width.
+        //
+        // The desktop custom title bar (TitleBar.qml, below) already draws this
+        // same icon+"QPlayer" mark once topInset reserves space for it -- showRailBrand
+        // hides the rail's own copy in that case so the two don't stack. Still need
+        // implicitHeight: 64 + settings.topInset unconditionally so the nav items
+        // themselves don't creep up under the title bar.
+        property bool showRailBrand: typeof hostWindow === "undefined"
+
         header: Item {
             implicitHeight: 64 + settings.topInset
 
@@ -162,6 +170,7 @@ Rectangle {
                 y: settings.topInset + 16
                 x: app.expanded ? 24 : (parent.width - width) / 2
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                visible: rail.showRailBrand
                 source: "app-icon.png"
                 // Decode straight to ~2x the drawn size. Without this the 256px
                 // source is resampled to 32 at draw time with plain bilinear
@@ -178,7 +187,7 @@ Rectangle {
                 anchors.leftMargin: 12
                 anchors.verticalCenter: railLogo.verticalCenter
                 text: "QPlayer"
-                opacity: app.expanded ? 1 : 0
+                opacity: (app.expanded && rail.showRailBrand) ? 1 : 0
                 visible: opacity > 0.01
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 color: Theme.color.onSurfaceColor
@@ -426,6 +435,29 @@ Rectangle {
     }
 
     Snackbar { id: snack }
+
+    // Windows-only custom title bar (see TitleBar.qml / WinFrameless.java /
+    // WindowChrome.java). hostWindow only exists as a QML context object on
+    // Windows desktop (DesktopWindow.ensureView), so this is absent everywhere
+    // else with zero further guarding needed. High z so its caption buttons stay
+    // click-priority-correct over any current/future full-window overlay -- the
+    // shared Theme.color.surface token underneath means z-order never affects
+    // visual seamlessness, only click routing.
+    TitleBar {
+        // A cold-start qml4j quirk (same general class as the Tabs indicator's
+        // documented cold-start settle issue) left this reserved top strip painted
+        // as only a few stray px on the very first frames, indefinitely, regardless
+        // of anchors vs plain x/y/width positioning -- reproduced down to a bare
+        // colored Rectangle with none of this component's own logic. The real fix
+        // is DesktopWindow.nudgeResizeOnce(), a one-time real WM_SIZE round trip
+        // right after the first frame shows, which reliably un-sticks it.
+        x: 0
+        y: 0
+        width: parent.width
+        visible: typeof hostWindow !== "undefined"
+        height: settings.topInset
+        z: 10000
+    }
 
     // --- debug log overlay ---------------------------------------------
     Rectangle {

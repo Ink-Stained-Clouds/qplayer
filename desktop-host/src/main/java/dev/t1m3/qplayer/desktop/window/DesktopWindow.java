@@ -13,6 +13,7 @@ import dev.t1m3.qplayer.util.Logger;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.glfw.GLFWImage;
+import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -42,6 +43,11 @@ public final class DesktopWindow {
 
     private static final int INITIAL_W = Integer.getInteger("qplayer.width", 1100);
     private static final int INITIAL_H = Integer.getInteger("qplayer.height", 720);
+    // Logical px. Matches IconButton's own implicitWidth/Height (40) so the custom
+    // caption buttons need no size override, while staying slimmer than the 64px
+    // TopAppBar so it doesn't read as a second toolbar. Windows-only (custom title
+    // bar); see applyWindowsDwmChrome/WinFrameless/WindowChrome.
+    private static final double TITLE_BAR_HEIGHT = 40.0;
 
     private final QmlEngine engine;
     private final String qmlSource;
@@ -81,6 +87,10 @@ public final class DesktopWindow {
     // recovery is left to the window manager's minimise (the taskbar icon is set).
     private volatile boolean trayAvailable;
     private Runnable firstFrameListener;
+    // Windows-only custom title bar. Both null on other platforms; a fresh
+    // WinFrameless is created per createWindow() call (see its own javadoc for why).
+    private WindowChrome windowChrome;
+    private WinFrameless frameless;
 
     public DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
                   PlayerController controller, SettingsCore settings) {
@@ -190,6 +200,7 @@ public final class DesktopWindow {
         v.setClipboard(new GlfwClipboard(this));
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);
+        if (windowChrome != null) v.context("hostWindow", windowChrome);
         loadFonts(v, resources);
         v.load(qmlSource);
         view = v;
@@ -357,6 +368,7 @@ public final class DesktopWindow {
                 GLFW.glfwFocusWindow(window);
             }
         });
+        if (windowChrome != null) postMainTask(this::nudgeResizeOnce);
         Runnable r = firstFrameListener;
         if (r != null) {
             firstFrameListener = null;
@@ -418,12 +430,90 @@ public final class DesktopWindow {
         // owns it. (For Vulkan there is no GL context at all.)
 
         setWindowIcon();
+        applyWindowsDwmChrome();
+        if (isWindows()) {
+            // windowChrome is reused across a Vulkan-fallback recreate (it only ever
+            // delegates through this DesktopWindow's own accessors, never captures a
+            // specific hwnd, so it stays valid) -- but frameless subclasses one
+            // specific hwnd's WNDPROC, so it MUST be a fresh instance every time
+            // createWindow() runs, or a stale one could receive a callback for an
+            // already-destroyed window.
+            if (windowChrome == null) windowChrome = new WindowChrome(this);
+            frameless = new WinFrameless();
+            frameless.install(this, TITLE_BAR_HEIGHT);
+            settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+        }
         cacheFramebufferAndScale();
         cacheRefreshRate();
         installCallbacks();
         input = new InputBridge(this);
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
+    }
+
+    /** dwmapi.dll's DwmSetWindowAttribute, used only for the two chrome attributes
+     *  below. Fully-qualified JNA types (matches this file's other rare/localized
+     *  JNA usage, {@link #readWindowsFontByFamily}) rather than adding top-level
+     *  imports for a single small interface. */
+    private interface Dwmapi extends com.sun.jna.win32.StdCallLibrary {
+        Dwmapi I = com.sun.jna.Native.load("dwmapi", Dwmapi.class,
+                com.sun.jna.win32.W32APIOptions.DEFAULT_OPTIONS);
+        int DwmSetWindowAttribute(com.sun.jna.Pointer hwnd, int dwAttribute,
+                com.sun.jna.Pointer pvAttribute, int cbAttribute);
+    }
+
+    private static final int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    private static final int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    private static final int DWMWCP_ROUND = 2;
+
+    /** Windows-only chrome polish. GLFW creates a plain top-level window with the
+     *  OS's default (light) frame; a Windows 11 desktop won't necessarily round its
+     *  corners on its own (the DWM heuristic that does this automatically doesn't
+     *  reliably trigger for a bare GL/Vulkan-surfaced window), and the frame stays
+     *  light even though the UI right below it is dark — both need an explicit
+     *  opt-in via DwmSetWindowAttribute. Read the theme once at window creation
+     *  (same "restart to apply" convention as the font selection above) rather than
+     *  wiring a live listener for a mid-session theme switch. Best-effort: any
+     *  failure (pre-Windows-11 corner attribute, no dwmapi, ...) just leaves the OS
+     *  default frame, so this never blocks startup. */
+    /** Windows-only cold-start workaround: the custom title bar's reserved top
+     *  strip (settings.topInset, already 40 before the QML view is ever built --
+     *  see createWindow()) renders as a few stray pixels on the very first frames
+     *  and stays that way indefinitely; reproduced down to a plain colored
+     *  Rectangle with no TitleBar-specific logic, so this is a qml4j cold-start
+     *  compositing quirk (same general class as the Tabs indicator's documented
+     *  cold-start settle issue), not a bug in this app's own bindings. A real
+     *  WM_SIZE round trip reliably un-sticks it (confirmed live), so nudge the
+     *  window size by 1px and back once, right after the first frame is shown --
+     *  imperceptible, and only runs when the custom title bar is actually active. */
+    private void nudgeResizeOnce() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer w = stack.mallocInt(1), h = stack.mallocInt(1);
+            GLFW.glfwGetWindowSize(window, w, h);
+            int ww = w.get(0), wh = h.get(0);
+            GLFW.glfwSetWindowSize(window, ww, wh + 1);
+            GLFW.glfwSetWindowSize(window, ww, wh);
+        }
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    private void applyWindowsDwmChrome() {
+        if (!isWindows()) return;
+        try {
+            long hwnd = GLFWNativeWin32.glfwGetWin32Window(window);
+            com.sun.jna.Pointer h = com.sun.jna.Pointer.createConstant(hwnd);
+            com.sun.jna.Memory corner = new com.sun.jna.Memory(4);
+            corner.setInt(0, DWMWCP_ROUND);
+            Dwmapi.I.DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, corner, 4);
+            com.sun.jna.Memory dark = new com.sun.jna.Memory(4);
+            dark.setInt(0, settings != null && settings.resolvedDarkValue() ? 1 : 0);
+            Dwmapi.I.DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, dark, 4);
+        } catch (Throwable t) {
+            Logger.warn("Windows DWM chrome attributes failed: {}", t.getMessage());
+        }
     }
 
     /**
@@ -518,6 +608,17 @@ public final class DesktopWindow {
             // Veto the actual close; onExitRequested decides hide-to-tray vs quit.
             GLFW.glfwSetWindowShouldClose(win, false);
             onExitRequested();
+        });
+        // Both fire on the main thread; windowChrome's Properties drive QML, so their
+        // mutation is marshalled to the render thread like PlayerController's own
+        // Property writes. Maximized state can change via the new custom button, but
+        // also natively (double-click the empty title bar, drag-to-edge Snap) -- this
+        // is the only way TitleBar.qml's maximize/restore glyph stays correct either way.
+        GLFW.glfwSetWindowMaximizeCallback(window, (win, max) -> {
+            if (windowChrome != null) postRenderTask(() -> windowChrome.maximized.set(max));
+        });
+        GLFW.glfwSetWindowFocusCallback(window, (win, foc) -> {
+            if (windowChrome != null) postRenderTask(() -> windowChrome.focused.set(foc));
         });
     }
 
