@@ -158,7 +158,7 @@ Rectangle {
         // hides the rail's own copy in that case so the two don't stack. Still need
         // implicitHeight: 64 + settings.topInset unconditionally so the nav items
         // themselves don't creep up under the title bar.
-        property bool showRailBrand: typeof hostWindow === "undefined"
+        property bool showRailBrand: !hostWindow.available
 
         header: Item {
             implicitHeight: 64 + settings.topInset
@@ -437,12 +437,18 @@ Rectangle {
     Snackbar { id: snack }
 
     // Windows-only custom title bar (see TitleBar.qml / WinFrameless.java /
-    // WindowChrome.java). hostWindow only exists as a QML context object on
-    // Windows desktop (DesktopWindow.ensureView), so this is absent everywhere
-    // else with zero further guarding needed. High z so its caption buttons stay
-    // click-priority-correct over any current/future full-window overlay -- the
-    // shared Theme.color.surface token underneath means z-order never affects
-    // visual seamlessness, only click routing.
+    // WindowChrome.java). hostWindow is registered on EVERY platform (a real,
+    // functional WindowChrome on Windows desktop, a no-op WindowChromeStub
+    // everywhere else -- Android's QmlGLSurfaceView and DesktopWindow both
+    // register it unconditionally) precisely so this component can gate purely
+    // on hostWindow.available rather than the identifier's mere existence --
+    // qml4j's compiler rejects an undeclared top-level identifier at compile
+    // time, even inside a typeof guard on a branch that never runs, so
+    // hostWindow being simply absent on some platforms is not an option here.
+    // High z so its caption buttons stay click-priority-correct over any
+    // current/future full-window overlay -- the shared Theme.color.surface
+    // token underneath means z-order never affects visual seamlessness, only
+    // click routing.
     TitleBar {
         // A cold-start qml4j quirk (same general class as the Tabs indicator's
         // documented cold-start settle issue) left this reserved top strip painted
@@ -454,7 +460,7 @@ Rectangle {
         x: 0
         y: 0
         width: parent.width
-        visible: typeof hostWindow !== "undefined"
+        visible: hostWindow.available
         height: settings.topInset
         z: 10000
     }

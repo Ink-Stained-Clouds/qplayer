@@ -200,7 +200,13 @@ public final class DesktopWindow {
         v.setClipboard(new GlfwClipboard(this));
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);
-        if (windowChrome != null) v.context("hostWindow", windowChrome);
+        // hostWindow must always be registered, even on mac/Linux where there's no
+        // custom title bar -- qml4j's compiler rejects an undeclared top-level
+        // identifier at compile time, so shared-qml can't just have it be absent
+        // (see WindowChromeStub's javadoc). The real WindowChrome only exists on
+        // Windows (windowChrome != null); everywhere else gets the no-op stub.
+        v.context("hostWindow", windowChrome != null
+                ? windowChrome : new dev.t1m3.qplayer.bridge.WindowChromeStub());
         loadFonts(v, resources);
         v.load(qmlSource);
         view = v;

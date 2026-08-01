@@ -30,6 +30,7 @@ import io.github.timer_err.qml4j.render.items.core.Item;
 import io.github.timer_err.qml4j.render.items.input.TextEditable;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.bridge.WindowChromeStub;
 import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
@@ -397,6 +398,12 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                     });
                     if (controller != null) view.context("player", controller);
                     if (settings != null) view.context("settings", settings);
+                    // hostWindow (the desktop-only custom title bar bridge) must still
+                    // resolve to something here: qml4j's compiler rejects an undeclared
+                    // top-level identifier at compile time, even one only referenced
+                    // inside a typeof guard, so shared-qml can't have it be simply
+                    // absent on Android. See WindowChromeStub's javadoc (player-core).
+                    view.context("hostWindow", new WindowChromeStub());
                     view.setCompileProgressListener((name, count) -> {
                         SplashListener l = splashListener;
                         if (l != null) l.onProgress(name, count);

@@ -5,12 +5,18 @@ import io.github.timer_err.qml4j.engine.binding.Property;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * QML-facing bridge for the custom title bar (Windows only -- registered as
- * the {@code hostWindow} context object solely from {@link DesktopWindow},
- * so Android/mac/Linux QML never sees it; {@code shared-qml} guards on
- * {@code typeof hostWindow !== "undefined"}). Every method is called from
- * QML on the render thread and must marshal the actual GLFW call onto the
- * main thread via {@link DesktopWindow#postMainTask}.
+ * QML-facing bridge for the custom title bar (Windows only -- a real,
+ * functional instance is registered as the {@code hostWindow} context object
+ * solely from {@link DesktopWindow}; every other platform/OS registers
+ * {@link dev.t1m3.qplayer.bridge.WindowChromeStub} instead so {@code
+ * hostWindow} is always a declared identifier, never an undeclared one --
+ * qml4j's compiler rejects an unknown top-level identifier at COMPILE time,
+ * even inside a {@code typeof x !== "undefined"} guard and even on a branch
+ * that never actually runs, so a context object that's simply absent on some
+ * platforms is not safe here the way it would be in real JS). {@code
+ * shared-qml} reads {@code hostWindow.available} to tell the two apart.
+ * Every method is called from QML on the render thread and must marshal the
+ * actual GLFW call onto the main thread via {@link DesktopWindow#postMainTask}.
  */
 public final class WindowChrome {
 
@@ -21,6 +27,7 @@ public final class WindowChrome {
     static final double BUTTON_WIDTH_LOGICAL_PX = 46;
     static final int BUTTON_COUNT = 3;
 
+    public final Property<Boolean> available = new Property<>(Boolean.TRUE);
     public final Property<Boolean> maximized = new Property<>(Boolean.FALSE);
     public final Property<Boolean> focused = new Property<>(Boolean.TRUE);
     public final Property<Double> buttonWidthPx = new Property<>(BUTTON_WIDTH_LOGICAL_PX);
