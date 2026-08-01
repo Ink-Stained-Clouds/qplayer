@@ -105,6 +105,31 @@ public final class PlayerController {
         t.setDaemon(true);
         return t;
     });
+    // resolveAndPlayNetease submits the now-playing track's cover download to
+    // `worker` before its lyric fetch -- same head-of-line-blocking shape as
+    // customWorker/cacheWorker above, just within one track's own resolve instead
+    // of across tracks: a single-thread worker forces the lyric request to sit
+    // queued behind the cover's own network round trip before it can even start,
+    // on top of the lyric API call's own latency, while playback itself starts
+    // instantly on its own dedicated audio thread. Users noticed lyrics visibly
+    // lagging behind the song already audibly playing. Splitting lyric fetches
+    // onto their own queue lets them start at the same time as the cover fetch
+    // instead of after it.
+    private final ExecutorService lyricWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "qplayer-lyric");
+        t.setDaemon(true);
+        return t;
+    });
+    // offlinePlaylistFallback's background retry (Thread.sleep-and-retry-online)
+    // needs its own queue for the same reason as the three above: it deliberately
+    // blocks its own thread for the whole retry interval, and doing that on
+    // `worker` would head-of-line-block every other netease read (a track resolve,
+    // a search) behind it for the entire wait.
+    private final ExecutorService retryWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "qplayer-retry");
+        t.setDaemon(true);
+        return t;
+    });
 
     /** Unified disk cache (audio / lyrics / images) with LRU eviction. */
     public final DiskCache diskCache = new DiskCache(200); // default 200 MB
@@ -270,6 +295,12 @@ public final class PlayerController {
     // pause's fade-out finishes instead of hard-cutting — see toggle().
     // null = nothing pending.
     private volatile Runnable fadeCompleteAction;
+    // Set by next()/prev() just before their playAt() call, consumed (and reset)
+    // the next time startFadeIn() runs: a manual skip still fades the OUTGOING
+    // track out (playAt()'s backend.pause() below), but the incoming one should
+    // just start at full volume, not also ramp up — a fade-in there only adds a
+    // second delay on top of however long the new track took to resolve.
+    private volatile boolean suppressNextFadeIn = false;
     private volatile long uid;
     // neteaseId of the track we last re-resolved after a playback error; cleared
     // when a track actually starts. Stops a persistently-failing track from looping
@@ -389,6 +420,13 @@ public final class PlayerController {
     /** True while an opened playlist's tracks are loading, so the detail page shows a
      *  spinner instead of the previous playlist's content. */
     public final Property<Boolean> playlistLoading = new Property<>(false);
+    /** True once {@link #openPlaylist} actually had to fall back to
+     *  {@link #offlinePlaylistFallback} for the currently-open playlist -- i.e. the
+     *  live netease call failed, not just "offline mode by user choice". Drives
+     *  SongRow's offline-ready badge (only shown while this is true, so it doesn't
+     *  clutter the normal online view) and {@link #retryPlaylistIfOffline}'s retry
+     *  loop. Cleared the moment a real online refresh of this playlist succeeds. */
+    public final Property<Boolean> playlistOffline = new Property<>(false);
     /** Id of the currently open playlist (0 = none); guards stale async results. */
     private volatile long currentPlaylistId;
     /** Whether the signed-in user has collected the open playlist — drives the detail
@@ -543,6 +581,12 @@ public final class PlayerController {
     private void startFadeIn() {
         fadeOutDoneForTrack = false;
         fadeCompleteAction = null;
+        if (suppressNextFadeIn) {
+            suppressNextFadeIn = false;
+            fadeStartAt = 0L;
+            backend.setVolume(volume.peek());
+            return;
+        }
         if (!fadeEnabled) { backend.setVolume(volume.peek()); return; }
         fadeFromGain = 0f;
         fadeToGain = 1f;
@@ -1441,13 +1485,21 @@ public final class PlayerController {
         long resumeMs = (i == pendingResumeIndex) ? Math.max(0L, pendingResumeMs) : 0L;
         pendingResumeMs = 0L;
         pendingResumeIndex = -1;
-        // Make the switch feel instant even while the next source resolves (a netease
-        // URL fetch takes a beat): silence the current track now, blank the now-playing
-        // surface (lyrics + cover fall back to their placeholders), and start the
-        // progress bars' loading sweep. The loaders below re-apply the real lyrics/cover
-        // in the same render-queue drain (no flash for instant sources); the backend's
-        // onStarted ends the sweep once playback actually begins.
-        backend.pause();
+        // Blank the now-playing surface (lyrics + cover fall back to their
+        // placeholders) and start the progress bars' loading sweep, whether or not
+        // the outgoing track fades. The loaders below re-apply the real lyrics/cover
+        // in the same render-queue drain (no flash for instant sources); the
+        // backend's onStarted ends the sweep once playback actually begins.
+        // If something is actually audible, ramp it down instead of a hard cut —
+        // FADE_OUT_MS is well under how long a netease URL resolve typically takes,
+        // so this never adds perceptible wait on top of that; backend.pause() only
+        // runs once the ramp reaches silence. Nothing to fade when already silent
+        // (fresh start, already paused) — pause immediately as before.
+        if (fadeEnabled && backend.isPlaying()) {
+            startFadeOut(FADE_OUT_MS, () -> backend.pause());
+        } else {
+            backend.pause();
+        }
         post(() -> {
             loading.set(true);
             applyLyrics(Collections.<LyricLine>emptyList());
@@ -1887,6 +1939,7 @@ public final class PlayerController {
     public void next() {
         onMain(() -> {
             if (queue.isEmpty()) return;
+            suppressNextFadeIn = true;
             playAt(playMode.peek() == 1 ? randomIndex() : (playIndex + 1) % queue.size());
         });
     }
@@ -1895,6 +1948,7 @@ public final class PlayerController {
         onMain(() -> {
             if (queue.isEmpty()) return;
             int n = queue.size();
+            suppressNextFadeIn = true;
             playAt(playMode.peek() == 1 ? randomIndex() : (playIndex - 1 + n) % n);
         });
     }
@@ -1998,8 +2052,10 @@ public final class PlayerController {
             return;
         }
         // (Lyrics were already blanked at the track switch in playAt; the async fetch
-        // eases them back in when it lands.)
-        worker.submit(() -> {
+        // eases them back in when it lands.) lyricWorker, not worker: this runs
+        // concurrently with updateCover()'s own worker-queued download instead of
+        // sitting behind it -- see lyricWorker's field javadoc.
+        lyricWorker.submit(() -> {
             List<LyricLine> ly = fetchNeteaseLyrics(songId);
             post(() -> { if (playIndex == expectedIndex) applyLyrics(ly); });
         });
@@ -2136,7 +2192,18 @@ public final class PlayerController {
 
     private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs) {
         long songId = t.neteaseId;
+        // Per-stage timing, surfaced via the in-app debug log panel: measured resolve
+        // itself at well under a second per switch (queue wait, songDetail,
+        // songUrlInfo, unblock all logged separately below) against a "feels like
+        // 3-5s" user report, with no single stage confirmed as the culprit yet —
+        // kept permanently rather than ripped out once-diagnosed, since the report
+        // isn't actually explained yet and unblock's per-source latency in
+        // particular is worth watching across more real sessions.
+        long tSubmit = System.currentTimeMillis();
         worker.submit(() -> {
+            long t0 = System.currentTimeMillis();
+            long queueWaitMs = t0 - tSubmit;
+            if (queueWaitMs > 50) Logger.info("netease: timing queued behind other worker tasks for {}ms", queueWaitMs);
             try {
                 Logger.info("netease: resolve song {} (loggedIn={}, level={})",
                         songId, netease.isLoggedIn(), playLevel);
@@ -2145,6 +2212,7 @@ public final class PlayerController {
                 if (t.title == null || t.title.isEmpty()
                         || t.coverUrl == null || t.coverUrl.isEmpty()) {
                     NeteaseSong sd = netease.songDetail(songId);
+                    Logger.info("netease: timing songDetail +{}ms", System.currentTimeMillis() - t0);
                     if (sd != null) {
                         if (t.title == null || t.title.isEmpty()) t.title = sd.name;
                         if (t.artist == null || t.artist.isEmpty()) t.artist = sd.artist;
@@ -2154,6 +2222,7 @@ public final class PlayerController {
                     }
                 }
                 NeteaseClient.UrlInfo info = netease.songUrlInfo(songId, playLevel);
+                Logger.info("netease: timing songUrlInfo +{}ms", System.currentTimeMillis() - t0);
                 // Official url wins only when it's a full track. A trial-only clip,
                 // a missing url, or a blocked/VIP song all fall through to the
                 // unblock sources; the trial clip is kept as a last-resort fallback.
@@ -2161,6 +2230,7 @@ public final class PlayerController {
                 boolean unblocked = false;
                 if (url == null && unblockEnabled) {
                     String un = SongUnblocker.resolve(songId, t.title, t.artist);
+                    Logger.info("netease: timing unblock +{}ms", System.currentTimeMillis() - t0);
                     if (un != null) {
                         url = un;
                         unblocked = true;
@@ -2172,6 +2242,8 @@ public final class PlayerController {
                 final boolean isUnblocked = unblocked;
                 final boolean isTrialOnly = !unblocked && info != null && info.trial && url != null;
                 Logger.info("netease: url={} (unblocked={}, trial={})", url, unblocked, isTrialOnly);
+                Logger.info("netease: timing resolve total +{}ms (click-to-resolve-start {}ms)",
+                        System.currentTimeMillis() - t0, queueWaitMs);
                 final String playUrl = url;
                 // Hop to the main thread for the backend control (works backgrounded);
                 // UI Property writes still marshal to the render thread via post().
@@ -2904,57 +2976,100 @@ public final class PlayerController {
         playlistDeletable.set(false);
         worker.submit(() -> {
             try {
-                NeteasePlaylist detail = netease.playlistDetail(playlistId);
-                List<NeteaseSong> songs = netease.playlistTracks(playlistId, 200);
-                fillMissingCovers(songs);
-                buildSongThumbs(songs, "128");
-                // Thumbnails are keyed by coverUrl, not by playlist, so a track already
-                // cached from being seen in another playlist is reused here rather than
-                // re-fetched over the network; getThumb64 also touches it, so a song
-                // that keeps showing up across playlists stays recently-used and
-                // survives THUMB64_MAX_COUNT eviction instead of aging out unnoticed.
-                for (NeteaseSong s : songs) {
-                    if (s.coverUrl == null || s.coverUrl.isEmpty()) continue;
-                    String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
-                    if (localThumb != null) s.coverThumbPath = localThumb;
-                }
-                String name = detail != null ? detail.name : "";
-                // Same cache-preference as loadMyPlaylists: this playlist's cover was
-                // very likely already 512-cached from appearing in 我的, so prefer
-                // that over the CDN url to survive a mid-session network drop.
-                String localCover = detail != null && detail.coverUrl != null
-                        ? diskCache.getThumb64(thumbUrl(detail.coverUrl, "512")) : null;
-                String cover = localCover != null ? localCover : detail != null
-                        ? (detail.coverThumbPath != null ? detail.coverThumbPath : detail.coverUrl) : null;
-                boolean subscribed = detail != null && detail.subscribed;
-                boolean owned = detail != null && uid != 0 && detail.creatorUid == uid;
-                post(() -> {
-                    if (currentPlaylistId != playlistId) return;   // a newer open won
-                    playlistTitle.set(name == null ? "" : name);
-                    playlistCoverPath.set(cover == null ? "" : cover);
-                    playlistTracks.set(songs);
-                    playlistSubscribed.set(subscribed);
-                    playlistOwned.set(owned);
-                    playlistDeletable.set(owned && favoritePid != 0L && playlistId != favoritePid);
-                    playlistLoading.set(false);
-                });
-                // mine=false: opening a playlist (推荐, search, a shared link, or one of
-                // 我的 own) doesn't by itself prove membership in 我的 — only
-                // loadMyPlaylists's own enumeration does, and that upsert is sticky
-                // (see PlaylistCacheIndex.upsert), so an actually-owned playlist keeps
-                // its mine=true from there regardless of this call.
-                playlistCacheIndex.upsert(playlistId, name,
-                        detail != null ? detail.coverUrl : null, songs.size(), songs, false);
-                cachePlaylistCoverAsync(detail != null ? detail.coverUrl : null);
-                // One download per track (DiskCache's thumb64 count-cap bounds
-                // total storage/downloads over time, not this call).
-                for (NeteaseSong s : songs) cacheThumb64Async(s.coverUrl);
-                playlistCacheIndex.save();
+                fetchAndPublishPlaylist(playlistId);
             } catch (Throwable e) {
                 Logger.warn("open playlist {} failed: {}", playlistId, e.getMessage());
                 offlinePlaylistFallback(playlistId);
             }
         });
+    }
+
+    /** The actual network fetch + publish, shared by {@link #openPlaylist}'s own
+     *  attempt and {@link #scheduleOfflineRetry}'s background retry loop once
+     *  offline data is already showing — same fetch/build/publish either way, they
+     *  only differ in whether the caller already reset the UI to a loading state
+     *  first (retry deliberately doesn't, so the offline content stays on screen
+     *  until a real update actually lands, no loading-spinner flash every retry). */
+    private void fetchAndPublishPlaylist(long playlistId) throws Exception {
+        NeteasePlaylist detail = netease.playlistDetail(playlistId);
+        List<NeteaseSong> songs = netease.playlistTracks(playlistId, 200);
+        fillMissingCovers(songs);
+        buildSongThumbs(songs, "128");
+        // Thumbnails are keyed by coverUrl, not by playlist, so a track already
+        // cached from being seen in another playlist is reused here rather than
+        // re-fetched over the network; getThumb64 also touches it, so a song
+        // that keeps showing up across playlists stays recently-used and
+        // survives THUMB64_MAX_COUNT eviction instead of aging out unnoticed.
+        for (NeteaseSong s : songs) {
+            if (s.coverUrl != null && !s.coverUrl.isEmpty()) {
+                String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+                if (localThumb != null) s.coverThumbPath = localThumb;
+            }
+            s.cachedOffline = s.id != 0 && diskCache.hasAudio(s.id);
+        }
+        String name = detail != null ? detail.name : "";
+        // Same cache-preference as loadMyPlaylists: this playlist's cover was
+        // very likely already 512-cached from appearing in 我的, so prefer
+        // that over the CDN url to survive a mid-session network drop.
+        String localCover = detail != null && detail.coverUrl != null
+                ? diskCache.getThumb64(thumbUrl(detail.coverUrl, "512")) : null;
+        String cover = localCover != null ? localCover : detail != null
+                ? (detail.coverThumbPath != null ? detail.coverThumbPath : detail.coverUrl) : null;
+        boolean subscribed = detail != null && detail.subscribed;
+        boolean owned = detail != null && uid != 0 && detail.creatorUid == uid;
+        post(() -> {
+            if (currentPlaylistId != playlistId) return;   // a newer open won
+            playlistTitle.set(name == null ? "" : name);
+            playlistCoverPath.set(cover == null ? "" : cover);
+            playlistTracks.set(songs);
+            playlistSubscribed.set(subscribed);
+            playlistOwned.set(owned);
+            playlistDeletable.set(owned && favoritePid != 0L && playlistId != favoritePid);
+            playlistLoading.set(false);
+            playlistOffline.set(false);
+        });
+        // mine=false: opening a playlist (推荐, search, a shared link, or one of
+        // 我的 own) doesn't by itself prove membership in 我的 — only
+        // loadMyPlaylists's own enumeration does, and that upsert is sticky
+        // (see PlaylistCacheIndex.upsert), so an actually-owned playlist keeps
+        // its mine=true from there regardless of this call.
+        playlistCacheIndex.upsert(playlistId, name,
+                detail != null ? detail.coverUrl : null, songs.size(), songs, false);
+        cachePlaylistCoverAsync(detail != null ? detail.coverUrl : null);
+        // One download per track (DiskCache's thumb64 count-cap bounds
+        // total storage/downloads over time, not this call).
+        for (NeteaseSong s : songs) cacheThumb64Async(s.coverUrl);
+        // cacheWorker runs its downloads in submission order (single thread), so
+        // appending this after the loop above guarantees it only runs once every
+        // one of those downloads has finished (succeeded OR failed) — the one
+        // signal we need to re-apply "prefer local cache" for any track that
+        // wasn't cached yet when the list was first built above. Covers exactly
+        // "opened this playlist online, network dropped moments later": whatever
+        // finished downloading before it dropped still gets picked up here, no
+        // network needed for that re-check.
+        cacheWorker.submit(() -> refreshPlaylistCoversFromCache(playlistId, songs));
+        playlistCacheIndex.save();
+    }
+
+    /** Re-checks disk cache for every track's thumbnail once all of {@link
+     *  #fetchAndPublishPlaylist}'s cacheThumb64Async downloads for this open have
+     *  settled, and republishes {@link #playlistTracks} only if something actually
+     *  changed. Mutates the same {@code NeteaseSong} instances the UI is currently
+     *  showing (fine — a plain field write off the render thread, only ever read
+     *  from it after the post() below) rather than rebuilding the list. */
+    private void refreshPlaylistCoversFromCache(long playlistId, List<NeteaseSong> songs) {
+        if (currentPlaylistId != playlistId) return;
+        boolean changed = false;
+        for (NeteaseSong s : songs) {
+            if (s.coverUrl == null || s.coverUrl.isEmpty()) continue;
+            String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+            if (localThumb != null && !localThumb.equals(s.coverThumbPath)) {
+                s.coverThumbPath = localThumb;
+                changed = true;
+            }
+        }
+        if (!changed) return;
+        post(() -> { if (currentPlaylistId == playlistId) playlistTracks.set(new ArrayList<>(songs)); });
     }
 
     /** {@link #openPlaylist} couldn't reach the network: fall back to whatever
@@ -2982,7 +3097,36 @@ public final class PlayerController {
             playlistCoverPath.set(cover == null ? "" : cover);
             playlistTracks.set(offline);
             playlistLoading.set(false);
+            playlistOffline.set(true);
             toast.set("当前无网络，显示已缓存的歌单内容");
+        });
+        scheduleOfflineRetry(playlistId);
+    }
+
+    /** Quietly retries {@link #fetchAndPublishPlaylist} in the background every 20s
+     *  while this playlist is still open and still showing offline data, so it
+     *  updates itself the moment the network comes back instead of staying stuck
+     *  on a stale offline snapshot until the user happens to reopen it. Stops the
+     *  moment the user navigates away ({@code currentPlaylistId} changes) or a
+     *  retry actually succeeds (fetchAndPublishPlaylist itself clears
+     *  playlistOffline). Runs on the dedicated retryWorker, not worker, since it
+     *  deliberately blocks its own thread for the whole wait. */
+    private void scheduleOfflineRetry(long playlistId) {
+        retryWorker.submit(() -> {
+            try {
+                Thread.sleep(20_000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (currentPlaylistId != playlistId) return;             // user moved on
+            if (!Boolean.TRUE.equals(playlistOffline.peek())) return; // already back online
+            try {
+                fetchAndPublishPlaylist(playlistId);
+                post(() -> { if (currentPlaylistId == playlistId) toast.set("网络已恢复，歌单已更新"); });
+            } catch (Throwable e) {
+                scheduleOfflineRetry(playlistId); // still offline -- try again in another 20s
+            }
         });
     }
 
@@ -2998,6 +3142,7 @@ public final class PlayerController {
         copy.coverUrl = s.coverUrl;
         copy.durationMs = s.durationMs;
         copy.fee = s.fee;
+        copy.cachedOffline = s.id != 0 && diskCache.hasAudio(s.id);
         if (s.coverUrl != null && !s.coverUrl.isEmpty()) {
             String local = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
             copy.coverThumbPath = local != null ? local : "";
@@ -3497,6 +3642,8 @@ public final class PlayerController {
         worker.shutdownNow();
         customWorker.shutdownNow();
         cacheWorker.shutdownNow();
+        lyricWorker.shutdownNow();
+        retryWorker.shutdownNow();
     }
 
     // --- Disk cache management (called from QML settings page) -------------

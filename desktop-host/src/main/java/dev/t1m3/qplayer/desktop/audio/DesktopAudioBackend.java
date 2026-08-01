@@ -191,7 +191,13 @@ public final class DesktopAudioBackend implements AudioBackend {
             return false;
         }
         long startMs = Math.max(0L, seekTargetMs.getAndSet(-1L));
+        // Kept permanently alongside PlayerController's own resolve-stage timing --
+        // together they cover the whole click-to-audible path for the still-open
+        // "switching feels like 3-5s" report. Measured 2-80ms per switch so far
+        // (open + prime), nowhere close to accounting for that gap on its own.
+        long tOpen0 = System.currentTimeMillis();
         PcmSource pcm = PcmSource.open(openSrc);
+        Logger.info("audio: timing PcmSource.open() {}ms", System.currentTimeMillis() - tOpen0);
         try {
             sampleRate = pcm.sampleRate();
             channels = Math.max(1, Math.min(2, pcm.channels()));
@@ -199,7 +205,10 @@ public final class DesktopAudioBackend implements AudioBackend {
             durationMs = pcm.durationMs();
 
             seekBaseMs = startMs > 0 ? pcm.seek(startMs) : 0L;
+            long tPrime0 = System.currentTimeMillis();
             boolean primed = primeFromCurrent(pcm);
+            Logger.info("audio: timing primeFromCurrent {}ms, total open-to-play {}ms",
+                    System.currentTimeMillis() - tPrime0, System.currentTimeMillis() - tOpen0);
             boolean draining = !primed;
             if (playing.get()) {
                 alSourcePlay(sourceId);

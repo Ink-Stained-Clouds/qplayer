@@ -20,4 +20,10 @@ public class NeteaseSong {
     public long durationMs;
     /** Set when the song is VIP / unavailable to anonymous clients. */
     public boolean fee;
+    /** Whether this song's audio is already on disk ({@code DiskCache.hasAudio}) --
+     *  i.e. playable with no network. Set by whoever builds the list (openPlaylist,
+     *  offlinePlaylistFallback); QML uses it to badge "offline-ready" tracks while
+     *  {@code player.playlistOffline} is true. Not persisted -- computed fresh
+     *  every time a song list is built, since the cache itself can change. */
+    public boolean cachedOffline;
 }
