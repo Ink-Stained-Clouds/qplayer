@@ -344,7 +344,7 @@ public final class WindowsMediaControls implements DesktopMediaControls {
             } finally {
                 release(music);
             }
-            Pointer thumbnail = remoteThumbnail(track.coverUrl);
+            Pointer thumbnail = resolveThumbnail(track);
             if (thumbnail != null) {
                 try {
                     check(call(updater, 11, thumbnail), "SetThumbnail");
@@ -358,10 +358,30 @@ public final class WindowsMediaControls implements DesktopMediaControls {
         }
     }
 
-    private Pointer remoteThumbnail(String url) {
-        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) {
-            return null;
+    /** A local file (already-cached netease cover, or a local track's own art)
+     *  wins over the remote URL -- mirrors MacMediaControls.localCover: a local
+     *  track has no coverUrl at all, and a played-before netease track's cover is
+     *  already on disk, no network needed. WinRT's Uri.CreateUri accepts a plain
+     *  file:/... URI same as http(s), so this reuses the same CreateFromUri call
+     *  below rather than a separate StorageFile path. */
+    private String localCoverPath(Track track) {
+        String cached = controller.currentCoverPath();
+        if (cached != null && !cached.isEmpty() && new java.io.File(cached).isFile()) return cached;
+        for (String path : new String[]{track.coverLocalPath, track.coverThumbPath}) {
+            if (path != null && !path.startsWith("http") && new java.io.File(path).isFile()) return path;
         }
+        return null;
+    }
+
+    private Pointer resolveThumbnail(Track track) {
+        String local = localCoverPath(track);
+        if (local != null) return thumbnailFromUri(new java.io.File(local).toURI().toString());
+        String url = track.coverUrl;
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return null;
+        return thumbnailFromUri(url);
+    }
+
+    private Pointer thumbnailFromUri(String url) {
         Pointer uriFactory = null;
         Pointer streamFactory = null;
         Pointer uri = null;
