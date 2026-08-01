@@ -40,6 +40,11 @@ Rectangle {
     property real flickContentY: 0
     /** Parent Flickable's visible height. */
     property real flickHeight: 0
+    // Small "cached, plays offline" badge on the cover's corner. Only meaningful
+    // (and only ever true) while the containing list is actually in an offline
+    // state — see VirtualSongList.showOfflineBadge — so it stays invisible during
+    // normal online browsing instead of cluttering every row with a checkmark.
+    property bool offlineReady: false
     signal activated()
     signal removeRequested()
 
@@ -113,6 +118,27 @@ Rectangle {
             // keeps opacity 1, so scrolling doesn't re-fade every cover.
             opacity: coverImg.source !== "" ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+        }
+
+        // "Cached, plays offline" badge — bottom-right corner of the cover.
+        Rectangle {
+            visible: row.offlineReady
+            width: 16
+            height: 16
+            radius: 8
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: -2
+            color: Theme.color.primary
+            border.width: 1.5
+            border.color: Theme.color.surface
+            Text {
+                anchors.centerIn: parent
+                text: "check"
+                font.family: Theme.iconFont.name
+                font.pixelSize: 11
+                color: Theme.color.onPrimaryColor
+            }
         }
     }
 

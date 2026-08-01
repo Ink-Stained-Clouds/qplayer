@@ -38,6 +38,12 @@ Flickable {
     // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
     property bool songMenu: false
     property bool ownedPlaylist: false
+    // Shows SongRow's offline "cached, plays without network" badge for rows whose
+    // modelData.cachedOffline is true. Off by default so this stays a no-op for
+    // every list except a playlist detail page that's actually in an offline state
+    // (see PlaylistDetailPage's player.playlistOffline binding) — not meaningful,
+    // and would just clutter every row, during normal online browsing.
+    property bool showOfflineBadge: false
     property int rowH: 64
     property int activatedIndex: -1
     property int removeIndex: -1
@@ -93,6 +99,7 @@ Flickable {
                 highlighted: view.isLocal && view.highlightCurrent && (view.highlightByFilePath
                     ? (player.currentFilePath !== "" && modelData.filePath === player.currentFilePath)
                     : index === player.index)
+                offlineReady: view.showOfflineBadge && !!modelData.cachedOffline
                 removable: view.removable
                 song: view.songMenu ? modelData : null
                 menuEnabled: view.songMenu

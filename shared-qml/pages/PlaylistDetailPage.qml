@@ -101,6 +101,7 @@ Rectangle {
                 // (local list) works signed-out too.
                 songMenu: true
                 ownedPlaylist: player.playlistOwned
+                showOfflineBadge: player.playlistOffline
                 onActivated: player.playPlaylistTrack(tracks.activatedIndex)
             }
 
