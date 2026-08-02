@@ -374,11 +374,17 @@ public final class WindowsMediaControls implements DesktopMediaControls {
     }
 
     private Pointer resolveThumbnail(Track track) {
+        // SMTC accepts a remote http(s) URI straight away. A local file passed
+        // as file:/... through RandomAccessStreamReference.CreateFromUri calls
+        // succeed but the system drops the artwork (observed on the lock-screen
+        // now-playing card), so the remote URL wins when present.
+        String url = track.coverUrl;
+        if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+            return thumbnailFromUri(url);
+        }
         String local = localCoverPath(track);
         if (local != null) return thumbnailFromUri(new java.io.File(local).toURI().toString());
-        String url = track.coverUrl;
-        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return null;
-        return thumbnailFromUri(url);
+        return null;
     }
 
     private Pointer thumbnailFromUri(String url) {
