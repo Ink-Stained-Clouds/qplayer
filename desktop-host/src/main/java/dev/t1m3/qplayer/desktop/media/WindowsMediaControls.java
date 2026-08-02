@@ -90,6 +90,12 @@ public final class WindowsMediaControls implements DesktopMediaControls {
     private volatile long pausedPositionMs;
     private Thread timelineThread;
     private String publishedMetadataKey;
+    private com.sun.net.httpserver.HttpServer coverServer;
+    private final java.util.concurrent.ConcurrentHashMap<Integer, String> coverFiles =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.ArrayDeque<Integer> coverOrder = new java.util.ArrayDeque<>();
+    private int coverCounter;
+    private int coverPort;
 
     public WindowsMediaControls(PlayerController controller, DesktopWindow window) {
         this.controller = controller;
@@ -120,6 +126,7 @@ public final class WindowsMediaControls implements DesktopMediaControls {
                     "Windows.Media.SystemMediaTransportControlsTimelineProperties");
             pausedPositionMs = pausedControllerPosition();
             running = true;
+            startCoverServer();
             publish();
             startTimelineUpdates();
             Logger.info("system media controls initialized: Windows SMTC");
@@ -144,6 +151,12 @@ public final class WindowsMediaControls implements DesktopMediaControls {
             if (timeline != null) release(timeline);
         } catch (Throwable ignored) {
         }
+        if (coverServer != null) {
+            coverServer.stop(0);
+            coverServer = null;
+        }
+        coverFiles.clear();
+        coverOrder.clear();
         smtc = null;
         smtc2 = null;
         timeline = null;
@@ -374,16 +387,101 @@ public final class WindowsMediaControls implements DesktopMediaControls {
     }
 
     private Pointer resolveThumbnail(Track track) {
-        // SMTC accepts a remote http(s) URI straight away. A local file passed
-        // as file:/... through RandomAccessStreamReference.CreateFromUri calls
-        // succeed but the system drops the artwork (observed on the lock-screen
-        // now-playing card), so the remote URL wins when present.
+        // Prefer the local cover file (already-cached netease cover, or a local
+        // track's own art), falling back to the remote http(s) URL.
+        String local = localCoverPath(track);
+        if (local != null) {
+            String url = localCoverUrl(local);
+            if (url != null) return thumbnailFromUri(url);
+        }
         String url = track.coverUrl;
         if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
             return thumbnailFromUri(url);
         }
-        String local = localCoverPath(track);
-        if (local != null) return thumbnailFromUri(new java.io.File(local).toURI().toString());
+        return null;
+    }
+
+    /** SMTC's thumbnail renderer drops RandomAccessStreamReference streams built
+     *  from file: URIs entirely (any slashing or extension), but happily renders
+     *  an http(s) URL, so the cover caches' ".img" files are exposed through a
+     *  127.0.0.1 loopback endpoint carrying the sniffed Content-Type instead. */
+    private String localCoverUrl(String path) {
+        if (coverServer == null) return null;
+        int id = ++coverCounter;
+        coverFiles.put(id, path);
+        coverOrder.addLast(id);
+        while (coverOrder.size() > 32) {
+            Integer oldest = coverOrder.pollFirst();
+            coverFiles.remove(oldest);
+        }
+        return "http://127.0.0.1:" + coverPort + "/cover/" + id;
+    }
+
+    private void startCoverServer() {
+        try {
+            coverServer = com.sun.net.httpserver.HttpServer.create(
+                    new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            coverPort = coverServer.getAddress().getPort();
+            coverServer.createContext("/cover/", exchange -> {
+                try {
+                    String idStr = exchange.getRequestURI().getPath().substring("/cover/".length());
+                    String path = coverFiles.get(Integer.parseInt(idStr));
+                    byte[] bytes = path != null
+                            ? java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)) : null;
+                    if (bytes == null) {
+                        exchange.sendResponseHeaders(404, -1);
+                    } else {
+                        exchange.getResponseHeaders().add("Content-Type", contentType(path));
+                        exchange.sendResponseHeaders(200, bytes.length);
+                        exchange.getResponseBody().write(bytes);
+                    }
+                } catch (Throwable t) {
+                    try {
+                        exchange.sendResponseHeaders(500, -1);
+                    } catch (Throwable ignored) {
+                    }
+                } finally {
+                    exchange.close();
+                }
+            });
+            coverServer.start();
+            Logger.info("SMTC local cover server on 127.0.0.1:{}", coverPort);
+        } catch (Throwable t) {
+            Logger.warn("SMTC local cover server unavailable: {}", t.getMessage());
+            coverServer = null;
+        }
+    }
+
+    private String contentType(String path) {
+        String ext = sniffImageExtension(path);
+        if (ext == null) return "application/octet-stream";
+        switch (ext) {
+            case "png":
+                return "image/png";
+            case "gif":
+                return "image/gif";
+            case "bmp":
+                return "image/bmp";
+            case "webp":
+                return "image/webp";
+            default:
+                return "image/jpeg";
+        }
+    }
+
+    /** Content-type sniff for the cover caches' ".img" files (usually JPEG). */
+    private String sniffImageExtension(String path) {
+        try (java.io.InputStream in = new java.io.FileInputStream(path)) {
+            byte[] h = new byte[12];
+            int n = in.read(h);
+            if (n >= 3 && (h[0] & 0xFF) == 0xFF && (h[1] & 0xFF) == 0xD8) return "jpg";
+            if (n >= 8 && (h[0] & 0xFF) == 0x89 && h[1] == 'P' && h[2] == 'N' && h[3] == 'G') return "png";
+            if (n >= 6 && h[0] == 'G' && h[1] == 'I' && h[2] == 'F') return "gif";
+            if (n >= 2 && h[0] == 'B' && h[1] == 'M') return "bmp";
+            if (n >= 12 && (h[0] & 0xFF) == 'R' && h[1] == 'I' && h[2] == 'F' && h[3] == 'F'
+                    && h[8] == 'W' && h[9] == 'E' && h[10] == 'B' && h[11] == 'P') return "webp";
+        } catch (Throwable ignored) {
+        }
         return null;
     }
 

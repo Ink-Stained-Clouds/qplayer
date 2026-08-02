@@ -19,6 +19,7 @@ java.sql
 jdk.charsets           # GBK/Cp1252 fallbacks for netease payloads and local filenames
 jdk.crypto.ec          # EC cipher suites — without it every netease HTTPS call fails
 jdk.dynalink
+jdk.httpserver         # com.sun.net.httpserver: SMTC local cover endpoint (127.0.0.1)
 jdk.localedata         # non-US locales (zh date/number formatting)
 jdk.unsupported        # sun.misc.Unsafe: LWJGL, Skija, gson
 jdk.zipfs
