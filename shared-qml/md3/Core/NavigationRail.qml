@@ -13,6 +13,7 @@ Item {
     Behavior on implicitWidth { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
     
     property Component header: null
+    property Component headerActions: null // Optional row between the header and the items
     property Component footer: null
     property Component delegate: null // Optional custom delegate
     
@@ -30,9 +31,24 @@ Item {
         
         // Header
         Loader {
+            id: headerLoader
             Layout.fillWidth: true
             sourceComponent: root.header
             visible: root.header !== null
+            // 显式绑定高度，确保 Loader 正确反映 loaded item 的 implicitHeight
+            Layout.preferredHeight: item ? item.implicitHeight : 0
+        }
+        
+        // Header actions: optional icon row between the header and the nav items
+        // (the rail-top theme-toggle / download controls). Deliberately NOT tied to
+        // showRailBrand, so it shows on every platform including the desktop host's
+        // Windows custom title bar (whose rail header area is titlebar-hidden).
+        Loader {
+            id: headerActionsLoader
+            Layout.fillWidth: true
+            sourceComponent: root.headerActions
+            visible: root.headerActions !== null
+            Layout.preferredHeight: item ? item.implicitHeight : 0
         }
         
         // Items

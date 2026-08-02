@@ -58,6 +58,9 @@ Menu {
         } else {
             items.push({ text: "加入播放列表", icon: "playlist_add", action: menu._addCustomAction(songId) })
         }
+        // Cache the track's audio for offline replay. Works signed-out (unblock
+        // sources still apply); the bridge skips it with a toast if already cached.
+        items.push({ text: "缓存此歌曲", icon: "download", action: menu._cacheAction(songId) })
         // Copy link works signed-out too — any netease song has a shareable URL.
         items.push({ text: "复制链接", icon: "link", action: menu._copyAction(songId) })
         menu.model = items
@@ -89,5 +92,8 @@ Menu {
     }
     function _copyAction(songId) {
         return function() { player.copySongLink(songId) }
+    }
+    function _cacheAction(songId) {
+        return function() { player.cacheSong(songId) }
     }
 }

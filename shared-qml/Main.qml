@@ -20,6 +20,7 @@ Rectangle {
     property bool loginOpen: false
     property bool settingsOpen: false
     property bool accountOpen: false
+    property bool cacheListOpen: false
     property bool showLog: false
     // Menu.open() registers the one top-level popup currently attached to this
     // scene. Song rows each own a lazy menu instance, so without a scene-wide
@@ -68,6 +69,7 @@ Rectangle {
         if (app.showLog)            { app.showLog = false; return; }
         if (app.loginOpen)          { app.loginOpen = false; return; }
         if (app.accountOpen)        { app.accountOpen = false; return; }
+        if (app.cacheListOpen)      { app.cacheListOpen = false; return; }
         if (app.settingsOpen)       { app.settingsOpen = false; return; }
         if (app.detailOpen)         { app.detailOpen = false; return; }
         if (app.page !== 0)         { app.switchTo(0); return; }
@@ -83,6 +85,7 @@ Rectangle {
         app.detailOpen = which === "detail"
         app.settingsOpen = which === "settings"
         app.accountOpen = which === "account"
+        app.cacheListOpen = which === "cachedSongs"
         player.setQueueOpen(which === "queue")
     }
 
@@ -91,6 +94,7 @@ Rectangle {
         app.detailOpen = false;          // dismiss any open playlist detail
         app.settingsOpen = false;        // and the settings overlay
         app.accountOpen = false;         // and the account overlay
+        app.cacheListOpen = false;       // and the cached-songs overlay
         player.setQueueOpen(false);      // and the queue overlay
         if (idx === app.page) return;
         app.nextPage = idx;
@@ -121,9 +125,9 @@ Rectangle {
         }
     }
 
-    // surface player toasts in a Snackbar
+    // surface player toasts in the stacked toast notifications
     property string toastWatch: player.toast
-    onToastWatchChanged: if (player.toast.length > 0) { snack.text = player.toast; snack.open() }
+    onToastWatchChanged: if (player.toast.length > 0) { snack.show(player.toast) }
 
     // Chrome is absolute/anchor-positioned, NOT a ColumnLayout. The play clock
     // sets player.positionMs ~5x/s; each set bumps the engine change version and
@@ -161,13 +165,17 @@ Rectangle {
         property bool showRailBrand: !hostWindow.available
 
         header: Item {
-            implicitHeight: 64 + settings.topInset
+            // 桌面端：标题栏已遮挡 topInset 区域，header 只需 topInset 即可
+            // （0~topInset 被标题栏遮挡不可见，导航项从 topInset+12 开始）
+            // 移动端：需要额外 64px 给 Logo
+            implicitHeight: rail.showRailBrand ? (64 + settings.topInset) : settings.topInset
 
             Image {
                 id: railLogo
                 width: 32
                 height: 32
-                y: settings.topInset + 16
+                // Logo 在标题栏内垂直居中
+                y: (settings.topInset - height) / 2
                 x: app.expanded ? 24 : (parent.width - width) / 2
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 visible: rail.showRailBrand
@@ -195,6 +203,38 @@ Rectangle {
                 font.pixelSize: Theme.typography.titleMedium.size
             }
         }
+
+        // Brand mark below the header strip: the app icon + "QPlayer" wordmark.
+        // On Windows the header strip itself sits behind the custom title bar
+        // (which already draws the same mark), so showRailBrand is false there
+        // and this copy shows instead — the rail still reads as the app. When
+        // showRailBrand is true (mobile/edge-to-edge), the header's own logo
+        // already covers it, so this hides (implicitHeight collapses to 0) to
+        // avoid a second logo.
+        headerActions: Item {
+            implicitHeight: visible ? 56 : 0
+            visible: !rail.showRailBrand
+
+                Image {
+                    id: actionsLogo
+                    width: 32
+                    height: 32
+                    anchors.centerIn: parent
+                    anchors.horizontalCenterOffset: -40
+                    source: "app-icon.png"
+                    sourceSize.width: 64
+                    sourceSize.height: 64
+                }
+                Text {
+                    anchors.left: actionsLogo.right
+                    anchors.leftMargin: 8
+                    anchors.verticalCenter: actionsLogo.verticalCenter
+                    text: "QPlayer"
+                    color: Theme.color.onSurfaceColor
+                    font.family: Theme.typography.titleLarge.family
+                    font.pixelSize: Theme.typography.titleLarge.size
+                }
+        }
     }
 
     TopAppBar {
@@ -211,6 +251,14 @@ Rectangle {
             type: "standard"
             icon: "queue_music"
             onClicked: app.openOverlay("queue")
+        }
+        IconButton {
+            type: "standard"
+            icon: "download"
+            onClicked: {
+                player.refreshCachedSongs()
+                app.openOverlay("cachedSongs")
+            }
         }
         IconButton {
             type: "standard"
@@ -317,6 +365,17 @@ Rectangle {
                 Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 onBack: app.accountOpen = false
             }
+
+            CachedSongsDialog {
+                width: parent.width
+                height: parent.height
+                visible: opacity > 0.001
+                opacity: app.cacheListOpen ? 1 : 0
+                y: app.cacheListOpen ? 0 : 32
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                onBack: app.cacheListOpen = false
+            }
         }
     }
 
@@ -414,7 +473,7 @@ Rectangle {
 
     // In-app update download progress, driven by the host (-1 idle, 0..100, -2 fail).
     property int updateProgWatch: player.updateProgress
-    onUpdateProgWatchChanged: if (player.updateProgress === -2) { snack.text = "更新下载失败，请稍后重试"; snack.open() }
+    onUpdateProgWatchChanged: if (player.updateProgress === -2) { snack.show("更新下载失败，请稍后重试") }
 
     Rectangle {
         visible: player.updateProgress >= 0 && player.updateProgress < 100
@@ -434,7 +493,7 @@ Rectangle {
         }
     }
 
-    Snackbar { id: snack }
+    ToastStack { id: snack }
 
     // Windows-only custom title bar (see TitleBar.qml / WinFrameless.java /
     // WindowChrome.java). hostWindow is registered on EVERY platform (a real,

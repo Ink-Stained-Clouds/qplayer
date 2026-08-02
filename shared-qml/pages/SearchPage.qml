@@ -7,7 +7,8 @@ import "../components"
 // 搜索页：空输入显示搜索历史 + 热门搜索，输入时实时搜索，结果可点击播放。
 Item {
     id: page
-    property bool historyExpanded: false
+    // 0 = 折叠(5条), 1 = 展开第一段(30条), 2 = 展开全部(100条)
+    property int historyExpandLevel: 0
 
     Component.onCompleted: player.loadHotSearches()
 
@@ -32,7 +33,7 @@ Item {
                 // to run on every keystroke unlike the netease search() call.
                 onTextChanged: {
                     if (text.length > 0) { player.search(text); player.searchLocal(text); player.searchCustom(text) }
-                    else page.historyExpanded = false
+                    else page.historyExpandLevel = 0
                 }
                 onAccepted: {
                     if (query.text.length > 0) {
@@ -69,25 +70,27 @@ Item {
             visible: query.text.length === 0
 
             property int rowH: 44
-            // Collapsed view stays short (a quick glance, not a full list); "展开更多"
-            // reveals the rest, up to however much PlayerController.HISTORY_MAX keeps.
+            // 分段展开: 5条(折叠) -> 30条(第一段) -> 100条(全部)
             property int collapsedCount: 5
-            property int histCount: player.searchHistory
-                ? (player.searchHistory.length <= collapsedCount || page.historyExpanded
-                   ? player.searchHistory.length : collapsedCount)
-                : 0
+            property int firstExpandCount: 30
+            property int fullCount: 100
+            property int histCount: player.searchHistory ? player.searchHistory.length : 0
+            property int displayCount: {
+                if (histCount === 0) return 0
+                if (page.historyExpandLevel === 0) return Math.min(collapsedCount, histCount)
+                if (page.historyExpandLevel === 1) return Math.min(firstExpandCount, histCount)
+                return Math.min(fullCount, histCount)
+            }
             property int hotCount: player.hotSearches ? player.hotSearches.length : 0
             property bool hasHistory: player.searchHistory && player.searchHistory.length > 0
-            // Row shows either way once there's more than a collapsed screenful —
-            // "展开更多" while collapsed, "收起" once expanded.
-            property bool showExpandToggle: player.searchHistory
-                ? player.searchHistory.length > collapsedCount : false
+            // 显示展开/收起按钮的条件：有超过 5 条历史记录
+            property bool showExpandToggle: histCount > collapsedCount
 
             // section y-offsets (explicit, no Column)
             property int histHeaderY: hasHistory ? 16 : 0
             property int histHeaderH: hasHistory ? 48 : 0
             property int histRowsY: histHeaderY + histHeaderH
-            property int histRowsH: histCount * rowH
+            property int histRowsH: displayCount * rowH
             property int expandY: histRowsY + histRowsH
             property int expandH: showExpandToggle ? 40 : 0
             property int dividerY: expandY + expandH + (hasHistory && hotCount > 0 ? 8 : 0)
@@ -192,24 +195,52 @@ Item {
                     }
                 }
 
-                // --- Expand / collapse button ---
+                // --- Expand / collapse buttons ---
                 Item {
                     x: 16; y: hotArea.expandY
                     width: hotArea.width - 32; height: hotArea.expandH
                     visible: hotArea.showExpandToggle
 
+                    // 收起按钮：在 level 1 和 level 2 时显示
                     Rectangle {
-                        anchors.fill: parent; radius: 8
+                        visible: page.historyExpandLevel >= 1
+                        anchors.left: parent.left
+                        width: page.historyExpandLevel === 1 && hotArea.histCount > hotArea.firstExpandCount ? parent.width / 2 - 4 : parent.width
+                        height: parent.height
+                        radius: 8
+                        color: collapseMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "收起"
+                            font.pixelSize: 14; color: Theme.color.primary
+                        }
+                        MouseArea {
+                            id: collapseMA
+                            anchors.fill: parent
+                            onClicked: page.historyExpandLevel = 0
+                        }
+                    }
+
+                    // 展开更多按钮：在 level 0 和 level 1 时显示
+                    Rectangle {
+                        visible: page.historyExpandLevel <= 1 && hotArea.histCount > (page.historyExpandLevel === 0 ? hotArea.collapsedCount : hotArea.firstExpandCount)
+                        anchors.right: parent.right
+                        width: page.historyExpandLevel === 1 && hotArea.histCount > hotArea.firstExpandCount ? parent.width / 2 - 4 : parent.width
+                        height: parent.height
+                        radius: 8
                         color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
                         Text {
                             anchors.centerIn: parent
-                            text: page.historyExpanded ? "收起" : "展开更多"
+                            text: "展开更多"
                             font.pixelSize: 14; color: Theme.color.primary
                         }
                         MouseArea {
                             id: expandMA
                             anchors.fill: parent
-                            onClicked: page.historyExpanded = !page.historyExpanded
+                            onClicked: {
+                                if (page.historyExpandLevel === 0) page.historyExpandLevel = 1
+                                else if (page.historyExpandLevel === 1) page.historyExpandLevel = 2
+                            }
                         }
                     }
                 }

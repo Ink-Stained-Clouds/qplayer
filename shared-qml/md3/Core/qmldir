@@ -14,6 +14,8 @@ Button 1.0 Button.qml
 Dialog 1.0 Dialog.qml
 Slider 1.0 Slider.qml
 Snackbar 1.0 Snackbar.qml
+ToastSlot 1.0 ToastSlot.qml
+ToastStack 1.0 ToastStack.qml
 NavigationBar 1.0 NavigationBar.qml
 SegmentedButton 1.0 SegmentedButton.qml
 Breadcrumb 1.0 Breadcrumb.qml

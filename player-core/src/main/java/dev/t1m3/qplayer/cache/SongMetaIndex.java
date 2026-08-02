@@ -104,6 +104,17 @@ public final class SongMetaIndex {
         return out;
     }
 
+    /** Snapshot of every indexed song, most-recently-seen first. Used to build the
+     *  offline "已缓存" list (filtered by {@link DiskCache#hasAudio} in the caller). */
+    public List<NeteaseSong> all() {
+        List<NeteaseSong> snapshot;
+        synchronized (byId) {
+            snapshot = new ArrayList<>(byId.values());
+        }
+        Collections.reverse(snapshot);
+        return snapshot;
+    }
+
     public void save() {
         if (!dirty) return;
         try {

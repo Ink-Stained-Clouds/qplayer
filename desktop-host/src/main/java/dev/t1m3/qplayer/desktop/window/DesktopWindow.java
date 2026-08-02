@@ -91,6 +91,8 @@ public final class DesktopWindow {
     // WinFrameless is created per createWindow() call (see its own javadoc for why).
     private WindowChrome windowChrome;
     private WinFrameless frameless;
+    // 确保nudgeResizeOnce只调用一次，避免从托盘恢复时累积增加窗口尺寸
+    private boolean nudgeApplied = false;
 
     public DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
                   PlayerController controller, SettingsCore settings) {
@@ -445,9 +447,15 @@ public final class DesktopWindow {
             // createWindow() runs, or a stale one could receive a callback for an
             // already-destroyed window.
             if (windowChrome == null) windowChrome = new WindowChrome(this);
-            frameless = new WinFrameless();
-            frameless.install(this, TITLE_BAR_HEIGHT);
-            settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+            if (isWindows11OrLater()) {
+                // Win11+: use custom frameless title bar with rounded corners
+                frameless = new WinFrameless();
+                frameless.install(this, TITLE_BAR_HEIGHT);
+                settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+            } else {
+                // Win10 and earlier: use system decoration, no custom title bar
+                settings.setInsets(0, settings.bottomInset.peek());
+            }
         }
         cacheFramebufferAndScale();
         cacheRefreshRate();
@@ -491,8 +499,12 @@ public final class DesktopWindow {
      *  cold-start settle issue), not a bug in this app's own bindings. A real
      *  WM_SIZE round trip reliably un-sticks it (confirmed live), so nudge the
      *  window size by 1px and back once, right after the first frame is shown --
-     *  imperceptible, and only runs when the custom title bar is actually active. */
+     *  imperceptible, and only runs when the custom title bar is actually active.
+     *
+     *  只在首次启动时调用一次，避免从托盘恢复时累积增加窗口尺寸。*/
     private void nudgeResizeOnce() {
+        if (nudgeApplied) return;
+        nudgeApplied = true;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer w = stack.mallocInt(1), h = stack.mallocInt(1);
             GLFW.glfwGetWindowSize(window, w, h);
@@ -506,8 +518,47 @@ public final class DesktopWindow {
         return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
     }
 
+    /** Returns true on Windows 11+ (build 22000+), where DWM corner preference
+     *  and the custom frameless title bar with rounded corners are supported.
+     *  Windows 10 and earlier will use the system-provided window decoration. */
+    private static boolean isWindows11OrLater() {
+        if (!isWindows()) return false;
+        try {
+            String ver = System.getProperty("os.version", "");
+            // Windows 11 starts at build 22000, which reports os.version=10.0
+            // but the build number is available via os.version or registry.
+            // Actually, Windows 10 and 11 both report "10.0" as os.version.
+            // We need to check the build number from the registry.
+            var process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v CurrentBuildNumber"});
+            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.startsWith("CurrentBuildNumber")) {
+                    String buildStr = line.replaceAll(".*?\\s+(\\d+)", "$1").trim();
+                    int build = Integer.parseInt(buildStr);
+                    return build >= 22000;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /** Windows-only chrome polish. GLFW creates a plain top-level window with the
+     *  OS's default (light) frame; a Windows 11 desktop won't necessarily round its
+     *  corners on its own (the DWM heuristic that does this automatically doesn't
+     *  reliably trigger for a bare GL/Vulkan-surfaced window), and the frame stays
+     *  light even though the UI right below it is dark — both need an explicit
+     *  opt-in via DwmSetWindowAttribute. Read the theme once at window creation
+     *  (same "restart to apply" convention as the font selection above) rather than
+     *  wiring a live listener for a mid-session theme switch. Best-effort: any
+     *  failure (pre-Windows-11 corner attribute, no dwmapi, ...) just leaves the OS
+     *  default frame, so this never blocks startup.
+     *
+     *  Note: 圆角窗口仅在 Windows 11+ 上支持。Linux 不支持圆角窗口，Mac 未测试。
+     *  非 Windows 平台会跳过此方法，使用系统默认窗口样式。*/
     private void applyWindowsDwmChrome() {
-        if (!isWindows()) return;
+        if (!isWindows11OrLater()) return;
         try {
             long hwnd = GLFWNativeWin32.glfwGetWin32Window(window);
             com.sun.jna.Pointer h = com.sun.jna.Pointer.createConstant(hwnd);

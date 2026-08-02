@@ -452,6 +452,9 @@ public final class PlayerController {
     public final Property<Boolean> queueOpen = new Property<>(false);
     /** Snapshot of {@link #customPlaylist} for the queue page's second tab. */
     public final Property<List<Track>> customPlaylistTracks = new Property<>(Collections.<Track>emptyList());
+    /** Snapshot of the offline-cached netease songs (cache/audio/*.cache), shown in
+     *  the rail's download menu; rebuilt on open via {@link #refreshCachedSongs}. */
+    public final Property<List<Track>> cachedSongs = new Property<>(Collections.<Track>emptyList());
 
     // --- Account ----------------------------------------------------------
     public final Property<Boolean> loggedIn = new Property<>(false);
@@ -565,9 +568,9 @@ public final class PlayerController {
         java.util.function.Consumer<String> c = clipboard;
         if (c != null) {
             c.accept(url);
-            toast.set("已复制链接");
+            showToast("已复制链接");
         } else {
-            toast.set(url);
+            showToast(url);
         }
     }
 
@@ -1143,13 +1146,119 @@ public final class PlayerController {
         if (songId == 0 || isInCustomPlaylist(songId)) return;
         Track t = findLiveTrack(songId);
         if (t == null) {
-            toast.set("添加失败");
+            showToast("添加失败");
             return;
         }
         customPlaylist.add(t);
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        toast.set("已加入播放列表");
+        showToast("已加入播放列表");
         worker.submit(this::saveCustomPlaylist);
+    }
+
+    /** The track list behind {@link #cachedSongs}, kept so {@link #playCachedSong}
+     *  can re-queue it without touching the (render-thread) Property directly. */
+    private final List<Track> cachedSongTracks = new ArrayList<>();
+
+    /** Cache a netease song's audio to disk for offline replay (song long-press
+     *  menu). No-op with a toast when already cached; otherwise reuses the same
+     *  url-resolution pipeline as playback (official url, then unblock sources)
+     *  on the worker thread, then downloads through {@link #cacheAudioAsync}. */
+    public void cacheSong(long songId) {
+        if (songId == 0) {
+            showToast("无法缓存");
+            return;
+        }
+        if (diskCache.hasAudio(songId)) {
+            showToast("这首歌已缓存");
+            return;
+        }
+        Track t = findLiveTrack(songId);
+        if (t != null && t.streamUrl != null && !t.trial) {
+            cacheAudioAsync(t, () -> showToast(diskCache.hasAudio(songId)
+                    ? "缓存完成" : "缓存失败"));
+            showToast("已开始缓存");
+            return;
+        }
+        final String title = t != null ? t.title : "";
+        final String artist = t != null ? t.artist : "";
+        final String album = t != null ? t.album : "";
+        final String cover = t != null ? t.coverUrl : "";
+        final long duration = t != null ? t.durationMs : 0;
+        worker.submit(() -> {
+            try {
+                NeteaseClient.UrlInfo info = netease.songUrlInfo(songId, playLevel);
+                String url = (info != null && !info.trial) ? info.url : null;
+                if (url == null && unblockEnabled) {
+                    url = SongUnblocker.resolve(songId, title, artist);
+                }
+                // 与真实播放一致：官方源被 VIP 限流时走换源，换源成功即缓存
+                // （只有两者都拿不到非试听 URL 才算失败）。
+                if (url == null) {
+                    showToast("无法缓存：仅可试听");
+                    return;
+                }
+                Track c = new Track();
+                c.source = Track.Source.NETEASE;
+                c.neteaseId = songId;
+                c.title = title;
+                c.artist = artist;
+                c.album = album;
+                c.coverUrl = cover;
+                c.durationMs = duration;
+                c.streamUrl = url;
+                cacheAudioAsync(c, () -> showToast(diskCache.hasAudio(songId)
+                        ? "缓存完成" : "缓存失败"));
+                showToast("已开始缓存");
+            } catch (Throwable e) {
+                Logger.warn("cache song {} failed: {}", songId, e.getMessage());
+                showToast("缓存失败");
+            }
+        });
+    }
+
+    /** Rebuild {@link #cachedSongs} from the audio cache dir + the metadata index.
+     *  Called by the rail's download menu when it opens. Cheap: one directory
+     *  listing + a membership check per indexed song — no per-file I/O beyond that. */
+    public void refreshCachedSongs() {
+        try {
+            java.util.Set<Long> ids = new java.util.HashSet<>();
+            java.io.File dir = new java.io.File(diskCache.baseDir(), DiskCache.AUDIO);
+            java.io.File[] files = dir.listFiles();
+            if (files != null) {
+                for (java.io.File f : files) {
+                    String n = f.getName();
+                    if (n.endsWith(".cache")) {
+                        try {
+                            ids.add(Long.parseLong(n.substring(0, n.length() - ".cache".length())));
+                        } catch (NumberFormatException ignore) {
+                        }
+                    }
+                }
+            }
+            List<Track> out = new ArrayList<>();
+            for (NeteaseSong s : songMetaIndex.all()) {
+                if (ids.contains(s.id)) {
+                    Track t = toTrack(s);
+                    // Prefer an on-disk thumbnail so the cached list renders fully
+                    // offline; toTrack's fallback is the network thumb URL.
+                    String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "512"));
+                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+                    if (localThumb != null) t.coverThumbPath = localThumb;
+                    out.add(t);
+                }
+            }
+            cachedSongTracks.clear();
+            cachedSongTracks.addAll(out);
+            cachedSongs.set(new ArrayList<>(out));
+        } catch (Throwable e) {
+            Logger.warn("refreshCachedSongs failed: {}", e.getMessage());
+        }
+    }
+
+    /** Play the offline-cached list starting at a slot (rail download-menu tap). */
+    public void playCachedSong(int i) {
+        if (i < 0 || i >= cachedSongTracks.size()) return;
+        playQueue(new ArrayList<>(cachedSongTracks), i);
     }
 
     /** Remove a netease song from the custom playlist by id (song long-press menu). */
@@ -1158,7 +1267,7 @@ public final class PlayerController {
             if (t.neteaseId == songId) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                toast.set("已移出播放列表");
+                showToast("已移出播放列表");
                 worker.submit(this::saveCustomPlaylist);
                 return;
             }
@@ -1185,12 +1294,12 @@ public final class PlayerController {
         Track found = null;
         for (Track t : library) if (filePath.equals(t.filePath)) { found = t; break; }
         if (found == null) {
-            toast.set("添加失败");
+            showToast("添加失败");
             return;
         }
         customPlaylist.add(found);
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        toast.set("已加入播放列表");
+        showToast("已加入播放列表");
         worker.submit(this::saveCustomPlaylist);
     }
 
@@ -1201,7 +1310,7 @@ public final class PlayerController {
             if (t.source == Track.Source.LOCAL && filePath.equals(t.filePath)) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                toast.set("已移出播放列表");
+                showToast("已移出播放列表");
                 worker.submit(this::saveCustomPlaylist);
                 return;
             }
@@ -2139,8 +2248,12 @@ public final class PlayerController {
     }
 
     /** Cache a netease track's audio to disk (off-thread) for local replay. Skips
-     *  trial/preview clips and tracks lacking an id or resolved url. */
-    private void cacheAudioAsync(Track t) {
+     *  trial/preview clips and tracks lacking an id or resolved url. When
+     *  {@code onDone} is non-null it runs on the render thread after the download
+     *  finishes (success or failure) — used by {@link #cacheSong} so the user gets
+     *  a completion toast; playback's auto-cache paths pass {@code null} and stay
+     *  silent. */
+    private void cacheAudioAsync(Track t, Runnable onDone) {
         if (t == null || t.trial || t.neteaseId == 0 || t.streamUrl == null) return;
         final String url = t.streamUrl;
         final long nid = t.neteaseId;
@@ -2152,8 +2265,13 @@ public final class PlayerController {
         cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
             songMetaIndex.save();
+            if (onDone != null) post(onDone);
         });
         cacheThumb64Async(t.coverUrl);
+    }
+
+    private void cacheAudioAsync(Track t) {
+        cacheAudioAsync(t, null);
     }
 
     /** A 64x64 cover thumbnail for offline playlist browsing (PlaylistCacheIndex
@@ -2253,7 +2371,7 @@ public final class PlayerController {
                         Logger.warn("netease song {} has no url (blocked/VIP/login required)", songId);
                         post(() -> {
                             loading.set(false);   // nothing will start — stop the sweep
-                            toast.set(netease.isLoggedIn()
+                            showToast(netease.isLoggedIn()
                                     ? "无法播放：VIP/灰色歌曲" : "无法播放：请先登录");
                         });
                         return;
@@ -2261,8 +2379,8 @@ public final class PlayerController {
                     t.streamUrl = playUrl;
                     t.trial = isTrialOnly;
                     post(() -> {
-                        if (isUnblocked) toast.set("已为该歌曲自动换源");
-                        else if (isTrialOnly) toast.set("当前歌曲仅可试听");
+                        if (isUnblocked) showToast("已为该歌曲自动换源");
+                        else if (isTrialOnly) showToast("当前歌曲仅可试听");
                         title.set(orEmpty(t.title));
                         artist.set(orEmpty(t.artist));
                         album.set(orEmpty(t.album));
@@ -2303,7 +2421,7 @@ public final class PlayerController {
                         Logger.warn("custom-api song {} has no url", id);
                         post(() -> {
                             loading.set(false);
-                            toast.set("无法播放：自定义源解析失败");
+                            showToast("无法播放：自定义源解析失败");
                         });
                         return;
                     }
@@ -2726,7 +2844,7 @@ public final class PlayerController {
                     // leave the page blank with zero explanation (looked stuck,
                     // not "no matches"); this covers both "no network + found
                     // some cached matches" and "no network + nothing matched".
-                    toast.set(offline.isEmpty()
+                    showToast(offline.isEmpty()
                         ? "当前无网络，且没有找到本地缓存结果"
                         : "当前无网络，显示本地缓存结果");
                 });
@@ -3083,7 +3201,7 @@ public final class PlayerController {
             post(() -> {
                 if (currentPlaylistId != playlistId) return;
                 playlistLoading.set(false);
-                toast.set("当前无网络，且未缓存过该歌单");
+                showToast("当前无网络，且未缓存过该歌单");
             });
             return;
         }
@@ -3098,7 +3216,7 @@ public final class PlayerController {
             playlistTracks.set(offline);
             playlistLoading.set(false);
             playlistOffline.set(true);
-            toast.set("当前无网络，显示已缓存的歌单内容");
+            showToast("当前无网络，显示已缓存的歌单内容");
         });
         scheduleOfflineRetry(playlistId);
     }
@@ -3123,7 +3241,7 @@ public final class PlayerController {
             if (!Boolean.TRUE.equals(playlistOffline.peek())) return; // already back online
             try {
                 fetchAndPublishPlaylist(playlistId);
-                post(() -> { if (currentPlaylistId == playlistId) toast.set("网络已恢复，歌单已更新"); });
+                post(() -> { if (currentPlaylistId == playlistId) showToast("网络已恢复，歌单已更新"); });
             } catch (Throwable e) {
                 scheduleOfflineRetry(playlistId); // still offline -- try again in another 20s
             }
@@ -3172,7 +3290,7 @@ public final class PlayerController {
                 subscribeBusy = false;
                 if (currentPlaylistId != id) return;
                 if (done) {
-                    toast.set(target ? "已收藏歌单" : "已取消收藏");
+                    showToast(target ? "已收藏歌单" : "已取消收藏");
                     loadMyPlaylists();   // reflect the change in 我的
                 } else {
                     playlistSubscribed.set(!target);   // revert the optimistic flip; no auto-retry
@@ -3250,7 +3368,7 @@ public final class PlayerController {
         post(() -> {
             myPlaylists.set(offline);
             playlistCount.set(offline.size());
-            toast.set("当前无网络，显示已缓存的歌单列表");
+            showToast("当前无网络，显示已缓存的歌单列表");
         });
     }
 
@@ -3264,15 +3382,15 @@ public final class PlayerController {
                 long id = netease.createPlaylist(nm, false);
                 if (id != 0) {
                     post(() -> {
-                        toast.set("歌单已创建");
+                        showToast("歌单已创建");
                         loadMyPlaylists();
                     });
                 } else {
-                    post(() -> toast.set("创建歌单失败"));
+                    showToast("创建歌单失败");
                 }
             } catch (Throwable e) {
                 Logger.warn("create playlist failed: {}", e.getMessage());
-                post(() -> toast.set("创建歌单失败"));
+                showToast("创建歌单失败");
             }
         });
     }
@@ -3291,7 +3409,7 @@ public final class PlayerController {
                 data = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path));
             } catch (Throwable e) {
                 Logger.warn("read cover file {} failed: {}", path, e.getMessage());
-                post(() -> toast.set("读取图片文件失败"));
+                showToast("读取图片文件失败");
                 return;
             }
             uploadPlaylistCover(playlistId, data, new java.io.File(path).getName());
@@ -3308,7 +3426,7 @@ public final class PlayerController {
 
     private void uploadPlaylistCover(long playlistId, byte[] data, String filename) {
         if (data.length == 0) {
-            post(() -> toast.set("图片文件为空"));
+            showToast("图片文件为空");
             return;
         }
         try {
@@ -3316,16 +3434,16 @@ public final class PlayerController {
             boolean ok = imgId != 0 && netease.updatePlaylistCover(playlistId, imgId);
             post(() -> {
                 if (ok) {
-                    toast.set("封面已更新");
+                    showToast("封面已更新");
                     if (currentPlaylistId == playlistId) openPlaylist(playlistId);
                     loadMyPlaylists();
                 } else {
-                    toast.set("封面更新失败");
+                    showToast("封面更新失败");
                 }
             });
         } catch (Throwable e) {
             Logger.warn("set playlist cover {} failed: {}", playlistId, e.getMessage());
-            post(() -> toast.set("封面更新失败"));
+            showToast("封面更新失败");
         }
     }
 
@@ -3356,15 +3474,15 @@ public final class PlayerController {
             try {
                 if (netease.deletePlaylist(playlistId)) {
                     post(() -> {
-                        toast.set("歌单已删除");
+                        showToast("歌单已删除");
                         loadMyPlaylists();
                     });
                 } else {
-                    post(() -> toast.set("删除歌单失败"));
+                    showToast("删除歌单失败");
                 }
             } catch (Throwable e) {
                 Logger.warn("delete playlist {} failed: {}", playlistId, e.getMessage());
-                post(() -> toast.set("删除歌单失败"));
+                showToast("删除歌单失败");
             }
         });
     }
@@ -3375,10 +3493,10 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, true);
-                post(() -> toast.set(ok ? "已添加到歌单" : "添加失败"));
+                showToast(ok ? "已添加到歌单" : "添加失败");
             } catch (Throwable e) {
                 Logger.warn("add track {} -> playlist {} failed: {}", songId, playlistId, e.getMessage());
-                post(() -> toast.set("添加失败"));
+                showToast("添加失败");
             }
         });
     }
@@ -3394,12 +3512,12 @@ public final class PlayerController {
             try {
                 boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, false);
                 post(() -> {
-                    toast.set(ok ? "已从歌单移除" : "移除失败");
+                    showToast(ok ? "已从歌单移除" : "移除失败");
                     if (ok && currentPlaylistId == playlistId) openPlaylist(playlistId);
                 });
             } catch (Throwable e) {
                 Logger.warn("remove track {} <- playlist {} failed: {}", songId, playlistId, e.getMessage());
-                post(() -> toast.set("移除失败"));
+                showToast("移除失败");
             }
         });
     }
@@ -3458,8 +3576,8 @@ public final class PlayerController {
                         if (c != null && c.neteaseId == id) currentLiked.set(target);
                     });
                 } else {
-                    post(() -> toast.set(netease.isLoggedIn()
-                            ? (target ? "收藏失败" : "取消收藏失败") : "请先登录"));
+                    showToast(netease.isLoggedIn()
+                            ? (target ? "收藏失败" : "取消收藏失败") : "请先登录");
                 }
             } catch (Throwable e) {
                 Logger.warn("like toggle failed: {}", e.getMessage());
@@ -3616,7 +3734,7 @@ public final class PlayerController {
         myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
         recommendations.set(Collections.<NeteaseSong>emptyList());
         recentSongs.set(Collections.<NeteaseSong>emptyList());
-        toast.set("已退出登录");
+        showToast("已退出登录");
     }
 
     /** Persist the queue + live playback position + play mode right now. The only
@@ -3664,6 +3782,6 @@ public final class PlayerController {
     public void clearDiskCache() {
         diskCache.clearAll();
         refreshCacheSize();
-        toast.set("缓存已清除");
+        showToast("缓存已清除");
     }
 }
