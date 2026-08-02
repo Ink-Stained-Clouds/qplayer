@@ -7,7 +7,7 @@ import "../components"
 // 搜索页：空输入显示搜索历史 + 热门搜索，输入时实时搜索，结果可点击播放。
 Item {
     id: page
-    // 0 = 折叠(5条), 1 = 展开第一段(30条), 2 = 展开全部(100条)
+    // 0 = 折叠(5条), 1 = 展开(30条), 2 = 展开(70条), 3 = 展开全部(100条)
     property int historyExpandLevel: 0
 
     Component.onCompleted: player.loadHotSearches()
@@ -70,17 +70,15 @@ Item {
             visible: query.text.length === 0
 
             property int rowH: 44
-            // 分段展开: 5条(折叠) -> 30条(第一段) -> 100条(全部)
+            // 分段展开: 5条(折叠) -> 30条 -> 70条 -> 100条(全部)
             property int collapsedCount: 5
             property int firstExpandCount: 30
+            property int secondExpandCount: 70
             property int fullCount: 100
             property int histCount: player.searchHistory ? player.searchHistory.length : 0
-            property int displayCount: {
-                if (histCount === 0) return 0
-                if (page.historyExpandLevel === 0) return Math.min(collapsedCount, histCount)
-                if (page.historyExpandLevel === 1) return Math.min(firstExpandCount, histCount)
-                return Math.min(fullCount, histCount)
-            }
+            // 纯三元表达式而非 { ... } block：qml4j 对 block 属性绑定兼容性差，
+            // block 绑定失败会导致 displayCount 失效、布局高度算错。
+            property int displayCount: histCount === 0 ? 0 : (page.historyExpandLevel === 0 ? Math.min(collapsedCount, histCount) : (page.historyExpandLevel === 1 ? Math.min(firstExpandCount, histCount) : (page.historyExpandLevel === 2 ? Math.min(secondExpandCount, histCount) : Math.min(fullCount, histCount))))
             property int hotCount: player.hotSearches ? player.hotSearches.length : 0
             property bool hasHistory: player.searchHistory && player.searchHistory.length > 0
             // 显示展开/收起按钮的条件：有超过 5 条历史记录
@@ -136,7 +134,7 @@ Item {
                     height: hotArea.histRowsH
 
                     Repeater {
-                        model: hotArea.histCount
+                        model: hotArea.displayCount
 
                         Item {
                             width: hotArea.width - 32
@@ -201,11 +199,11 @@ Item {
                     width: hotArea.width - 32; height: hotArea.expandH
                     visible: hotArea.showExpandToggle
 
-                    // 收起按钮：在 level 1 和 level 2 时显示
+                    // 收起按钮：level >= 1 时显示；中间等级(1/2)且还有更多可展开时与展开按钮各占一半
                     Rectangle {
                         visible: page.historyExpandLevel >= 1
                         anchors.left: parent.left
-                        width: page.historyExpandLevel === 1 && hotArea.histCount > hotArea.firstExpandCount ? parent.width / 2 - 4 : parent.width
+                        width: page.historyExpandLevel >= 1 && page.historyExpandLevel <= 2 && hotArea.histCount > (page.historyExpandLevel === 1 ? hotArea.firstExpandCount : hotArea.secondExpandCount) ? parent.width / 2 - 4 : parent.width
                         height: parent.height
                         radius: 8
                         color: collapseMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
@@ -221,11 +219,11 @@ Item {
                         }
                     }
 
-                    // 展开更多按钮：在 level 0 和 level 1 时显示
+                    // 展开更多按钮：level <= 2 且仍有更多时显示
                     Rectangle {
-                        visible: page.historyExpandLevel <= 1 && hotArea.histCount > (page.historyExpandLevel === 0 ? hotArea.collapsedCount : hotArea.firstExpandCount)
+                        visible: page.historyExpandLevel <= 2 && hotArea.histCount > (page.historyExpandLevel === 0 ? hotArea.collapsedCount : (page.historyExpandLevel === 1 ? hotArea.firstExpandCount : hotArea.secondExpandCount))
                         anchors.right: parent.right
-                        width: page.historyExpandLevel === 1 && hotArea.histCount > hotArea.firstExpandCount ? parent.width / 2 - 4 : parent.width
+                        width: page.historyExpandLevel >= 1 && page.historyExpandLevel <= 2 && hotArea.histCount > (page.historyExpandLevel === 1 ? hotArea.firstExpandCount : hotArea.secondExpandCount) ? parent.width / 2 - 4 : parent.width
                         height: parent.height
                         radius: 8
                         color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
@@ -240,6 +238,7 @@ Item {
                             onClicked: {
                                 if (page.historyExpandLevel === 0) page.historyExpandLevel = 1
                                 else if (page.historyExpandLevel === 1) page.historyExpandLevel = 2
+                                else if (page.historyExpandLevel === 2) page.historyExpandLevel = 3
                             }
                         }
                     }
