@@ -412,6 +412,9 @@ Rectangle {
         width: parent.width
         height: parent.height
         visible: player.lyricSlide > 0.001
+        // Desktop hides its custom title bar while the lyric page is open (see the
+        // TitleBar below), so the three title buttons sit flush at the very top.
+        topPad: hostWindow.available ? 6 : settings.topInset + 6
         y: {
             var s = player.lyricSlide;
             return (1 - s * s * (3 - 2 * s)) * height;
@@ -519,7 +522,10 @@ Rectangle {
         x: 0
         y: 0
         width: parent.width
-        visible: hostWindow.available
+        // The lyric page is fully immersive on desktop: the custom bar hides while
+        // it's open so LyricOverlay's own three title buttons can sit flush at the
+        // top (see LyricOverlay.topPad). Symmetric with LyricOverlay.visible.
+        visible: hostWindow.available && !(player.lyricSlide > 0.001)
         height: settings.topInset
         z: 10000
     }

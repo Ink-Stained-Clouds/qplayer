@@ -447,14 +447,20 @@ public final class DesktopWindow {
             // createWindow() runs, or a stale one could receive a callback for an
             // already-destroyed window.
             if (windowChrome == null) windowChrome = new WindowChrome(this);
+            // hostWindow.available drives TitleBar.qml (and NavigationRail's brand
+            // header) -- it must mirror whether the custom title bar is actually
+            // active, not just that we're on Windows. Win10 keeps the system
+            // decoration but would otherwise ALSO show our TitleBar: two title bars.
             if (isWindows11OrLater()) {
                 // Win11+: use custom frameless title bar with rounded corners
                 frameless = new WinFrameless();
                 frameless.install(this, TITLE_BAR_HEIGHT);
                 settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+                windowChrome.available.set(true);
             } else {
                 // Win10 and earlier: use system decoration, no custom title bar
                 settings.setInsets(0, settings.bottomInset.peek());
+                windowChrome.available.set(false);
             }
         }
         cacheFramebufferAndScale();

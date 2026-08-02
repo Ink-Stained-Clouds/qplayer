@@ -19,6 +19,11 @@ Item {
     // lyrics<->cover toggle (the button below / tapping the cover to return).
     property bool coverOnly: player.lyricsCoverOnly || player.coverModeManual
     property bool offsetPanelOpen: false
+    // Top row inset for the three title buttons. Desktop overrides this to 6
+    // (Main.qml hides the custom title bar while the lyric page is open, so the
+    // buttons sit flush at the very top of the window); mobile keeps the status
+    // bar inset so they clear the system bar.
+    property real topPad: settings.topInset + 6
     onOffsetPanelOpenChanged: {
         player.setLyricOffsetPanelOpen(offsetPanelOpen)
         // Synchronize once on entry. Do not feed every player property change back
@@ -87,7 +92,7 @@ Item {
     IconButton {
         id: backBtn
         anchors.top: parent.top
-        anchors.topMargin: settings.topInset + 6
+        anchors.topMargin: overlay.topPad
         anchors.left: parent.left
         anchors.leftMargin: 6
         type: "standard"
@@ -111,7 +116,7 @@ Item {
     IconButton {
         id: offsetBtn
         anchors.top: parent.top
-        anchors.topMargin: settings.topInset + 6
+        anchors.topMargin: overlay.topPad
         anchors.right: parent.right
         anchors.rightMargin: 6
         type: "standard"
@@ -128,7 +133,7 @@ Item {
         id: coverModeBtn
         visible: !overlay.coverOnly
         anchors.top: parent.top
-        anchors.topMargin: settings.topInset + 6
+        anchors.topMargin: overlay.topPad
         anchors.right: offsetBtn.left
         anchors.rightMargin: 6
         type: "standard"
