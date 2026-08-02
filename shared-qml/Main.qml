@@ -219,8 +219,11 @@ Rectangle {
                     id: actionsLogo
                     width: 32
                     height: 32
-                    anchors.centerIn: parent
-                    anchors.horizontalCenterOffset: -40
+                    anchors.verticalCenter: parent.verticalCenter
+                    // 与 rail header 的 logo 一致：扩展时左对齐，收起时居中，
+                    // 而不是固定在居中偏左的位置。
+                    x: app.expanded ? 24 : (parent.width - width) / 2
+                    Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     source: "app-icon.png"
                     sourceSize.width: 64
                     sourceSize.height: 64
