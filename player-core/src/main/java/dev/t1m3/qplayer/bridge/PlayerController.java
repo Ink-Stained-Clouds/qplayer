@@ -1728,8 +1728,13 @@ public final class PlayerController {
         // Note: this must not test for a leading "/" — that only holds for Unix-style
         // paths (Android) and silently breaks Windows desktop, where local-cache cover
         // paths look like "C:\Users\...\covers\<hash>.img" instead.
+        // LOCAL-source only: a NETEASE coverThumbPath can also hold a local 64px offline
+        // thumb (diskCache.getThumb64) — treating that as the now-playing cover would
+        // stick the lyric page / SMTC on a postage-stamp image even while the full-size
+        // cover is a moment away online. Those tracks fall through to the 1024 fetch.
         String localCover = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
-        if (localCover != null && !localCover.startsWith("http://") && !localCover.startsWith("https://")) {
+        if (t.source == Track.Source.LOCAL
+                && localCover != null && !localCover.startsWith("http://") && !localCover.startsWith("https://")) {
             byte[] data = readBytesFromFile(localCover);
             if (data != null && data.length > 0) {
                 // Keep the bytes on the current Track so the media session can read the
@@ -1810,8 +1815,14 @@ public final class PlayerController {
      *  full/thumb copy for a local track, or the disk-cached download for a netease
      *  one; "" when only a remote URL is available. */
     private String coverDiskPath(Track t) {
-        String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
-        if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) return local;
+        // On-disk full/thumb cover files exist only for LOCAL tracks (LibraryCache).
+        // A NETEASE coverThumbPath may instead point at a tiny 64px offline thumb —
+        // never surface that as the now-playing cover; that must come from the
+        // 1024px cache/download below (SMTC/MiniPlayer fall back to the remote URL).
+        if (t.source == Track.Source.LOCAL) {
+            String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
+            if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) return local;
+        }
         if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
             // Must use the same 1024px key updateCover() and loadCoverBytes() cache
             // under: hashing the raw coverUrl points at a file nothing ever writes,
@@ -1831,10 +1842,14 @@ public final class PlayerController {
      *  writing the download to the disk cache). Blocking; call on the worker thread. */
     private byte[] loadCoverBytes(Track t) {
         if (t.coverBytes != null) return t.coverBytes;
-        String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
-        if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) {
-            byte[] d = readBytesFromFile(local);
-            if (d != null && d.length > 0) return d;
+        // Same LOCAL-only rule as updateCover/coverDiskPath: a local coverThumbPath on
+        // a netease track is its 64px offline thumb, not the now-playing artwork.
+        if (t.source == Track.Source.LOCAL) {
+            String local = t.coverLocalPath != null ? t.coverLocalPath : t.coverThumbPath;
+            if (local != null && !local.startsWith("http://") && !local.startsWith("https://")) {
+                byte[] d = readBytesFromFile(local);
+                if (d != null && d.length > 0) return d;
+            }
         }
         if (t.coverUrl == null || t.coverUrl.isEmpty()) return null;
         // Same 1024px cap as updateCover() -- see its comment for why.
@@ -2611,6 +2626,15 @@ public final class PlayerController {
                 sb.append(",\"durationMs\":").append(t.durationMs);
                 if (t.filePath != null) sb.append(",\"filePath\":").append(jsonStr(t.filePath));
                 if (t.contentUri != null) sb.append(",\"contentUri\":").append(jsonStr(t.contentUri));
+                // Persist the local cover path: without it a restored LOCAL track
+                // has null coverLocalPath/coverThumbPath, so updateCover() bails
+                // and the now-playing card / SMTC keeps no artwork across restarts.
+                // Prefer the full-size cover, fall back to the row thumbnail.
+                if (t.coverLocalPath != null) {
+                    sb.append(",\"coverLocalPath\":").append(jsonStr(t.coverLocalPath));
+                } else if (t.coverThumbPath != null && !t.coverThumbPath.startsWith("http")) {
+                    sb.append(",\"coverLocalPath\":").append(jsonStr(t.coverThumbPath));
+                }
                 sb.append('}');
             }
             sb.append("]}");
@@ -2657,6 +2681,11 @@ public final class PlayerController {
                 if (t.source == Track.Source.LOCAL) {
                     t.filePath   = o.has("filePath")   && !o.get("filePath").isJsonNull()   ? o.get("filePath").getAsString()   : null;
                     t.contentUri = o.has("contentUri") && !o.get("contentUri").isJsonNull() ? o.get("contentUri").getAsString() : null;
+                    // Restore the persisted local cover path (saved as coverLocalPath,
+                    // the full-size cover preferred over the row thumbnail) so updateCover
+                    // has a file to read and the now-playing card / SMTC keeps its art.
+                    t.coverLocalPath = o.has("coverLocalPath") && !o.get("coverLocalPath").isJsonNull()
+                            ? o.get("coverLocalPath").getAsString() : null;
                 } else if (t.source == Track.Source.CUSTOM_API) {
                     // No netease-CDN thumbnail convention for a custom source — the
                     // cover url doubles as its own thumbnail (matches CustomApiClient).
