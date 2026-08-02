@@ -54,6 +54,8 @@ Rectangle {
             list: page.visible ? player.cachedSongs : null
             isLocal: true
             highlightCurrent: false
+            songMenu: true
+            cacheList: true
             onActivated: player.playCachedSong(list.activatedIndex)
         }
     }

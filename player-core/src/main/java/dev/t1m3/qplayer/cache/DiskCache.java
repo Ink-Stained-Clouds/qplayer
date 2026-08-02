@@ -112,6 +112,14 @@ public final class DiskCache {
         return p != null && new File(p).exists();
     }
 
+    /** Delete a single cached audio file (cached-songs list right-click menu). */
+    public boolean deleteAudio(long neteaseId) {
+        String p = audioPath(neteaseId);
+        if (p == null) return false;
+        File f = new File(p);
+        return f.exists() && f.delete();
+    }
+
     public boolean hasLyric(long songId) {
         String p = lyricPath(songId);
         return p != null && new File(p).exists();

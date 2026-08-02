@@ -1261,6 +1261,26 @@ public final class PlayerController {
         playQueue(new ArrayList<>(cachedSongTracks), i);
     }
 
+    /** Delete a cached song's audio from disk (cached-songs list right-click menu).
+     *  Drops the row from {@link #cachedSongs} so the open list updates in place;
+     *  reopening via {@link #refreshCachedSongs} is a fresh disk scan. */
+    public void deleteCachedSong(long songId) {
+        if (songId == 0) return;
+        boolean ok = diskCache.deleteAudio(songId);
+        if (ok) {
+            for (int i = 0; i < cachedSongTracks.size(); i++) {
+                if (cachedSongTracks.get(i).neteaseId == songId) {
+                    cachedSongTracks.remove(i);
+                    break;
+                }
+            }
+            cachedSongs.set(new ArrayList<>(cachedSongTracks));
+            showToast("已删除缓存");
+        } else {
+            showToast("删除失败");
+        }
+    }
+
     /** Remove a netease song from the custom playlist by id (song long-press menu). */
     public void removeFromCustomPlaylist(long songId) {
         for (Track t : customPlaylist) {

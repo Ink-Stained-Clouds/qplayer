@@ -31,6 +31,9 @@ Rectangle {
     property var song: null
     property bool menuEnabled: false
     property bool inOwnedPlaylist: false
+    // Cached-songs list mode (see SongContextMenu.inCacheList): flips the menu's
+    // "缓存此歌曲" entry to "删除缓存".
+    property bool inCacheList: false
     // Latched when a long-press fired, so the release's click doesn't also play the
     // song; cleared when the menu closes (or on the guarded click).
     property bool _menuArmed: false
@@ -238,6 +241,7 @@ Rectangle {
         sourceComponent: SongContextMenu {
             song: row.song
             inOwnedPlaylist: row.inOwnedPlaylist
+            inCacheList: row.inCacheList
             onClosed: row._menuArmed = false
         }
     }

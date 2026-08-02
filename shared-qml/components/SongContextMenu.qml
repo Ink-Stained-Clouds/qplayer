@@ -12,6 +12,9 @@ Menu {
 
     property var song: null
     property bool inOwnedPlaylist: false
+    // Cached-songs list mode: the "缓存此歌曲" entry flips to "删除缓存" (right-click
+    // on CachedSongsDialog rows), so you can drop a song's offline copy on disk.
+    property bool inCacheList: false
 
     // Rebuild the model from the current song + the live playlist list, so it reflects
     // a playlist just created. Called by the row right before open().
@@ -60,7 +63,12 @@ Menu {
         }
         // Cache the track's audio for offline replay. Works signed-out (unblock
         // sources still apply); the bridge skips it with a toast if already cached.
-        items.push({ text: "缓存此歌曲", icon: "download", action: menu._cacheAction(songId) })
+        // In the cached-songs list this flips to "删除缓存" instead.
+        if (menu.inCacheList) {
+            items.push({ text: "删除缓存", icon: "delete", action: menu._removeCacheAction(songId) })
+        } else {
+            items.push({ text: "缓存此歌曲", icon: "download", action: menu._cacheAction(songId) })
+        }
         // Copy link works signed-out too — any netease song has a shareable URL.
         items.push({ text: "复制链接", icon: "link", action: menu._copyAction(songId) })
         menu.model = items
@@ -95,5 +103,8 @@ Menu {
     }
     function _cacheAction(songId) {
         return function() { player.cacheSong(songId) }
+    }
+    function _removeCacheAction(songId) {
+        return function() { player.deleteCachedSong(songId) }
     }
 }

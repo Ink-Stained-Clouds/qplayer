@@ -38,6 +38,9 @@ Flickable {
     // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
     property bool songMenu: false
     property bool ownedPlaylist: false
+    // Rows belong to the cached-songs list: with songMenu on, the row menu's
+    // "缓存此歌曲" entry becomes "删除缓存" (see SongContextMenu.inCacheList).
+    property bool cacheList: false
     // Shows SongRow's offline "cached, plays without network" badge for rows whose
     // modelData.cachedOffline is true. Off by default so this stays a no-op for
     // every list except a playlist detail page that's actually in an offline state
@@ -104,6 +107,7 @@ Flickable {
                 song: view.songMenu ? modelData : null
                 menuEnabled: view.songMenu
                 inOwnedPlaylist: view.ownedPlaylist
+                inCacheList: view.cacheList
                 onActivated: { view.activatedIndex = index; view.activated() }
                 onRemoveRequested: { view.removeIndex = index; view.removeRequested() }
             }
