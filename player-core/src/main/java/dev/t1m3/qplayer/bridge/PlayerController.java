@@ -1159,10 +1159,12 @@ public final class PlayerController {
      *  can re-queue it without touching the (render-thread) Property directly. */
     private final List<Track> cachedSongTracks = new ArrayList<>();
 
-    /** Cache a netease song's audio to disk for offline replay (song long-press
-     *  menu). No-op with a toast when already cached; otherwise reuses the same
-     *  url-resolution pipeline as playback (official url, then unblock sources)
-     *  on the worker thread, then downloads through {@link #cacheAudioAsync}. */
+    /** Cache a netease song to disk for offline replay (song long-press menu):
+     *  audio + thumbnail + full cover + lyrics, so a song cached without ever
+     *  being played is still fully offline-ready. No-op with a toast when already
+     *  cached; otherwise reuses the same url-resolution pipeline as playback
+     *  (official url, then unblock sources) on the worker thread, then downloads
+     *  everything through {@link #cacheSongAsync}. */
     public void cacheSong(long songId) {
         if (songId == 0) {
             showToast("无法缓存");
@@ -1174,7 +1176,7 @@ public final class PlayerController {
         }
         Track t = findLiveTrack(songId);
         if (t != null && t.streamUrl != null && !t.trial) {
-            cacheAudioAsync(t, () -> showToast(diskCache.hasAudio(songId)
+            cacheSongAsync(t, () -> showToast(diskCache.hasAudio(songId)
                     ? "缓存完成" : "缓存失败"));
             showToast("已开始缓存");
             return;
@@ -1206,7 +1208,7 @@ public final class PlayerController {
                 c.coverUrl = cover;
                 c.durationMs = duration;
                 c.streamUrl = url;
-                cacheAudioAsync(c, () -> showToast(diskCache.hasAudio(songId)
+                cacheSongAsync(c, () -> showToast(diskCache.hasAudio(songId)
                         ? "缓存完成" : "缓存失败"));
                 showToast("已开始缓存");
             } catch (Throwable e) {
@@ -2307,6 +2309,39 @@ public final class PlayerController {
 
     private void cacheAudioAsync(Track t) {
         cacheAudioAsync(t, null);
+    }
+
+    /** Manual-cache a netease track (song long-press menu): audio + thumbnail +
+     *  full cover + lyrics, so a song cached without ever being played still shows
+     *  its art and words offline. Playback's own paths cache those separately on
+     *  first play ({@link #updateCover}, {@link #loadNeteaseLyrics}); this makes
+     *  the manual action produce the same fully-offline result up front. Lyrics
+     *  resolve through the same cache-writing chain as playback (AMLL TTML, then
+     *  Netease's own), the cover at the same 1024px key {@link #updateCover} uses.
+     *  All disk-cache-first, so re-caching a track that was already played skips
+     *  the network. Runs on the cache worker; {@code onDone} fires on the render
+     *  thread when the whole job finishes (success or failure). */
+    private void cacheSongAsync(Track t, Runnable onDone) {
+        if (t == null || t.trial || t.neteaseId == 0 || t.streamUrl == null) return;
+        final String url = t.streamUrl;
+        final long nid = t.neteaseId;
+        final String cover = t.coverUrl;
+        // Whatever gets its audio cached is, by definition, playable offline —
+        // remember its title/artist/cover so offline search can actually surface
+        // it later, regardless of whether it was ever a search result itself.
+        songMetaIndex.upsert(nid, t.title, t.artist, t.album, cover, t.durationMs);
+        cacheWorker.submit(() -> {
+            diskCache.cacheAudio(url, nid);
+            // A manually cached song must be fully offline-ready: pull the cover
+            // and lyrics that playback paths only fetch on first play.
+            if (cover != null && !cover.isEmpty()) {
+                diskCache.cacheImage(thumbUrl(cover, "1024"));
+            }
+            fetchNeteaseLyrics(nid);   // disk-caches AMLL TTML and/or .nlrc
+            songMetaIndex.save();
+            if (onDone != null) post(onDone);
+        });
+        cacheThumb64Async(cover);
     }
 
     /** A 64x64 cover thumbnail for offline playlist browsing (PlaylistCacheIndex
