@@ -140,6 +140,7 @@ Rectangle {
     NavigationRail {
         id: rail
         anchors.left: parent.left
+        anchors.leftMargin: settings.leftInset
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         visible: app.wide
@@ -174,8 +175,9 @@ Rectangle {
                 id: railLogo
                 width: 32
                 height: 32
-                // Logo 在标题栏内垂直居中
-                y: (settings.topInset - height) / 2
+                // Logo 在标题栏内垂直居中；topInset 为 0（全屏时无系统栏）
+                // 时仍要落在可视区内，否则会顶出屏幕上半截。
+                y: Math.max(0, (settings.topInset - height) / 2)
                 x: app.expanded ? 24 : (parent.width - width) / 2
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 visible: rail.showRailBrand
@@ -246,6 +248,7 @@ Rectangle {
         anchors.topMargin: settings.topInset   // clear the status bar (edge-to-edge)
         anchors.left: rail.right
         anchors.right: parent.right
+        anchors.rightMargin: settings.rightInset
         height: 64
         title: app.titles[app.page]
         showNavigationIcon: false
@@ -287,6 +290,7 @@ Rectangle {
         anchors.top: topBar.bottom
         anchors.left: rail.right
         anchors.right: parent.right
+        anchors.rightMargin: settings.rightInset
         anchors.bottom: mini.top
         clip: true
 
@@ -386,6 +390,7 @@ Rectangle {
         id: mini
         anchors.left: rail.right
         anchors.right: parent.right
+        anchors.rightMargin: settings.rightInset
         anchors.bottom: bottomNav.top
         height: 84
         onLyricsRequested: player.setLyricsOpen(true)
@@ -398,6 +403,7 @@ Rectangle {
         id: bottomNav
         anchors.left: rail.right
         anchors.right: parent.right
+        anchors.rightMargin: settings.rightInset
         anchors.bottom: parent.bottom
         visible: !app.wide
         // Nav content sits in the top 76; the extra height is background that fills
@@ -412,7 +418,8 @@ Rectangle {
     // layer -- same smoothstep(player.lyricSlide) offset the host applies.
     LyricOverlay {
         objectName: "lyricChrome"   // host renders this subtree in its own pass, over the fluid
-        width: parent.width
+        x: settings.leftInset
+        width: parent.width - settings.leftInset - settings.rightInset
         height: parent.height
         visible: player.lyricSlide > 0.001
         // Desktop hides its custom title bar while the lyric page is open (see the
@@ -483,8 +490,9 @@ Rectangle {
 
     Rectangle {
         visible: player.updateProgress >= 0 && player.updateProgress < 100
-        anchors.left: parent.left
+        anchors.left: rail.right
         anchors.right: parent.right
+        anchors.rightMargin: settings.rightInset
         anchors.bottom: parent.bottom
         height: 48 + settings.bottomInset
         color: Theme.color.surfaceContainerHigh

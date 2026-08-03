@@ -42,10 +42,12 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     /** Resolved dark flag (mode + system state), read by Main.qml's StyleManager
      *  binding. Derived, never persisted. */
     public final Property<Boolean> resolvedDark = new Property<>(Boolean.FALSE);
-    /** System-bar insets in logical px; Android publishes the real values, desktop
-     *  leaves both at 0. */
+    /** Safe-area insets in logical px; Android publishes system-bar/cutout values,
+     *  desktop leaves the side and bottom values at 0. */
     public final Property<Double> topInset = new Property<>(0.0);
     public final Property<Double> bottomInset = new Property<>(0.0);
+    public final Property<Double> leftInset = new Property<>(0.0);
+    public final Property<Double> rightInset = new Property<>(0.0);
     /** Installed font families for the picker dialog. Not persisted. */
     public final Property<List<String>> availableFontFamilies =
             new Property<>(Collections.emptyList());
@@ -229,10 +231,17 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
 
     // ---- dark mode ----------------------------------------------------------
 
-    /** System-bar insets in logical px (render thread); desktop leaves them at 0. */
-    public void setInsets(double top, double bottom) {
+    /** Safe-area insets in logical px (render thread). */
+    public void setInsets(double left, double top, double right, double bottom) {
+        leftInset.set(left);
         topInset.set(top);
+        rightInset.set(right);
         bottomInset.set(bottom);
+    }
+
+    /** Desktop only reserves a custom title bar at the top. */
+    public void setInsets(double top, double bottom) {
+        setInsets(0, top, 0, bottom);
     }
 
     /** The OS's current dark state; hosts that can observe it live call this on

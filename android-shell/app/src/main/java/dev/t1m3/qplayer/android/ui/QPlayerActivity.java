@@ -36,6 +36,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Music player entry point: builds the {@link PlayerController} over the
@@ -81,6 +82,10 @@ public final class QPlayerActivity extends Activity {
     private QmlGLSurfaceView glView;
     private MetadataReader reader;
     private android.os.Handler mainHandler;
+    /** The content root (glView's FrameLayout parent), used to force the window
+     *  insets to re-dispatch after the system bars are hidden/shown. */
+    private android.view.View rootView;
+    private Consumer<Boolean> lyricsOpenListener;
 
     /** Singleton controller — survives Activity recreations (PiP, config changes)
      *  so playback state and the foreground service stay connected across them. */
@@ -161,6 +166,14 @@ public final class QPlayerActivity extends Activity {
         // re-entering doesn't recompile/reload the whole UI.
         controller.setExitListener(() -> runOnUiThread(() -> moveTaskToBack(true)));
 
+        // Immersive system bars: fullscreen when landscape, and on the lyric page in
+        // portrait too (a dedicated immersive surface). Fires off the render thread, so
+        // hop to the main thread before touching the window.
+        lyricsOpenListener = open -> {
+            runOnUiThread(QPlayerActivity.this::updateImmersive);
+        };
+        controller.lyricsOpen.addListener(lyricsOpenListener);
+
         // Settings: the catalog, the value plumbing and every side effect live in
         // player-core (shared with the desktop host). This host contributes the
         // SharedPreferences store, the platform id, and the actions/live text its
@@ -236,6 +249,7 @@ public final class QPlayerActivity extends Activity {
         enableEdgeToEdge();
         attachInsetListener(rootView);
         applySystemBars(settings.resolvedDarkValue());
+        updateImmersive();
 
         controller.loadHome();
         // The audio-permission dialog is deferred to onSceneReady: requesting it
@@ -527,6 +541,14 @@ public final class QPlayerActivity extends Activity {
                     | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                     | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         }
+        // HarmonyOS treats the status-bar strip as a display cutout and clamps the
+        // window frame inside it (the 108px band we fight in updateImmersive).
+        // Ask the window manager to lay out into that region so the surface can
+        // span the full display once the bar is hidden.
+        if (Build.VERSION.SDK_INT >= 28) {
+            w.getAttributes().layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
         w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
         w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
     }
@@ -534,24 +556,61 @@ public final class QPlayerActivity extends Activity {
     /** Feed the system-bar insets (in QML logical units) to the scene so the chrome
      *  can avoid the status bar and gesture/navigation bar. */
     private void attachInsetListener(android.view.View root) {
-        final float density = getResources().getDisplayMetrics().density;
+        rootView = root;
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top, bottom;
-            if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets bars =
-                        insets.getInsets(android.view.WindowInsets.Type.systemBars());
-                top = bars.top;
-                bottom = bars.bottom;
-            } else {
-                top = insets.getSystemWindowInsetTop();
-                bottom = insets.getSystemWindowInsetBottom();
-            }
-            final double t = top / density;
-            final double b = bottom / density;
-            if (glView != null) glView.queueEvent(() -> settings.setInsets(t, b));
+            pushInsetsToScene(insetsRect(insets));
             return insets;
         });
         root.requestApplyInsets();
+    }
+
+    private static android.graphics.Rect insetsRect(android.view.WindowInsets insets) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.graphics.Insets safe = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars()
+                            | android.view.WindowInsets.Type.displayCutout());
+            return new android.graphics.Rect(safe.left, safe.top, safe.right, safe.bottom);
+        }
+        int left = insets.getSystemWindowInsetLeft();
+        int top = insets.getSystemWindowInsetTop();
+        int right = insets.getSystemWindowInsetRight();
+        int bottom = insets.getSystemWindowInsetBottom();
+        if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+            android.view.DisplayCutout cutout = insets.getDisplayCutout();
+            left = Math.max(left, cutout.getSafeInsetLeft());
+            top = Math.max(top, cutout.getSafeInsetTop());
+            right = Math.max(right, cutout.getSafeInsetRight());
+            bottom = Math.max(bottom, cutout.getSafeInsetBottom());
+        }
+        return new android.graphics.Rect(left, top, right, bottom);
+    }
+
+    /** Push the current system-bar insets (pixels) to the QML scene, converted to
+     *  QML logical units. Main-thread caller; the scene update itself runs on the
+     *  GL render thread via queueEvent. */
+    private void pushInsetsToScene(android.graphics.Rect insets) {
+        final float density = getResources().getDisplayMetrics().density;
+        final double left = insets.left / density;
+        final double top = insets.top / density;
+        final double right = insets.right / density;
+        final double bottom = insets.bottom / density;
+        if (glView != null) {
+            glView.queueEvent(() -> settings.setInsets(left, top, right, bottom));
+        }
+    }
+
+    /** Re-read the window's current system-bar insets and push them to the scene.
+     *  Fallback for API levels / OEM builds that don't re-dispatch
+     *  onApplyWindowInsets when the bars hide, which would otherwise leave the QML
+     *  scene padded by a stale top inset — a blank band where the bar used to be. */
+    private void syncInsetsNow() {
+        android.view.Window w = getWindow();
+        if (w == null) return;
+        android.view.View decor = w.getDecorView();
+        if (decor == null) return;
+        android.view.WindowInsets insets = decor.getRootWindowInsets();
+        if (insets == null) return;
+        pushInsetsToScene(insetsRect(insets));
     }
 
     /** Keep the system bars transparent and flip the bar-icon contrast so they read on
@@ -560,6 +619,72 @@ public final class QPlayerActivity extends Activity {
     private static boolean isSystemDark(android.content.Context ctx) {
         int night = ctx.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         return night == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /** True when the top status bar should be hidden: any landscape view (the whole
+     *  app goes fullscreen), or the portrait lyric page (a dedicated immersive
+     *  surface). Hidden means the top inset collapses to 0 and the QML scene pads
+     *  nothing, so the content uses the full screen. */
+    private void updateImmersive() {
+        android.view.Window w = getWindow();
+        if (w == null || w.peekDecorView() == null) return;
+        boolean immersive = getResources().getConfiguration().orientation
+                        == Configuration.ORIENTATION_LANDSCAPE
+                || (controller != null && Boolean.TRUE.equals(controller.lyricsOpen.peek()));
+        // HarmonyOS places the window below the (even hidden) status bar unless the
+        // window itself carries the fullscreen flag -- the decor-level system UI
+        // visibility flags alone leave the GL surface shrunk by the bar height, so a
+        // band of window background shows where the bar used to be. Drive the bar via
+        // the window flag on top of the immersive behaviour below.
+        if (immersive) {
+            w.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        } else {
+            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = w.getInsetsController();
+            if (c != null) {
+                if (immersive) c.hide(android.view.WindowInsets.Type.statusBars());
+                else c.show(android.view.WindowInsets.Type.statusBars());
+            }
+        } else {
+            android.view.View dv = w.getDecorView();
+            int flags = dv.getSystemUiVisibility();
+            if (immersive) {
+                flags |= android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            } else {
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_FULLSCREEN;
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            }
+            dv.setSystemUiVisibility(flags);
+        }
+        // Hiding/showing the bars changes the window insets. The framework usually
+        // re-dispatches them on its own, but some API levels / OEM builds skip that
+        // for the content root, leaving the QML scene padded by the old top inset
+        // (a blank band where the bar was). Force a re-dispatch, then re-sync the
+        // settled values once the hide/show animation has run.
+        final android.view.View decor = w.getDecorView();
+        decor.post(() -> {
+            if (rootView != null) rootView.requestApplyInsets();
+            syncInsetsNow();
+        });
+        decor.postDelayed(() -> {
+            // HarmonyOS re-fits the window content below the (hidden) status bar,
+            // shrinking the GL surface and leaving a black band where the bar was.
+            // Re-assert edge-to-edge after the bar animation so the surface spans
+            // the full screen again.
+            if (Build.VERSION.SDK_INT >= 30) {
+                w.setDecorFitsSystemWindows(false);
+            } else {
+                int flags = decor.getSystemUiVisibility();
+                flags |= android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+                decor.setSystemUiVisibility(flags);
+            }
+            syncInsetsNow();
+        }, 400);
     }
 
     private void applySystemBars(boolean dark) {
@@ -643,6 +768,7 @@ public final class QPlayerActivity extends Activity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        updateImmersive();
         if (glView != null) {
             glView.onSystemNightChanged(isSystemDark(this));
         }
@@ -658,6 +784,9 @@ public final class QPlayerActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (glView != null) glView.onResume();
+        // System overlays (permission dialogs, PiP, the install grant) can reset the
+        // bar visibility; re-apply the immersive state (and re-sync the insets).
+        updateImmersive();
         // Returning from the unknown-sources grant: resume the parked install (no
         // re-download) now that the permission is in place.
         if (pendingInstallApk != null
@@ -687,6 +816,10 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (controller != null && lyricsOpenListener != null) {
+            controller.lyricsOpen.removeListener(lyricsOpenListener);
+            lyricsOpenListener = null;
+        }
         // Release the controller when idle (not playing). This covers both:
         //   - owner Activities on normal exit
         //   - non-owner Activities (PiP recreations) that outlive the owner
