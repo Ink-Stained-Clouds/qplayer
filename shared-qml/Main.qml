@@ -175,9 +175,10 @@ Rectangle {
                 id: railLogo
                 width: 32
                 height: 32
-                // Logo 在标题栏内垂直居中；topInset 为 0（全屏时无系统栏）
-                // 时仍要落在可视区内，否则会顶出屏幕上半截。
-                y: Math.max(0, (settings.topInset - height) / 2)
+                // topInset is the reserved system/custom-title-bar strip. Centre
+                // the brand in the 64px rail header below it so native desktop
+                // decorations cannot cover its top edge when topInset is 0.
+                y: settings.topInset + (parent.height - settings.topInset - height) / 2
                 x: app.expanded ? 24 : (parent.width - width) / 2
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 visible: rail.showRailBrand
