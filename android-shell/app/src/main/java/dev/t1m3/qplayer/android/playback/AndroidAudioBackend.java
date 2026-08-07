@@ -73,9 +73,9 @@ public final class AndroidAudioBackend implements AudioBackend {
         mp.setOnErrorListener((p, what, extra) -> {
             Logger.error("MediaPlayer error: what={} extra={}", what, extra);
             fire(onError);
-            // Surface as completion so the controller can advance instead of stalling.
-            Runnable cb = onComplete;
-            if (cb != null) cb.run();
+            // PlayerController's error path retries stale URLs once and advances
+            // when that fails. Firing completion too races a second auto-advance
+            // against that recovery and can replace the retried track.
             return true;
         });
         player = mp;

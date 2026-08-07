@@ -3124,9 +3124,13 @@ public final class PlayerController {
                 && t.neteaseId != errorRetryId) {
             errorRetryId = t.neteaseId;
             int idx = playIndex;
-            Logger.warn("playback error on netease track {}, clearing stale url and retrying", t.neteaseId);
+            long backendMs = Math.max(0L, backend.position());
+            Long shown = positionMs.peek();
+            long resumeMs = Math.max(backendMs, shown != null ? shown : 0L);
+            Logger.warn("playback error on netease track {}, clearing stale url and retrying at {}ms",
+                    t.neteaseId, resumeMs);
             t.streamUrl = null;
-            resolveAndPlayNetease(t, idx, 0L);
+            resolveAndPlayNetease(t, idx, resumeMs);
             return;
         }
         skipUnplayable(playIndex, "音频加载失败");

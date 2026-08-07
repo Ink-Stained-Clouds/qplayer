@@ -47,6 +47,7 @@ public final class DesktopAudioBackend implements AudioBackend {
     private volatile Thread audioThread;
     private volatile Runnable onComplete;
     private volatile Runnable onStarted;
+    private volatile Runnable onError;
     private volatile long positionMs = 0L;
     private volatile long durationMs = 0L;
 
@@ -127,6 +128,11 @@ public final class DesktopAudioBackend implements AudioBackend {
     }
 
     @Override
+    public void setOnError(Runnable callback) {
+        this.onError = callback;
+    }
+
+    @Override
     public void release() {
         shuttingDown.set(true);
         playing.set(false);
@@ -154,6 +160,17 @@ public final class DesktopAudioBackend implements AudioBackend {
             return;
         }
         while (!shuttingDown.get()) {
+            // After a decoder/OpenAL failure, do not silently reopen the same source
+            // at 0 while paused. Wait for the controller's error handler to request
+            // a retry (play() publishes a seek target) or for normal playback state.
+            if (!playing.get() && seekTargetMs.get() < 0L) {
+                try {
+                    Thread.sleep(60L);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                continue;
+            }
             boolean reachedEnd = false;
             try {
                 reachedEnd = playCurrentSource();
@@ -165,18 +182,13 @@ public final class DesktopAudioBackend implements AudioBackend {
             } catch (Throwable e) {
                 Logger.exception(e);
                 playing.set(false);
+                Runnable cb = onError;
+                if (cb != null) cb.run();
             }
             if (reachedEnd) {
                 playing.set(false);
                 Runnable cb = onComplete;
                 if (cb != null) cb.run();
-            }
-            if (!playing.get() && seekTargetMs.get() < 0L && !shuttingDown.get()) {
-                try {
-                    Thread.sleep(60L);
-                } catch (InterruptedException e) {
-                    break;
-                }
             }
         }
         releaseOpenAl();
