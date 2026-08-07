@@ -28,6 +28,10 @@ Rectangle {
     property var activeMenu: null
 
     property var titles: ["推荐", "搜索", "我的", "本地"]
+    property bool showLocalTab: settings.value("showLocalTab")
+    onShowLocalTabChanged: {
+        if (!showLocalTab && app.page === 3) app.switchTo(0)
+    }
 
     // Responsive breakpoints (MD3): compact < 600, medium 600–839, expanded ≥ 840.
     // The wide layout (a NavigationRail on the left instead of the bottom bar) is
@@ -37,12 +41,18 @@ Rectangle {
     property bool expanded: app.width >= 840
 
     // Shared nav model for both the bottom bar and the rail.
-    property var navItems: [
-        { icon: "recommend",     text: "推荐" },
-        { icon: "search",        text: "搜索" },
-        { icon: "library_music", text: "我的" },
-        { icon: "folder",        text: "本地" }
-    ]
+    property var navItems: showLocalTab
+        ? [
+            { icon: "recommend",     text: "推荐" },
+            { icon: "search",        text: "搜索" },
+            { icon: "library_music", text: "我的" },
+            { icon: "folder",        text: "本地" }
+          ]
+        : [
+            { icon: "recommend",     text: "推荐" },
+            { icon: "search",        text: "搜索" },
+            { icon: "library_music", text: "我的" }
+          ]
 
     // Rebuild the debug log string only while it's actually shown (its set() forces a
     // full relayout, which periodically stuttered the scene when always rebuilt).
@@ -411,6 +421,7 @@ Rectangle {
         // behind the gesture/navigation bar (edge-to-edge).
         height: app.wide ? 0 : (76 + settings.bottomInset)
         currentIndex: app.page
+        items: app.navItems
         onNavigate: app.switchTo(bottomNav.pendingIndex)
     }
 

@@ -15,15 +15,6 @@ Item {
     property var _colors: Theme.color
     
     // Animation control
-    property bool _initialized: false
-    Component.onCompleted: _initialized = true
-    
-    property real _visualValue: Math.max(0.0, Math.min(1.0, control.value))
-    Behavior on _visualValue {
-        enabled: control._initialized
-        NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
-    }
-    
     // Standard Linear Progress
     Rectangle {
         id: track
@@ -37,7 +28,10 @@ Item {
         Rectangle {
             visible: !control.indeterminate
             height: parent.height
-            width: parent.width * control._visualValue
+            // The player publishes progress about every 200ms. A 200ms Behavior
+            // here gets restarted by every update and can indefinitely trail/freeze
+            // under qml4j, so use the live value just like the wavy canvas below.
+            width: parent.width * Math.max(0.0, Math.min(1.0, control.value))
             color: _colors.primary
             radius: height / 2
         }
@@ -213,4 +207,3 @@ Item {
         onHeightChanged: requestPaint()
     }
 }
-

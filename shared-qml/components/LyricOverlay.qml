@@ -340,7 +340,7 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.topMargin: 18
-            wavy: true
+            wavy: settings.value("lyricProgressStyle") === 0
             visible: player.lyricSlide > 0.001
             // While the next track loads, sweep instead of showing a frozen position.
             indeterminate: player.loading
@@ -490,7 +490,7 @@ Item {
                 anchors.topMargin: 22
                 anchors.left: parent.left
                 anchors.right: parent.right
-                wavy: true
+                wavy: settings.value("lyricProgressStyle") === 0
                 visible: player.lyricSlide > 0.001
                 indeterminate: player.loading
                 value: player.lyricProgress

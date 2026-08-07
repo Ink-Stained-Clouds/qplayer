@@ -13,12 +13,7 @@ Rectangle {
     property int pendingIndex: 0
     signal navigate()
 
-    property var items: [
-        { icon: "recommend",     label: "推荐" },
-        { icon: "search",        label: "搜索" },
-        { icon: "library_music", label: "我的" },
-        { icon: "folder",        label: "本地" }
-    ]
+    property var items: []
 
     implicitHeight: 76
     color: Theme.color.surfaceContainer
@@ -65,7 +60,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: 38
-                    text: modelData.label
+                    text: modelData.text
                     fontSize: 11
                     color: navItem.selected ? Theme.color.onSurfaceColor
                                             : Theme.color.onSurfaceVariantColor

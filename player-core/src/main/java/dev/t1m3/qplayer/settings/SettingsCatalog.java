@@ -67,6 +67,9 @@ public final class SettingsCatalog {
                 .desc("切换后重启软件生效；若 Vulkan 初始化失败，将自动切回 OpenGL")
                 .onlyOn(DESKTOP)
                 .build());
+        out.add(SettingSpec.toggle("showLocalTab", APPEARANCE, "显示本地标签", true)
+                .desc("关闭后隐藏底部导航栏和侧栏中的“本地”入口")
+                .build());
 
         // ---- 播放 -----------------------------------------------------------
         out.add(SettingSpec.toggle("unblock", PLAYBACK, "音源解锁", true)
@@ -116,6 +119,9 @@ public final class SettingsCatalog {
                 .build());
         out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "边缘模糊", false)
                 .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)")
+                .build());
+        out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC, "进度条样式", 0,
+                        "波浪", "直线")
                 .build());
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
                 .desc("动态流动 / 静态(渲染一次,更省电)")

@@ -8,6 +8,10 @@ import io.github.timer_err.qml4j.render.items.input.TextEditable;
 final class QmlInputConnection extends BaseInputConnection {
 
     private final QmlGLSurfaceView view;
+    /** Length of the text currently published through setComposingText().
+     *  Handwriting IMEs often never send key events: they repeatedly replace a
+     *  composing candidate and only finish composition at the end. */
+    private int composingLength;
 
     QmlInputConnection(QmlGLSurfaceView view, boolean fullEditor) {
         super(view, fullEditor);
@@ -58,17 +62,30 @@ final class QmlInputConnection extends BaseInputConnection {
 
     @Override
     public boolean commitText(CharSequence text, int newCursorPosition) {
+        if (composingLength > 0) view.deleteFromIme(composingLength);
         view.commitTextFromIme(text);
+        composingLength = 0;
         return true;
     }
 
     @Override
     public boolean setComposingText(CharSequence text, int newCursorPosition) {
+        if (composingLength > 0) view.deleteFromIme(composingLength);
+        CharSequence value = text != null ? text : "";
+        view.commitTextFromIme(value);
+        composingLength = value.length();
+        return true;
+    }
+
+    @Override
+    public boolean finishComposingText() {
+        composingLength = 0;
         return true;
     }
 
     @Override
     public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+        composingLength = 0;
         view.deleteFromIme(beforeLength);
         return true;
     }

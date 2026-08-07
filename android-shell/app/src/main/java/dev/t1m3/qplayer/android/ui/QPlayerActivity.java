@@ -551,6 +551,13 @@ public final class QPlayerActivity extends Activity {
         }
         w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
         w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+        // Android 10+ may add an opaque contrast scrim behind a transparent
+        // gesture/navigation bar. Some Xiaomi/HyperOS builds render that scrim as
+        // a conspicuous white strip instead of blending it with our QML surface.
+        if (Build.VERSION.SDK_INT >= 29) {
+            w.setStatusBarContrastEnforced(false);
+            w.setNavigationBarContrastEnforced(false);
+        }
     }
 
     /** Feed the system-bar insets (in QML logical units) to the scene so the chrome
@@ -695,6 +702,10 @@ public final class QPlayerActivity extends Activity {
         if (w == null || w.peekDecorView() == null) return;
         w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
         w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 29) {
+            w.setStatusBarContrastEnforced(false);
+            w.setNavigationBarContrastEnforced(false);
+        }
         if (Build.VERSION.SDK_INT >= 30) {
             android.view.WindowInsetsController c = w.getInsetsController();
             if (c != null) {

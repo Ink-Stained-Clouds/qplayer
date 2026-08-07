@@ -306,6 +306,9 @@ public final class PlayerController {
     // when a track actually starts. Stops a persistently-failing track from looping
     // error→re-resolve→error forever instead of advancing.
     private volatile long errorRetryId = -1;
+    /** Number of consecutive tracks that failed before audio actually started.
+     *  Bounds automatic skipping when an entire queue is unavailable. */
+    private volatile int consecutivePlaybackFailures;
     private long lastPositionPush;
     private long lastLogVersion = -1;
     private volatile boolean logVisible = false;
@@ -518,6 +521,7 @@ public final class PlayerController {
         // backend prepares asynchronously, so the position at play() time is stale).
         backend.setOnStarted(() -> {
             errorRetryId = -1;
+            consecutivePlaybackFailures = 0;
             post(() -> loading.set(false));
             notifyPlayback();
             startFadeIn();
@@ -2439,11 +2443,8 @@ public final class PlayerController {
                     if (playIndex != expectedIndex) return; // user moved on
                     if (playUrl == null) {
                         Logger.warn("netease song {} has no url (blocked/VIP/login required)", songId);
-                        post(() -> {
-                            loading.set(false);   // nothing will start — stop the sweep
-                            showToast(netease.isLoggedIn()
-                                    ? "无法播放：VIP/灰色歌曲" : "无法播放：请先登录");
-                        });
+                        skipUnplayable(expectedIndex, netease.isLoggedIn()
+                                ? "VIP/灰色歌曲" : "请先登录");
                         return;
                     }
                     t.streamUrl = playUrl;
@@ -2469,7 +2470,7 @@ public final class PlayerController {
                 });
             } catch (Throwable e) {
                 Logger.warn("netease resolve failed for {}: {}", songId, e.getMessage());
-                post(() -> toast.set("播放失败：" + e.getMessage()));
+                onMain(() -> skipUnplayable(expectedIndex, "解析失败"));
             }
         });
     }
@@ -2489,10 +2490,7 @@ public final class PlayerController {
                     if (playIndex != expectedIndex) return; // user moved on
                     if (url == null) {
                         Logger.warn("custom-api song {} has no url", id);
-                        post(() -> {
-                            loading.set(false);
-                            showToast("无法播放：自定义源解析失败");
-                        });
+                        skipUnplayable(expectedIndex, "自定义源解析失败");
                         return;
                     }
                     t.streamUrl = url;
@@ -2513,7 +2511,7 @@ public final class PlayerController {
                 });
             } catch (Throwable e) {
                 Logger.warn("custom-api resolve failed for {}: {}", id, e.getMessage());
-                post(() -> toast.set("播放失败：" + e.getMessage()));
+                onMain(() -> skipUnplayable(expectedIndex, "自定义源解析失败"));
             }
         });
     }
@@ -3131,7 +3129,31 @@ public final class PlayerController {
             resolveAndPlayNetease(t, idx, 0L);
             return;
         }
-        autoAdvance();
+        skipUnplayable(playIndex, "音频加载失败");
+    }
+
+    /** Stop waiting on an unplayable queue entry and advance once. The failure
+     *  count is reset only by backend.onStarted, so a queue in which every entry
+     *  is blocked makes at most one full pass instead of spinning forever. */
+    private void skipUnplayable(int expectedIndex, String reason) {
+        if (playIndex != expectedIndex) return;
+        consecutivePlaybackFailures++;
+        int failures = consecutivePlaybackFailures;
+        if (queue.size() <= 1 || failures >= queue.size()) {
+            playingIntent = false;
+            backend.pause();
+            post(() -> {
+                loading.set(false);
+                playing.set(false);
+                showToast("无法播放：" + reason);
+            });
+            notifyPlayback();
+            return;
+        }
+        post(() -> showToast("已跳过无法播放的歌曲：" + reason));
+        // Failed tracks must never obey repeat-one, and a deterministic walk avoids
+        // shuffle selecting the same broken entry again before trying the others.
+        playAt((playIndex + 1) % queue.size());
     }
 
     /** Load the home content: recommended songs (login) + recommended playlists. */
