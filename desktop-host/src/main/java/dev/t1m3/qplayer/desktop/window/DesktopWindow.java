@@ -199,6 +199,10 @@ public final class DesktopWindow {
         }
         lastSpawnWasRespawn = false;
         QmlView v = QmlView.withStockTypes(engine).resources(resources);
+        // Cache stable top-level QML subtrees as SkPictures. Enable it before
+        // load() so the constructed Items wire content invalidation from their
+        // first frame; LyricCompositor uses the same cache for settled lyric chrome.
+        v.renderer().setPictureCache(true);
         v.setClipboard(new GlfwClipboard(this));
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);

@@ -390,6 +390,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             try {
                 if (view == null) {
                     view = QmlView.withStockTypes(engine).resources(resources);
+                    // Cache stable top-level QML subtrees as SkPictures. This must be
+                    // enabled before load() so every constructed Item participates in
+                    // content invalidation; the lyric compositor also uses the cache-
+                    // aware render path once its overlay fully covers the main scene.
+                    view.renderer().setPictureCache(true);
                     view.setClipboard(new AndroidClipboard(getContext()));
                     view.setFocusListener((nf, of) -> {
                         if (of instanceof TextEditable && !(nf instanceof TextEditable)) {

@@ -223,7 +223,19 @@ public final class LyricCompositor {
         if (slideNow > 0.001 && lyricChrome != null) {
             int scC = canvas.save();
             canvas.scale(uiScale, uiScale);
-            renderer.renderSubtree(canvas, lyricChrome, lw, lh);
+            if (fullyCovered && renderer.pictureCacheEnabled()) {
+                // renderSubtree() intentionally bypasses qml4j's picture cache. Once
+                // the lyric page is stable and fully covers the main scene, render it
+                // as a temporary root so its static direct children (title/buttons)
+                // replay recorded SkPictures. Continuously-changing progress chrome
+                // is detected by qml4j as a hot spot and falls back to direct drawing.
+                // Keep renderSubtree during the slide transition: alternating cache
+                // roots with the main scene there would release/re-record boundaries
+                // every frame and create the native churn this path is meant to avoid.
+                renderer.render(canvas, lyricChrome, true);
+            } else {
+                renderer.renderSubtree(canvas, lyricChrome, lw, lh);
+            }
             canvas.restoreToCount(scC);
         }
     }
