@@ -64,7 +64,7 @@ public class LyricRenderer {
      * {@link #renderInterludeDots} so short gaps still show dots with
      * fade-in/hold/exit windows scaled down to fit.
      */
-    private static final long INTERLUDE_THRESHOLD_MS = 2000L;
+    private static final long INTERLUDE_THRESHOLD_MS = 7000L;
     /**
      * AMLL trims the effective interlude end by 250 ms so the next
      * line has room to scroll in before it actually starts singing.
@@ -134,16 +134,16 @@ public class LyricRenderer {
      * crossfades from the active bright to the idle dim, so finishing a
      * line doesn't snap the visuals.
      */
-    private static final long ACTIVE_FADE_OUT_MS = 400L;
+    private static final long ACTIVE_FADE_OUT_MS = 250L;
     /**
      * Mirror of {@link #ACTIVE_FADE_OUT_MS} for the lead-in. Starting
      * activeK from 0 at {@code startMs} would snap the line's alpha
      * (idle 0.42 → active × dark-mask 0.2) and read as a sudden dim;
-     * letting it rise over the 200ms before {@code startMs} gives the
+     * letting it rise over the 600ms before {@code startMs} gives the
      * baseAlpha (and the mask's dark alpha) time to crossfade smoothly
      * up to playback levels.
      */
-    private static final long ACTIVE_FADE_IN_MS = 200L;
+    private static final long ACTIVE_FADE_IN_MS = 600L;
     /**
      * BG line scale at rest (idle). 0 means "fully invisible until the
      * group activates" — BG grows out from the main line's bottom corner
@@ -183,7 +183,7 @@ public class LyricRenderer {
      * geometric centre, so upcoming lines have more room below). 0.5
      * would centre exactly; 0.35 matches the reference player layout.
      */
-    private static final float ALIGN_POSITION = 0.35f;
+    private static final float ALIGN_POSITION = 0.38f;
     // Breathing room (fraction of the column) left beyond the first / last line at the
     // scroll extremes: a touch over half the column so the ends have a generous run-out
     // (and the auto-follow keeps centring lines naturally rather than pinning at edges).
@@ -193,7 +193,7 @@ public class LyricRenderer {
     // Inactive lines render at deselectedTransform (0.98×); the active group
     // grows to emphasizingScaleRange's upper bound (1.14×). Interpolated by
     // activeK so the scale crossfades with the highlight rather than snapping.
-    private static final float DESELECTED_SCALE = 0.98f;
+    private static final float DESELECTED_SCALE = 0.97f;
     private static final float EMPHASIS_SCALE = 1.14f;
 
     // ---- Scroll spring tunings (ported from AMLL computeLinePosYSpringParams) --
@@ -202,22 +202,24 @@ public class LyricRenderer {
     // a stiffness that scales with how fast lines are arriving, not from bounce.
     // Stiffness lerps MIN..MAX as the gap between the active line and the previous
     // one shrinks from MAX_INTERVAL to MIN_INTERVAL (fast lines = snappier).
-    private static final double SCROLL_STIFFNESS_MIN = 170.0;
-    private static final double SCROLL_STIFFNESS_MAX = 220.0;
+    private static final double SCROLL_STIFFNESS_MIN = 100.0;
+    private static final double SCROLL_STIFFNESS_MAX = 100.0;
     private static final double SCROLL_INTERVAL_MIN_MS = 100.0;
     private static final double SCROLL_INTERVAL_MAX_MS = 800.0;
-    private static final double SCROLL_DAMPING_MULT = 2.2; // damping = √stiffness × 2.2 → ζ≈1.1
+    private static final double SCROLL_DAMPING_MULT = 1.8; // damping = √stiffness × 1.8 → 18 @ k=100
     // Steadier fixed spring while seeking or during an interlude.
     private static final double SCROLL_STIFFNESS_INTERLUDE = 90.0;
     private static final double SCROLL_DAMPING_INTERLUDE = 15.0;
-    // Non-spring fallback: the previous slightly-overdamped tuning, no cascade.
-    private static final double SCROLL_STIFFNESS_FIRM = 180.0;
-    private static final double SCROLL_DAMPING_FIRM = 28.0;
+    // Non-spring fallback: AMLL lineChangeSpringTimingParameters (stiffness=100, damping=18).
+    private static final double SCROLL_STIFFNESS_FIRM = 100.0;
+    private static final double SCROLL_DAMPING_FIRM = 18.0;
     // Apple liftSpring: mass 1, stiffness 14, damping 7 → ω0=√14, ζ≈0.935.
     private static final double LIFT_OMEGA0 = 3.7416574; // sqrt(14)
     private static final double LIFT_ZETA = 0.935414;    // 7 / (2·√14)
     // Peak opacity of the white glow behind a fully-sung syllable.
     private static final float GLOW_ALPHA = 0.55f;
+    // Minimum syllable duration (ms) to trigger the first/last-word glow.
+    private static final long GLOW_MIN_DWELL_MS = 1500L;
     // Per-line scroll cascade (Apple Specs.lineDelay = 0.05). The active line and
     // everything ABOVE it move together (delay 0) — lockstep preserves their
     // spacing so the active line never rises into a still-stationary line above it
@@ -280,8 +282,8 @@ public class LyricRenderer {
     // and the column visibly bounced back. (28 > 2·√180 ≈ 26.83 is
     // very slightly overdamped, which keeps the motion strictly
     // monotonic toward the target.)
-    private final SpringAnim scrollAnim = new SpringAnim(SCROLL_STIFFNESS_FIRM, SCROLL_DAMPING_FIRM);
-    // Last spring-mode flag the scrollAnim was retuned for; -1 = not yet applied.
+    private final SpringAnim scrollAnim = new SpringAnim(1.0, 18.0, 100.0);
+    private boolean scrollInit = false;
     private int lastSpringMode = -1;
 
     // Wrap layout cache. rowStarts (syllable break indices per line) and the
@@ -315,23 +317,25 @@ public class LyricRenderer {
     private float[] lineTopsBuf = new float[0];
     private float[] effHeightsBuf = new float[0];
     private float[] interludeBuf = new float[0];
-    // Per-line scroll springs (cascade). lineCurTop/lineVelTop track each line's
-    // drawn top + velocity; only the visible window is integrated, off-window lines
-    // snap to target. Active only when spring physics is on.
-    private float[] lineCurTop = new float[0];
-    private float[] lineVelTop = new float[0];
-    // Per-line cascade delay (seconds) over the visible window. Reused buffer.
-    private double[] cascadeDelayBuf = new double[0];
+    // Per-line position springs — AMLL lineChangeSpringTimingParameters:
+    // mass=1, stiffness=100, damping=18 (baseline). Dynamically retuneable via
+    // lineChangeRelax so a long gap gets a bouncier spring and a fast hand-off
+    // stays tight. Replaced the old lineCurTop/lineVelTop Euler integrator.
+    private SpringAnim[] lineSpring = new SpringAnim[0];
     private boolean lineSpringInit = false;
-    private int prevVisStart = 0;
-    private int prevVisEnd = 0;
+    // Per-line scale springs (AMLL scaleSpringParams: mass 2, damping 25, stiffness 100).
+    // Each line springs discretely between SCALE_ASPECT (inactive) and EMPHASIS_SCALE
+    // (active), mirroring the reference's setLineTransformations model exactly.
+    private SpringAnim[] scaleSpring = new SpringAnim[0];
+    private boolean scaleSpringInit = false;
+    private int scaleActiveIdx = -1;
     private int springAnchorPrev = Integer.MIN_VALUE;
-    private int cascadeDir = 1; // +1 advancing (scroll up), -1 seeking back (scroll down)
-    // True while a big seek is being eased over with the simple global scroll spring
-    // (per-line cascade suspended until it settles, then handed back seamlessly).
-    private boolean bigSeekEasing = false;
-    private long springAnchorChangeNs = 0L;
+    private float lastRestOffset = Float.NaN;
     private long springLastNs = 0L;
+    // Manual scroll offset (lerped) — user wheel/drag shifts targetScroll by this amount.
+    private float lyricScrollOff    = 0f;
+    private float lyricScrollOffTgt = 0f;
+    private long  lyricScrollLastNs = 0L;
 
     // --- Manual scroll (drag / fling) ------------------------------------------
     // While the user drags the lyric column its position is hand-controlled; the
@@ -456,9 +460,13 @@ public class LyricRenderer {
 
         this.activeGroupIndex = -1;
         this.scrollAnim.setValue(0);
+        this.scrollInit = false;
         this.lineSpringInit = false;
-        this.bigSeekEasing = false;
         this.springAnchorPrev = Integer.MIN_VALUE;
+        this.lastRestOffset = Float.NaN;
+        this.lyricScrollOff = 0f;
+        this.lyricScrollOffTgt = 0f;
+        this.lyricScrollLastNs = 0L;
         // Drop any manual scroll from the previous track.
         this.userScrollActive = false;
         this.userDragging = false;
@@ -726,10 +734,8 @@ public class LyricRenderer {
         boolean glowOn = Boolean.TRUE.equals(cfg.glow.getValue());
         int springMode = spring ? 1 : 0;
         if (springMode != lastSpringMode) {
-            // scrollAnim only drives the non-spring fallback; per-line springs
-            // handle the cascade in spring mode and are re-seeded next frame.
-            scrollAnim.setParams(SCROLL_STIFFNESS_FIRM, SCROLL_DAMPING_FIRM);
             lineSpringInit = false;
+            scrollInit = false;
             lastSpringMode = springMode;
         }
 
@@ -1029,128 +1035,108 @@ public class LyricRenderer {
         float centerY = topY + columnHeight * ALIGN_POSITION;
         lastCenterY = centerY;
 
-        int anchorIdx = activeGroup != null ? activeGroup.from : 0;
-        // The draw window normally tracks the active line, but a manual scroll can pull
-        // the view far from it — center the window on the on-screen scroll position then,
-        // or the lines you scrolled to (being outside anchorIdx ± VISIBLE_RADIUS) are
-        // never drawn and the page goes blank. lastScrollY is the previous frame's offset.
-        int windowCenter = userScrollActive ? lineIndexAt(lineTops, n, lastScrollY) : anchorIdx;
+        // activeIdx via findCurrentLineExtended — same logic as reference.
+        int activeIdx = findCurrentLineExtended(lines, positionMs);
+        if (activeIdx < 0) activeIdx = 0;
+        scaleActiveIdx = activeIdx;
+
+        // Draw-window centered on activeIdx (or last scroll position during manual scroll).
+        int windowCenter = userScrollActive ? lineIndexAt(lineTops, n, lastScrollY) : activeIdx;
         int start = Math.max(0, windowCenter - VISIBLE_RADIUS);
-        int end = Math.min(n, windowCenter + VISIBLE_RADIUS + 1);
+        int end   = Math.min(n, windowCenter + VISIBLE_RADIUS + 1);
 
-        // Per-line scroll springs (spring mode only). Each visible line chases its
-        // resting top `centerY + lineTops[i] - targetScroll`; the global scrollAnim
-        // above still drives the rigid fallback when spring is off.
+        // ── Spring dt ──
         long nowNs = System.nanoTime();
-        double springDt = 0.0;
-        if (spring) {
-            if (lineCurTop.length != n) {
-                lineCurTop = new float[n];
-                lineVelTop = new float[n];
-                lineSpringInit = false;
+        double springDt = (nowNs - springLastNs) / 1_000_000_000.0;
+        if (springDt > 0.05) springDt = 0.05;
+        if (springDt < 0.0)  springDt = 0.0;
+        springLastNs = nowNs;
+
+        // ── Manual scroll offset (lerp back after idle) ──
+        if (lyricScrollLastNs > 0 && nowNs - lyricScrollLastNs > SCROLL_IDLE_RETURN_NS) {
+            lyricScrollOffTgt = 0f;
+        }
+        // Clamp offset so first/last line doesn't scroll off-screen.
+        float firstCenter = lineTops[0];
+        float lastCenter  = lineTops[n - 1] + lineHeights[n - 1] * 0.5f;
+        float minOff = firstCenter - targetScroll;
+        float maxOff = lastCenter  - targetScroll;
+        lyricScrollOffTgt = Math.max(minOff, Math.min(maxOff, lyricScrollOffTgt));
+        float scrollLerpK = 0.18f;
+        lyricScrollOff += (lyricScrollOffTgt - lyricScrollOff) * scrollLerpK;
+        if (Math.abs(lyricScrollOffTgt - lyricScrollOff) < 0.5f) lyricScrollOff = lyricScrollOffTgt;
+        lyricScrollOff = Math.max(minOff, Math.min(maxOff, lyricScrollOff));
+        targetScroll += lyricScrollOff;
+        lastScrollY = targetScroll;
+
+        // ── Global scroll spring: smooths targetScroll only ──
+        if (!scrollInit) { scrollAnim.setValue(targetScroll); scrollInit = true; }
+        float scrollY = (float) scrollAnim.animate(targetScroll);
+        // scrollY only used for interlude dot fallback below; lineSpring drives line positions.
+
+        // ── lineSpring array ──
+        if (lineSpring.length != n) {
+            lineSpring = new SpringAnim[n];
+            for (int i = 0; i < n; i++) lineSpring[i] = new SpringAnim(1.0, 18.0, 100.0);
+            lineSpringInit = false;
+        }
+        // ── scaleSpring array ──
+        if (scaleSpring.length != n) {
+            scaleSpring = new SpringAnim[n];
+            for (int i = 0; i < n; i++) {
+                float initScale = scaleOn ? DESELECTED_SCALE : 1.0f;
+                scaleSpring[i] = new SpringAnim(2.0, 25.0, 100.0);
+                scaleSpring[i].setValue(initScale);
             }
-            if (anchorIdx != springAnchorPrev) {
-                // Direction the column is travelling: +1 advancing (content scrolls
-                // up), -1 seeking back (content scrolls down). Drives which side of
-                // the active line leads the cascade.
-                if (springAnchorPrev != Integer.MIN_VALUE) {
-                    cascadeDir = (anchorIdx > springAnchorPrev) ? 1 : -1;
-                    // Big seek: suspend the per-line spring for this switch and ease
-                    // the whole column over with the simple global scroll spring (the
-                    // same animation the spring-off option uses), then hand back to
-                    // the per-line spring. A long per-line spring would animate the
-                    // lines overlapping the old window while freshly-revealed lines
-                    // just appear — the half-animate/half-flash mix.
-                    if (Math.abs(anchorIdx - springAnchorPrev) > SNAP_JUMP_LINES
-                            && springAnchorPrev >= 0 && springAnchorPrev < n) {
-                        bigSeekEasing = true;
-                        // Seed the global spring at the column's current scroll so the
-                        // ease starts where we are instead of jumping.
-                        scrollAnim.setValue(centerY + lineTops[springAnchorPrev] - lineCurTop[springAnchorPrev]);
-                    }
+            scaleSpringInit = false;
+        }
+
+        float restOffset = centerY - targetScroll;
+        boolean anchorMoved = activeIdx != springAnchorPrev;
+        boolean firstFrame  = !lineSpringInit;
+        if (anchorMoved || firstFrame) {
+            if (anchorMoved && activeIdx > 0 && activeIdx < n) {
+                float relax = lineChangeRelax(lines, activeIdx);
+                double stiff = 100.0 - 45.0 * relax;
+                double zeta  = 0.90 - 0.28 * relax;
+                double damp  = zeta * 2.0 * Math.sqrt(stiff);
+                for (int i = 0; i < n; i++) lineSpring[i].setParams(1.0, damp, stiff);
+                scrollAnim.setParams(1.0, damp, stiff);
+            }
+            springAnchorPrev = activeIdx;
+
+            boolean isManualScroll = Math.abs(lyricScrollOffTgt) > 0.01f
+                    || Math.abs(lyricScrollOff) > 0.01f;
+            double delay = 0.0;
+            double baseDelay = isManualScroll ? 0.0 : LINE_DELAY_S;
+            for (int i = 0; i < n; i++) {
+                float restTop = restOffset + lineTops[i];
+                if (lineSpringInit) lineSpring[i].setTargetPosition(restTop, delay);
+                else                lineSpring[i].setValue(restTop);
+                if (!isManualScroll && restTop >= topY) {
+                    delay += baseDelay;
+                    if (i >= activeIdx) baseDelay /= LINE_DELAY_DECAY;
                 }
-                springAnchorPrev = anchorIdx;
-                springAnchorChangeNs = nowNs;
             }
-            springDt = (nowNs - springLastNs) / 1_000_000_000.0;
-            if (springDt > 0.05) springDt = 0.05;
-            if (springDt < 0.0) springDt = 0.0;
-            springLastNs = nowNs;
-        }
-        double sinceAnchorChange = (nowNs - springAnchorChangeNs) / 1_000_000_000.0;
-
-        // Global scroll spring: drives the rigid fallback (spring off) AND the
-        // big-seek ease (spring on). Animated every frame so it stays warm; when a
-        // big seek is easing, the column rides it until it settles, then the per-line
-        // spring takes back over from the synced positions.
-        boolean rigidMode = !spring || bigSeekEasing;
-
-        // A big position jump (progress-bar seek) cancels manual scroll so the column
-        // snaps back to following the play head via the normal ease.
-        if (userScrollActive && userScrollPrevAnchor != Integer.MIN_VALUE
-                && Math.abs(anchorIdx - userScrollPrevAnchor) > SNAP_JUMP_LINES) {
-            userScrollActive = false;
-            userDragging = false;
-            userFling = false;
-            userReturning = false;
-            scrollAnim.setValue(lastScrollY);
-        }
-        userScrollPrevAnchor = anchorIdx;
-
-        float scrollY;
-        if (userScrollActive) {
-            // Hand-controlled: move the whole column rigidly to the user's offset (or
-            // the scrollAnim ease while returning); the highlight keeps tracking pos.
-            rigidMode = true;
-            scrollY = stepUserScroll(targetScroll, nowNs, anchorIdx);
-        } else {
-            scrollY = (float) scrollAnim.animate(targetScroll);
-            if (bigSeekEasing && Math.abs(scrollY - targetScroll) < 0.5f) {
-                bigSeekEasing = false;
-            }
-        }
-        lastScrollY = scrollY;
-
-        // Dynamic scroll-spring tuning (AMLL): steady during an interlude, else
-        // stiffer the faster lines are arriving (shorter gap to the previous line).
-        double scrollStiffness;
-        double scrollDamping;
-        if (inInterlude) {
-            scrollStiffness = SCROLL_STIFFNESS_INTERLUDE;
-            scrollDamping = SCROLL_DAMPING_INTERLUDE;
-        } else {
-            LineGroup prevG = (activeGroupIndex > 0) ? groups.get(activeGroupIndex - 1) : null;
-            double interval = (activeGroup != null && prevG != null)
-                    ? (activeGroup.startMs - prevG.startMs) : SCROLL_INTERVAL_MAX_MS;
-            double ci = Math.max(SCROLL_INTERVAL_MIN_MS, Math.min(SCROLL_INTERVAL_MAX_MS, interval));
-            double ratio = Math.pow(1.0 - (ci - SCROLL_INTERVAL_MIN_MS)
-                    / (SCROLL_INTERVAL_MAX_MS - SCROLL_INTERVAL_MIN_MS), 0.2);
-            scrollStiffness = SCROLL_STIFFNESS_MIN + ratio * (SCROLL_STIFFNESS_MAX - SCROLL_STIFFNESS_MIN);
-            scrollDamping = Math.sqrt(scrollStiffness) * SCROLL_DAMPING_MULT;
+            lineSpringInit = true;
         }
 
-        // Per-line cascade delays. The active line plus everything on the LEADING
-        // side (the side the column is moving toward) move in lockstep — spacing is
-        // preserved so the active line never springs into a still-stationary
-        // neighbour. Only the TRAILING side cascades, with a shrinking step, for a
-        // wave. Leading side flips with travel direction so seeking either way is
-        // overlap-free: advancing (scroll up) → top leads, lines below trail;
-        // seeking back (scroll down) → bottom leads, lines above trail.
-        if (cascadeDelayBuf.length < n) cascadeDelayBuf = new double[n];
-        for (int i = start; i < end; i++) cascadeDelayBuf[i] = 0.0;
-        double cascDelay = 0.0;
-        double cascStep = LINE_DELAY_S;
-        if (cascadeDir >= 0) {
-            for (int i = Math.max(start, anchorIdx + 1); i < end; i++) {
-                cascDelay += cascStep;
-                cascStep /= LINE_DELAY_DECAY;
-                cascadeDelayBuf[i] = cascDelay;
-            }
-        } else {
-            for (int i = Math.min(end - 1, anchorIdx - 1); i >= start; i--) {
-                cascDelay += cascStep;
-                cascStep /= LINE_DELAY_DECAY;
-                cascadeDelayBuf[i] = cascDelay;
+        // ── 每帧更新 scaleSpring 目标 ──
+        for (int i = 0; i < n; i++) {
+            float scaleTarget = scaleOn
+                    ? (i == scaleActiveIdx ? EMPHASIS_SCALE : DESELECTED_SCALE)
+                    : 1.0f;
+            if (!scaleSpringInit) scaleSpring[i].setValue(scaleTarget);
+            else if (scaleTarget != (float) scaleSpring[i].getTargetPosition())
+                scaleSpring[i].setTargetPosition(scaleTarget);
+        }
+        scaleSpringInit = true;
+
+        // ── Update all springs every frame ──
+        if (springDt > 0.0) {
+            for (int i = 0; i < n; i++) {
+                lineSpring[i].update(springDt);
+                scaleSpring[i].update(springDt);
             }
         }
 
@@ -1178,31 +1164,12 @@ public class LyricRenderer {
             float activeBase = isBg ? 0.70f : 1f;
             float baseAlpha = idleBase + (activeBase - idleBase) * activeK;
 
-            // Top of this line in screen space. Per-line spring mode: each line
-            // springs to its resting top with a per-line stagger (cascade). Rigid
-            // mode (spring off, or a big seek easing over): the single global
-            // scrollAnim offset — and we keep lineCurTop synced to it so the per-line
-            // spring resumes seamlessly from these positions when the ease ends.
-            float restTop = centerY + lineTops[i] - targetScroll;
-            float lineYTop;
-            if (rigidMode) {
-                lineYTop = centerY + lineTops[i] - scrollY;
-                if (spring) {
-                    lineCurTop[i] = lineYTop;
-                    lineVelTop[i] = 0f;
-                }
-            } else {
-                boolean wasVisible = i >= prevVisStart && i < prevVisEnd;
-                if (!lineSpringInit || !wasVisible) {
-                    lineCurTop[i] = restTop;
-                    lineVelTop[i] = 0f;
-                } else {
-                    if (sinceAnchorChange >= cascadeDelayBuf[i] && springDt > 0.0) {
-                        stepLineSpring(i, restTop, springDt, scrollStiffness, scrollDamping);
-                    }
-                }
-                lineYTop = lineCurTop[i];
-            }
+            // Top of this line in screen space.
+            // lineSpring always drives position (spring mode on or off) — this is what
+            // gives every line its individual animated travel, including during manual scroll.
+            float lineYTop = lineSpringInit ? (float) lineSpring[i].getValue()
+                    : centerY + lineTops[i] - scrollY;
+
 
             // Viewport cull: VISIBLE_RADIUS keeps far lines in the spring window
             // (stepped just above), but only a handful fit in the column — skip the
@@ -1243,20 +1210,7 @@ public class LyricRenderer {
             } else if (scaleOn) {
                 float mainTextH = rowHeight + (subRowCount - 1) * rowHeightLyricWrap;
                 float lineCenter = lineYTop + mainTextH * 0.5f;
-                float emph;
-                if (spring) {
-                    // Proximity to the fixed centre line (where the active line
-                    // settles), NOT to the line's own target. The spring position is
-                    // continuous, so this never jumps when the target does — the
-                    // outgoing line shrinks smoothly as it springs away, the incoming
-                    // one grows as it springs in. No flash, no bounce.
-                    float ref = Math.max(40f, lineHeights[i]);
-                    float prog = 1f - Math.min(1f, Math.abs(lineCenter - centerY) / ref);
-                    emph = activeK * prog;
-                } else {
-                    emph = activeK;
-                }
-                scale = DESELECTED_SCALE + (EMPHASIS_SCALE - DESELECTED_SCALE) * emph;
+                scale = (float) scaleSpring[i].getValue();
                 anchorY = lineCenter;
             } else {
                 scale = 1f;
@@ -1321,10 +1275,9 @@ public class LyricRenderer {
         }
 
         if (spring) {
-            prevVisStart = start;
-            prevVisEnd = end;
             lineSpringInit = true;
         }
+        scaleSpringInit = true;
 
         // ---- Interlude dots (AMLL `InterludeDots`, inline in layout) ----
         // The dot row already has its reserved INTERLUDE_DOTS_ROW_H slot
@@ -1345,9 +1298,9 @@ public class LyricRenderer {
                 // Top of the upcoming line's reserved dot slot, spring-aware so the
                 // dots ride the same cascade as the lines.
                 int nf = interludeNext.from;
-                float nextTop = (spring && nf >= start && nf < end)
-                        ? lineCurTop[nf]
-                        : centerY + lineTops[nf] - (spring && !userScrollActive ? targetScroll : scrollY);
+                float nextTop = (lineSpringInit && nf < lineSpring.length)
+                        ? (float) lineSpring[nf].getValue()
+                        : centerY + lineTops[nf] - scrollY;
                 // Centre the dots between the two LINES OF TEXT, not the slot edges.
                 // The slot top (nextTop - slotH) sits at the previous line's bottom,
                 // but the next line's text starts nextTextOffset below its slot top
@@ -1853,8 +1806,6 @@ public class LyricRenderer {
         return Math.min(v, scrollMax);
     }
 
-    // The line whose top is at/above a content-space scroll offset (the line sitting at
-    // the centre line for that offset) — binary search since lineTops is increasing.
     private static int lineIndexAt(float[] lineTops, int n, float scroll) {
         if (n <= 1) return 0;
         int lo = 0, hi = n - 1, res = 0;
@@ -2225,30 +2176,47 @@ public class LyricRenderer {
 
     /**
      * Underdamped step response of Apple's liftSpring (mass 1,
-     * damping 7). {@code tau} is elapsed seconds since the syl
-     * returns ~0 at 0, settles toward 1 (fill-forwards) within
+     * damping 7). {@code tau} is elapsed seconds since the syllable starts;
+     * returns ~0 at 0, settles toward 1 (fill-forwards) within slight
      * overshoot. Negative tau (syllable not started) → 0.
-     * <p>
-     * Integrate one line's scroll spring toward {@code target} over {@code dt}
-     * seconds with the given (AMLL-derived) stiffness/damping, sub-stepping for
-     * stiff-spring stability. Mirrors {@link SpringAnim} on the per-line arrays.
      */
-    private void stepLineSpring(int i, float target, double dt, double stiffness, double damping) {
-        double value = lineCurTop[i];
-        double vel = lineVelTop[i];
-        int steps = 1 + (int) (dt / 0.008);
-        double sub = dt / steps;
-        for (int s = 0; s < steps; s++) {
-            double a = -stiffness * (value - target) - damping * vel;
-            vel += a * sub;
-            value += vel * sub;
+
+    /**
+     * Returns the index of the first line whose effective end hasn't been passed yet.
+     * Mirrors the reference's {@code findCurrentLineExtended}: BG lines extend their
+     * preceding main line's active window to the BG line's own endMs, so the main line
+     * stays highlighted until the backing vocal finishes.
+     */
+    private static int findCurrentLineExtended(List<LyricLine> lines, long posMs) {
+        int n = lines.size();
+        if (n == 0) return -1;
+        for (int i = 0; i < n; i++) {
+            if (posMs < effectiveEndMs(lines, i)) return i;
         }
-        if (Math.abs(vel) < 0.01 && Math.abs(value - target) < 0.05) {
-            value = target;
-            vel = 0.0;
+        return n - 1;
+    }
+
+    private static long effectiveEndMs(List<LyricLine> lines, int i) {
+        LyricLine line = lines.get(i);
+        if (isBackground(line.vocalChannel)) return line.endMs();
+        // If the next line is a background line, extend to its endMs.
+        if (i + 1 < lines.size()) {
+            LyricLine next = lines.get(i + 1);
+            if (isBackground(next.vocalChannel)) {
+                return Math.max(line.endMs(), next.endMs());
+            }
         }
-        lineCurTop[i] = (float) value;
-        lineVelTop[i] = (float) vel;
+        return line.endMs();
+    }
+
+    private static float lineChangeRelax(List<LyricLine> lines, int idx) {
+        LyricLine prev = lines.get(idx - 1);
+        long gap = lines.get(idx).startMs() - prev.endMs();
+        float gapK = Math.max(0f, Math.min(1f, gap / 2000f));
+        int sylN = Math.max(1, prev.syllables.size());
+        float meanDur = (prev.endMs() - prev.startMs()) / (float) sylN;
+        float durK = Math.max(0f, Math.min(1f, (meanDur - 200f) / 500f));
+        return Math.max(0f, Math.min(1f, 0.65f * gapK + 0.35f * durK));
     }
 
     private static float liftSpringK(double tau) {
