@@ -32,7 +32,47 @@ Rectangle {
     // finishes the pass before the position fill returns instead of snapping.
     property bool sweeping: false
     property bool _loading: player.loading
-    on_LoadingChanged: if (_loading) mini.sweeping = true
+    property real _targetProgress: player.durationMs > 0
+        ? Math.max(0.0, Math.min(1.0, player.positionMs / player.durationMs)) : 0.0
+    property real _visualProgress: _targetProgress
+    property bool _catchingUp: false
+
+    on_LoadingChanged: {
+        if (_loading) {
+            progressCatchUp.stop()
+            mini._catchingUp = false
+            mini.sweeping = true
+        }
+    }
+    on_TargetProgressChanged: {
+        if (!mini.sweeping && !mini._catchingUp)
+            mini._visualProgress = mini._targetProgress
+    }
+
+    function finishSweep() {
+        mini.sweeping = false
+        progressCatchUp.stop()
+        mini._visualProgress = 0.0
+        if (mini._targetProgress <= 0.0) {
+            mini._catchingUp = false
+            return
+        }
+        mini._catchingUp = true
+        progressCatchUp.to = mini._targetProgress
+        progressCatchUp.restart()
+    }
+
+    NumberAnimation {
+        id: progressCatchUp
+        target: mini
+        property: "_visualProgress"
+        duration: 450
+        easing.type: Easing.OutCubic
+        onFinished: {
+            mini._catchingUp = false
+            mini._visualProgress = mini._targetProgress
+        }
+    }
 
     // progress line along the very top edge
     Rectangle {
@@ -51,8 +91,7 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             visible: !mini.sweeping
-            width: player.durationMs > 0
-                   ? parent.width * Math.min(1, player.positionMs / player.durationMs) : 0
+            width: parent.width * mini._visualProgress
             color: Theme.color.primary
         }
         // Loading sweep: a segment sliding left-to-right while the next track resolves,
@@ -73,7 +112,7 @@ Rectangle {
                     duration: 1000; easing.type: Easing.InOutSine
                 }
                 // End the sweep only at a pass boundary once loading is done.
-                ScriptAction { onTrigger: if (!player.loading) mini.sweeping = false }
+                ScriptAction { onTrigger: if (!player.loading) mini.finishSweep() }
             }
         }
         MouseArea {

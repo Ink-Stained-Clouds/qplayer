@@ -6,8 +6,53 @@ Item {
     property real value: 0.0
     property bool indeterminate: false
     property bool wavy: false
-    // Enter indeterminate immediately; the wavy canvas defers the exit to a cycle boundary.
-    onIndeterminateChanged: if (indeterminate) wavyCanvas._indet = true
+    // Kept separate from value so the one-off indeterminate -> determinate handoff
+    // can catch up smoothly. Normal playback updates still copy value directly — a
+    // permanent Behavior would restart on every 200ms clock tick and lag/freeze.
+    property real _displayValue: Math.max(0.0, Math.min(1.0, value))
+    property bool _catchingUp: false
+
+    function beginDeterminateTransition() {
+        catchUpAnim.stop()
+        var targetValue = Math.max(0.0, Math.min(1.0, control.value))
+        control._displayValue = 0.0
+        if (targetValue <= 0.0) {
+            control._catchingUp = false
+            return
+        }
+        control._catchingUp = true
+        catchUpAnim.to = targetValue
+        catchUpAnim.restart()
+    }
+
+    // Enter indeterminate immediately; the wavy canvas defers the exit to a cycle
+    // boundary. A standard bar has no deferred latch, so its catch-up starts here.
+    onIndeterminateChanged: {
+        if (indeterminate) {
+            catchUpAnim.stop()
+            control._catchingUp = false
+            wavyCanvas._indet = true
+        } else if (!control.wavy) {
+            control.beginDeterminateTransition()
+        }
+    }
+    onValueChanged: {
+        if (!control.indeterminate && !wavyCanvas._indet && !control._catchingUp)
+            control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
+    }
+
+    NumberAnimation {
+        id: catchUpAnim
+        target: control
+        property: "_displayValue"
+        duration: 450
+        easing.type: Easing.OutCubic
+        onFinished: {
+            control._catchingUp = false
+            if (!control.indeterminate)
+                control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
+        }
+    }
     
     implicitWidth: 200
     implicitHeight: wavy ? 16 : 4
@@ -31,7 +76,7 @@ Item {
             // The player publishes progress about every 200ms. A 200ms Behavior
             // here gets restarted by every update and can indefinitely trail/freeze
             // under qml4j, so use the live value just like the wavy canvas below.
-            width: parent.width * Math.max(0.0, Math.min(1.0, control.value))
+            width: parent.width * control._displayValue
             color: _colors.primary
             radius: height / 2
         }
@@ -99,10 +144,9 @@ Item {
         // Trigger repaint when dependencies change
         property color trackColor: control._colors.surfaceContainerHighest
         property color activeColor: control._colors.primary
-        // Raw value, NOT _visualValue: its Behavior restarts every frame when the
-        // caller updates value per-frame (smooth source), which freezes it. Callers
-        // that want easing should smooth the value they pass in.
-        property real progress: control.value
+        // Normal playback follows value directly; only the one-off loading handoff
+        // animates _displayValue (see catchUpAnim above).
+        property real progress: control._displayValue
 
         onTrackColorChanged: requestPaint()
         onActiveColorChanged: requestPaint()
@@ -182,7 +226,14 @@ Item {
             requestPaint();
             // phase wraps 2π→0 at each loop boundary: latch the deferred indeterminate
             // switch there so the sweep completes before the bar returns to determinate.
-            if (phase < _lastPhase) _indet = control.indeterminate;
+            // The sweep has fully left the right edge at this point, so grow the real
+            // progress from zero instead of snapping straight to the current position.
+            if (phase < _lastPhase) {
+                var wasIndeterminate = _indet
+                _indet = control.indeterminate
+                if (wasIndeterminate && !_indet)
+                    control.beginDeterminateTransition()
+            }
             _lastPhase = phase;
         }
         onWidthChanged: requestPaint()
