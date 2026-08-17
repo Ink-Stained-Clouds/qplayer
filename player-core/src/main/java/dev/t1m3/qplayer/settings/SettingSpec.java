@@ -23,6 +23,7 @@ public final class SettingSpec {
     public static final String SEGMENTED = "segmented";  // int index over `options`
     public static final String TEXT = "text";            // string + 应用 button
     public static final String RADIO = "radio";          // int index as radio buttons
+    public static final String DROPDOWN = "dropdown";    // int index in a combo box
     public static final String ACTION = "action";        // button/icon, no stored value
 
     /** Every platform. The alternative values are the host ids passed to
@@ -40,7 +41,8 @@ public final class SettingSpec {
     /** Secondary line under the title; empty for none. */
     public final String desc;
     /** Initial value for {@link #SWITCH} (Boolean), {@link #STEPPER}/
-     *  {@link #SEGMENTED} (Integer) and {@link #TEXT} (String); null for the
+     *  {@link #SEGMENTED}/{@link #RADIO}/{@link #DROPDOWN} (Integer) and
+     *  {@link #TEXT} (String); null for the
      *  valueless row types. A null default here means "ask the host at load
      *  time" — see {@link SettingsCore#defaultOverride}. */
     public final Object def;
@@ -121,7 +123,8 @@ public final class SettingSpec {
      *  a read-only line). */
     public boolean hasValue() {
         return SWITCH.equals(type) || STEPPER.equals(type)
-                || SEGMENTED.equals(type) || TEXT.equals(type) || RADIO.equals(type);
+                || SEGMENTED.equals(type) || TEXT.equals(type) || RADIO.equals(type)
+                || DROPDOWN.equals(type);
     }
 
     public static Builder toggle(String key, String category, String title, boolean def) {
@@ -141,6 +144,11 @@ public final class SettingSpec {
     public static Builder radio(String key, String category, String title,
                                 int def, String... options) {
         return new Builder(key, RADIO, category, title).def(def).options(options);
+    }
+
+    public static Builder dropdown(String key, String category, String title,
+                                   int def, String... options) {
+        return new Builder(key, DROPDOWN, category, title).def(def).options(options);
     }
 
     /** A value that is stored and applied but has no row of its own. */

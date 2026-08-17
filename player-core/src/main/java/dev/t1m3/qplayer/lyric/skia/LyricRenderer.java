@@ -203,20 +203,21 @@ public class LyricRenderer {
     private static final float EMPHASIS_SCALE = 1.14f;
 
     // ---- Scroll spring tunings (ported from AMLL computeLinePosYSpringParams) --
-    // Keep the established per-line cascade renderer, but use a distinctly
-    // A moderately underdamped spring. ζ≈0.59 keeps the overshoot restrained;
-    // k=65 gives line changes a quicker response without changing that shape.
+    // Keep the established per-line cascade renderer, but use a gently
+    // underdamped spring. ζ≈0.78 keeps one soft overshoot while damping
+    // the repeated oscillation that becomes conspicuous across rapid line changes.
+    // k=65 preserves the established response speed; only the settling is calmer.
     private static final double SCROLL_STIFFNESS_MIN = 65.0;
     private static final double SCROLL_STIFFNESS_MAX = 65.0;
     private static final double SCROLL_INTERVAL_MIN_MS = 100.0;
     private static final double SCROLL_INTERVAL_MAX_MS = 800.0;
-    private static final double SCROLL_DAMPING_MULT = 1.1785; // damping ≈ 9.5 @ k=65, ζ≈0.59
+    private static final double SCROLL_DAMPING_MULT = 1.55; // damping ≈ 12.5 @ k=65, ζ≈0.78
     // Steadier fixed spring while seeking or during an interlude.
     private static final double SCROLL_STIFFNESS_INTERLUDE = 55.0;
-    private static final double SCROLL_DAMPING_INTERLUDE = 8.75;
+    private static final double SCROLL_DAMPING_INTERLUDE = 11.5;
     // Non-spring fallback uses the same current k/damping pair, without cascade.
     private static final double SCROLL_STIFFNESS_FIRM = 65.0;
-    private static final double SCROLL_DAMPING_FIRM = 9.5;
+    private static final double SCROLL_DAMPING_FIRM = 12.5;
     /** Duration of explicit-seek scrolling; quartic ease-out, with no spring. */
     private static final long SEEK_EASE_DURATION_NS = 500_000_000L;
     // Apple liftSpring: mass 1, stiffness 14, damping 7 → ω0=√14, ζ≈0.935.
@@ -284,7 +285,7 @@ public class LyricRenderer {
      * matching Apple Music's lyric flow. Duration-based easing would
      * restart on every line change; the spring carries velocity through.
      */
-    // The global fallback uses the same k=65 / damping=9.5 tuning.
+    // The global fallback uses the same k=65 / damping=12.5 tuning.
     private final SpringAnim scrollAnim = new SpringAnim(SCROLL_STIFFNESS_FIRM, SCROLL_DAMPING_FIRM);
     // Last spring-mode flag the scrollAnim was retuned for; -1 = not yet applied.
     private int lastSpringMode = -1;

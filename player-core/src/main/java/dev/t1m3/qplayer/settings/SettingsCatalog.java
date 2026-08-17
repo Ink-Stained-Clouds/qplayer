@@ -133,8 +133,8 @@ public final class SettingsCatalog {
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
                 .desc("动态流动 / 静态(渲染一次,更省电)")
                 .build());
-        out.add(SettingSpec.radio(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_AMLL_S,
-                        "S 曲线", "SPlayer", "经典")
+        out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_AMLL_S,
+                        "Slik", "Fluid", "Classic")
                 .desc("切换歌词页的流体背景算法")
                 .build());
         // ---- 本地 -----------------------------------------------------------

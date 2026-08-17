@@ -181,6 +181,7 @@ Rectangle {
                                                    : modelData.type === "stepper" ? stepperRow
                                                    : modelData.type === "segmented" ? segmentedRow
                                                    : modelData.type === "radio" ? radioRow
+                                                   : modelData.type === "dropdown" ? dropdownRow
                                                    : modelData.type === "text" ? textRow
                                                    : actionRow
                                 }
@@ -211,6 +212,7 @@ Rectangle {
                                                    : modelData.type === "stepper" ? stepperRow
                                                    : modelData.type === "segmented" ? segmentedRow
                                                    : modelData.type === "radio" ? radioRow
+                                                   : modelData.type === "dropdown" ? dropdownRow
                                                    : modelData.type === "text" ? textRow
                                                    : actionRow
                                 }
@@ -227,6 +229,7 @@ Rectangle {
                 Component { id: stepperRow; SettingStepperRow { spec: rowSpec } }
                 Component { id: segmentedRow; SettingSegmentedRow { spec: rowSpec } }
                 Component { id: radioRow; SettingRadioRow { spec: rowSpec } }
+                Component { id: dropdownRow; SettingDropdownRow { spec: rowSpec } }
                 Component { id: textRow; SettingTextRow { spec: rowSpec } }
                 Component { id: actionRow; SettingActionRow { spec: rowSpec } }
             }

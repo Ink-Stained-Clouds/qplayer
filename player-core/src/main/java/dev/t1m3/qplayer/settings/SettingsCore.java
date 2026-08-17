@@ -291,6 +291,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
             case SettingSpec.STEPPER:
             case SettingSpec.SEGMENTED:
             case SettingSpec.RADIO:
+            case SettingSpec.DROPDOWN:
                 return store.getInt(spec.key, def instanceof Number ? ((Number) def).intValue() : 0);
             case SettingSpec.TEXT:
                 return store.getString(spec.key, def instanceof String ? (String) def : "");
@@ -307,6 +308,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
             case SettingSpec.STEPPER:
             case SettingSpec.SEGMENTED:
             case SettingSpec.RADIO:
+            case SettingSpec.DROPDOWN:
                 store.putInt(spec.key, v instanceof Number ? ((Number) v).intValue() : 0);
                 break;
             case SettingSpec.TEXT:
@@ -329,7 +331,8 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 return Math.max(spec.min, Math.min(spec.max, v));
             }
             case SettingSpec.SEGMENTED:
-            case SettingSpec.RADIO: {
+            case SettingSpec.RADIO:
+            case SettingSpec.DROPDOWN: {
                 if (!(raw instanceof Number)) return null;
                 int v = ((Number) raw).intValue();
                 int last = Math.max(0, spec.options.size() - 1);
