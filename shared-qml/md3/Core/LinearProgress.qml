@@ -33,12 +33,28 @@ Item {
             control._catchingUp = false
             wavyCanvas._indet = true
         } else if (!control.wavy) {
+            // The wave defers this latch to its next cycle boundary. A straight
+            // bar has no running phase animation to clear it, so release it now;
+            // otherwise every later value update remains blocked after loading.
+            wavyCanvas._indet = false
             control.beginDeterminateTransition()
         }
     }
     onValueChanged: {
-        if (!control.indeterminate && !wavyCanvas._indet && !control._catchingUp)
+        if (!control.indeterminate && (!control.wavy || !wavyCanvas._indet)
+                && !control._catchingUp)
             control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
+    }
+    onWavyChanged: {
+        // Switching styles must not leave the hidden Canvas's deferred state in
+        // charge of the straight bar. Synchronize both representations immediately.
+        if (!control.wavy) {
+            wavyCanvas._indet = control.indeterminate
+            if (!control.indeterminate && !control._catchingUp)
+                control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
+        } else {
+            wavyCanvas._indet = control.indeterminate
+        }
     }
 
     NumberAnimation {

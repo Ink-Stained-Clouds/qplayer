@@ -218,8 +218,12 @@ public class LyricRenderer {
     // Non-spring fallback uses the same current k/damping pair, without cascade.
     private static final double SCROLL_STIFFNESS_FIRM = 65.0;
     private static final double SCROLL_DAMPING_FIRM = 12.5;
-    /** Duration of explicit-seek scrolling; quartic ease-out, with no spring. */
-    private static final long SEEK_EASE_DURATION_NS = 500_000_000L;
+    // The original rigid seek spring: slightly overdamped, so the whole column
+    // glides to the new position without the newer fixed-duration tween or bounce.
+    private static final double SEEK_SPRING_STIFFNESS = 180.0;
+    private static final double SEEK_SPRING_DAMPING = 28.0;
+    /** Duration of render-resume/unclassified-jump scrolling; quartic ease-out. */
+    private static final long DISCONTINUITY_EASE_DURATION_NS = 500_000_000L;
     // Apple liftSpring: mass 1, stiffness 14, damping 7 → ω0=√14, ζ≈0.935.
     private static final double LIFT_OMEGA0 = 3.7416574; // sqrt(14)
     private static final double LIFT_ZETA = 0.935414;    // 7 / (2·√14)
@@ -287,6 +291,7 @@ public class LyricRenderer {
      */
     // The global fallback uses the same k=65 / damping=12.5 tuning.
     private final SpringAnim scrollAnim = new SpringAnim(SCROLL_STIFFNESS_FIRM, SCROLL_DAMPING_FIRM);
+    private final SpringAnim seekAnim = new SpringAnim(SEEK_SPRING_STIFFNESS, SEEK_SPRING_DAMPING);
     // Last spring-mode flag the scrollAnim was retuned for; -1 = not yet applied.
     private int lastSpringMode = -1;
 
@@ -337,6 +342,9 @@ public class LyricRenderer {
     /** Discontinuous position changes move the whole column with a non-spring ease-out. */
     private boolean seekEaseNextRender = false;
     private boolean seekEaseActive = false;
+    /** Explicit playback seeks use the original rigid global spring. */
+    private boolean seekSpringNextRender = false;
+    private boolean seekSpringActive = false;
     private long seekEaseStartNs = 0L;
     private float seekEaseFrom = 0f;
     private float seekEaseTo = 0f;
@@ -446,12 +454,13 @@ public class LyricRenderer {
         return !lines.isEmpty();
     }
 
-    /** Route the next playback-position change through a rigid quartic ease-out. */
+    /** Route the next playback-position change through the original rigid seek spring. */
     public void easeSeekOnNextRender() {
-        easeScrollOnNextRender();
+        cancelUserScrollForSeek();
+        seekSpringNextRender = true;
     }
 
-    /** Use the ordinary non-spring scroll transition after a seek or render resume. */
+    /** Use the ordinary non-spring scroll transition after a render resume. */
     public void easeScrollOnNextRender() {
         cancelUserScrollForSeek();
         seekEaseNextRender = true;
@@ -486,9 +495,12 @@ public class LyricRenderer {
 
         this.activeGroupIndex = -1;
         this.scrollAnim.setValue(0);
+        this.seekAnim.setValue(0);
         this.lineSpringInit = false;
         this.seekEaseNextRender = false;
         this.seekEaseActive = false;
+        this.seekSpringNextRender = false;
+        this.seekSpringActive = false;
         this.springAnchorPrev = Integer.MIN_VALUE;
         this.renderedAnchorPrev = Integer.MIN_VALUE;
         // Drop any manual scroll from the previous track.
@@ -735,8 +747,10 @@ public class LyricRenderer {
         final java.util.List<LineGroup> groups = this.groups;
         final int[] lineToGroup = this.lineToGroup;
         if (lines.isEmpty()) return;
-        final boolean explicitSeek = seekEaseNextRender;
+        final boolean resumeEase = seekEaseNextRender;
         seekEaseNextRender = false;
+        final boolean explicitSeek = seekSpringNextRender;
+        seekSpringNextRender = false;
 
         LyricConfig cfg = LyricConfig.instance;
         int lyricFontSize = cfg.lyricFontSize.getValue();
@@ -1098,12 +1112,15 @@ public class LyricRenderer {
         boolean anchorChangedThisFrame = previousRenderedAnchor != Integer.MIN_VALUE
                 && anchorIdx != previousRenderedAnchor;
         renderedAnchorPrev = anchorIdx;
-        boolean largeAnchorJump = !explicitSeek && !seekEaseActive
+        boolean largeAnchorJump = !explicitSeek && !resumeEase
+                && !seekEaseActive && !seekSpringActive
                 && previousRenderedAnchor != Integer.MIN_VALUE
                 && Math.abs(anchorIdx - previousRenderedAnchor) > SNAP_JUMP_LINES;
-        boolean startNonlinearEase = explicitSeek || largeAnchorJump;
+        boolean startSpringSeek = explicitSeek;
+        boolean startNonlinearEase = resumeEase || largeAnchorJump;
         float seekFromScroll = lastScrollY;
-        if (startNonlinearEase && spring && !userScrollActive && !seekEaseActive
+        if ((startSpringSeek || startNonlinearEase) && spring && !userScrollActive
+                && !seekEaseActive && !seekSpringActive
                 && springAnchorPrev >= 0 && springAnchorPrev < n
                 && springAnchorPrev < lineCurTop.length) {
             // Recover the currently drawn rigid offset from the old anchor line so
@@ -1132,7 +1149,7 @@ public class LyricRenderer {
             if (springDt < 0.0) springDt = 0.0;
             springLastNs = nowNs;
         }
-        if (seekEaseActive && !startNonlinearEase && anchorChangedThisFrame) {
+        if (seekEaseActive && !startNonlinearEase && !startSpringSeek && anchorChangedThisFrame) {
             // Playback reached the next line before the seek tween finished. Hand
             // control back at the currently drawn positions; the per-line springs
             // continue from lineCurTop on this very frame instead of the tween later
@@ -1140,9 +1157,23 @@ public class LyricRenderer {
             seekEaseActive = false;
             scrollAnim.setValue(lastScrollY);
         }
+        if (startSpringSeek) {
+            // Match the old seek path: seed one rigid, near-critically-damped
+            // global spring at the currently drawn offset and let it chase the
+            // live target until settled. Per-line springs stay synchronized below.
+            boolean wasSpringSeeking = seekSpringActive;
+            seekEaseActive = false;
+            seekSpringActive = true;
+            // Progress-bar dragging produces several seek revisions. Preserve the
+            // spring's velocity across those retargets, exactly as the old path did.
+            if (!wasSpringSeeking) seekAnim.setValue(seekFromScroll);
+            seekAnim.setTargetPosition(targetScroll);
+            scrollAnim.setValue(seekFromScroll);
+        }
         if (startNonlinearEase) {
-            // Seeks, render resumes and other large discontinuities move the column
-            // rigidly with the same decelerating tween, never through a spring.
+            // Render resumes and unclassified large discontinuities move the column
+            // rigidly with the decelerating tween. Explicit seeks use the old spring.
+            seekSpringActive = false;
             seekEaseActive = true;
             seekEaseStartNs = nowNs;
             seekEaseFrom = seekFromScroll;
@@ -1152,13 +1183,14 @@ public class LyricRenderer {
         double sinceAnchorChange = (nowNs - springAnchorChangeNs) / 1_000_000_000.0;
 
         // The global scroll value drives the rigid fallback when per-line spring
-        // physics is off. Discontinuous transitions temporarily use the same rigid
-        // column, but are advanced by the quartic tween above rather than a spring.
-        boolean rigidMode = !spring || seekEaseActive;
+        // physics is off. Discontinuous transitions temporarily move the same rigid
+        // column through either the old seek spring or the quartic resume tween.
+        boolean rigidMode = !spring || seekEaseActive || seekSpringActive;
 
         // A big position jump (progress-bar seek) cancels manual scroll so the column
         // snaps back to following the play head via the normal ease.
-        if (userScrollActive && (startNonlinearEase || (userScrollPrevAnchor != Integer.MIN_VALUE
+        if (userScrollActive && (startSpringSeek || startNonlinearEase
+                || (userScrollPrevAnchor != Integer.MIN_VALUE
                 && Math.abs(anchorIdx - userScrollPrevAnchor) > SNAP_JUMP_LINES))) {
             cancelUserScrollForSeek();
             scrollAnim.setValue(lastScrollY);
@@ -1166,8 +1198,17 @@ public class LyricRenderer {
         userScrollPrevAnchor = anchorIdx;
 
         float scrollY;
-        if (seekEaseActive) {
-            float t = Math.min(1f, (nowNs - seekEaseStartNs) / (float) SEEK_EASE_DURATION_NS);
+        if (seekSpringActive) {
+            scrollY = (float) seekAnim.animate(targetScroll);
+            if (seekAnim.arrived()) {
+                scrollY = targetScroll;
+                seekSpringActive = false;
+            }
+            // Keep fallback/manual-return state warm for a seamless handoff.
+            scrollAnim.setValue(scrollY);
+        } else if (seekEaseActive) {
+            float t = Math.min(1f, (nowNs - seekEaseStartNs)
+                    / (float) DISCONTINUITY_EASE_DURATION_NS);
             float inv = 1f - t;
             // Quartic ease-out drops below the previous cubic curve's velocity after
             // the first quarter, leaving a longer, calmer approach to the destination.
