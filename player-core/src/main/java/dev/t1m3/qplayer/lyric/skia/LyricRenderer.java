@@ -443,6 +443,39 @@ public class LyricRenderer {
     }
 
     public void setLyrics(List<LyricLine> newLines) {
+        boolean linearPlainLrc = Boolean.TRUE.equals(LyricConfig.instance.linearAnimForPlainLrc.getValue());
+        PreparedLyrics prepared = prepareLyrics(newLines, linearPlainLrc);
+        this.lines = prepared.lines;
+        this.animatablePerToken = prepared.animatablePerToken;
+        this.groups = buildGroups(this.lines);
+        this.lineToGroup = new int[this.lines.size()];
+        for (int gi = 0; gi < this.groups.size(); gi++) {
+            LineGroup g = this.groups.get(gi);
+            for (int i = g.from; i < g.to; i++) lineToGroup[i] = gi;
+        }
+
+        this.activeGroupIndex = -1;
+        this.scrollAnim.setValue(0);
+        this.lineSpringInit = false;
+        this.bigSeekEasing = false;
+        this.springAnchorPrev = Integer.MIN_VALUE;
+        // Drop any manual scroll from the previous track.
+        this.userScrollActive = false;
+        this.userDragging = false;
+        this.userFling = false;
+        this.userReturning = false;
+        this.userScrollPrevAnchor = Integer.MIN_VALUE;
+        this.userHoldAnchor = Integer.MIN_VALUE;
+    }
+
+    /**
+     * Build the renderer-owned lyric model. The parser/controller may retain and
+     * reuse {@code newLines} from the in-memory lyric cache, so wrapping must never
+     * tokenize those shared {@link LyricLine} instances in place. Otherwise the
+     * second load sees the synthetic wrap tokens as real per-syllable timing and a
+     * plain LRC line incorrectly enters the karaoke sweep path.
+     */
+    static PreparedLyrics prepareLyrics(List<LyricLine> newLines, boolean linearPlainLrc) {
         // Strip whitespace-only / fully-empty lines. Some TTML / LRC
         // sources put a blank <p>/[mm:ss] in the middle of a long
         // interlude to mark "the music continues here" — it has a
@@ -463,21 +496,14 @@ public class LyricRenderer {
                         break;
                     }
                 }
-                if (hasText) filtered.add(l);
+                if (hasText) filtered.add(copyLine(l));
             }
-        }
-        this.lines = filtered;
-        this.groups = buildGroups(this.lines);
-        this.lineToGroup = new int[this.lines.size()];
-        for (int gi = 0; gi < this.groups.size(); gi++) {
-            LineGroup g = this.groups.get(gi);
-            for (int i = g.from; i < g.to; i++) lineToGroup[i] = gi;
         }
         // Detect source type once per load: any line with multi-syllable
         // means the source is per-syllable (YRC / LYS / TTML / QRC).
         // Pure LRC always parses to exactly one syllable per line.
         boolean perSyl = false;
-        for (LyricLine l : this.lines) {
+        for (LyricLine l : filtered) {
             if (l.syllables.size() > 1) {
                 perSyl = true;
                 break;
@@ -491,8 +517,7 @@ public class LyricRenderer {
         // Read once per load, same as {@code perSyl} itself; a live mid-song
         // toggle only takes effect on the next track change, not the current
         // line's already-tokenized syllables.
-        boolean linearPlainLrc = Boolean.TRUE.equals(LyricConfig.instance.linearAnimForPlainLrc.getValue());
-        this.animatablePerToken = perSyl || linearPlainLrc;
+        boolean animatablePerToken = perSyl || linearPlainLrc;
 
         // LRC (line-level) lyrics parse to a single syllable per line, so the
         // syllable-boundary wrap never finds a break point and long lines run
@@ -500,7 +525,7 @@ public class LyricRenderer {
         // per CJK char, Latin split on spaces). Per-syllable sources already
         // carry their own real break points, so leave them untouched.
         if (!perSyl) {
-            for (LyricLine l : this.lines) {
+            for (LyricLine l : filtered) {
                 if (l.syllables.size() != 1) continue;
                 List<Syllable> toks = tokenizeForWrap(l.syllables.get(0), linearPlainLrc);
                 if (toks.size() > 1) {
@@ -509,19 +534,26 @@ public class LyricRenderer {
                 }
             }
         }
+        return new PreparedLyrics(filtered, animatablePerToken);
+    }
 
-        this.activeGroupIndex = -1;
-        this.scrollAnim.setValue(0);
-        this.lineSpringInit = false;
-        this.bigSeekEasing = false;
-        this.springAnchorPrev = Integer.MIN_VALUE;
-        // Drop any manual scroll from the previous track.
-        this.userScrollActive = false;
-        this.userDragging = false;
-        this.userFling = false;
-        this.userReturning = false;
-        this.userScrollPrevAnchor = Integer.MIN_VALUE;
-        this.userHoldAnchor = Integer.MIN_VALUE;
+    private static LyricLine copyLine(LyricLine source) {
+        LyricLine copy = new LyricLine();
+        copy.syllables.addAll(source.syllables); // Syllable is immutable.
+        copy.vocalChannel = source.vocalChannel;
+        copy.translation = source.translation;
+        copy.romaji = source.romaji;
+        return copy;
+    }
+
+    static final class PreparedLyrics {
+        final List<LyricLine> lines;
+        final boolean animatablePerToken;
+
+        PreparedLyrics(List<LyricLine> lines, boolean animatablePerToken) {
+            this.lines = lines;
+            this.animatablePerToken = animatablePerToken;
+        }
     }
 
     // Break a whole-line syllable into wrap-friendly tokens (each CJK character
