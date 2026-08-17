@@ -124,7 +124,7 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 - `android-shell/app/build.gradle.kts` —— `versionCode`(整数,每次 +1)+ `versionName`(如 `0.8.4`)
 - `desktop-host/pom.xml` —— `<qplayer.app.version>`(桌面分发包版本)
 
-改完提交,再打并推 `v<versionName>` tag(如 `v0.8.4`)触发 `release.yml`:安卓签名 APK + 三平台桌面包自动构建并附到 GitHub Release。CI 会按 `build.gradle.kts` 里的 `qml4j-core` 版本从源码 clone 对应 `v*` tag 构建引擎,故发版前需先打好对应的 qml4j tag。
+改完提交,再打并推 `v<versionName>` tag(如 `v0.8.4`)触发 `release.yml`:安卓签名 APK + 三平台桌面包自动构建并附到 GitHub Release。CI 会按 `build.gradle.kts` 里的 `qml4j-core` 版本从源码 clone 对应 `v*` tag 构建引擎。
 
 ## 致谢
 
