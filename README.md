@@ -118,10 +118,6 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 
 改完提交,再打并推 `v<versionName>` tag(如 `v0.8.4`)触发 `release.yml`:安卓签名 APK + 三平台桌面包自动构建并附到 GitHub Release。CI 会按 `build.gradle.kts` 里的 `qml4j-core` 版本从源码 clone 对应 `v*` tag 构建引擎,故发版前需先打好对应的 qml4j tag。
 
-## AI 说明
-
-本项目(QPlayer 及其依赖的 [qml4j](https://github.com/TIMER-err/qml4j) 引擎)的大部分代码由 **Claude(Opus 4.8)** 通过 Claude Code 生成。这是一个效率上的取舍:本项目在业余时间开发,可投入的时间有限,vibe coding 让我在有限的时间里做出更多。所有代码在合入前都经过我本人逐行审查,并在发布前于真机测试;最终结果由我负责。多数提交带有 `Co-Authored-By: Claude`,贡献者列表中也因此出现 "Claude";这是有意保留的,用于标注 AI 在本项目中的参与程度。
-
 ## 致谢
 
 - [qml4j](https://github.com/TIMER-err/qml4j) —— 运行整个界面的纯 Java QML 引擎。
@@ -131,7 +127,20 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 - [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) —— 网易云请求加密方案(weapi/eapi/xeapi)的算法参照。
 - 歌词渲染改编自 Haedus renderer;图标使用 Material Symbols Rounded。
 
-> 个人与学习项目。网易云音乐是其各自所有者的商标;本应用为非官方客户端,与网易云无关联。
+> 个人与学习项目。网易云音乐是其各自所有者的商标
+> 本应用为非官方客户端,与网易云无关联。
+
+## Star History
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=TIMER-err%2Fqplayer&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=TIMER-err/qplayer&type=date&theme=dark&legend=top-left&sealed_token=pvVKTlOWl7Lak9qFpFBXwrZXczfPyNb2ZD6ZbfiJY2us9fPe7ck5CffvPIOKcTPhT9B6J92c16ce9UrxUIJ-hwpT4WlDEdPJJ5MFvDSvK9CTG1wry56KYPc0OyDhCujlPX35c-dFPj9xU7IqhAEkH6Xz3Q13--zsYmcC_WLSYtiPKr_Et0O9x5sj-mZr" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=TIMER-err/qplayer&type=date&legend=top-left&sealed_token=pvVKTlOWl7Lak9qFpFBXwrZXczfPyNb2ZD6ZbfiJY2us9fPe7ck5CffvPIOKcTPhT9B6J92c16ce9UrxUIJ-hwpT4WlDEdPJJ5MFvDSvK9CTG1wry56KYPc0OyDhCujlPX35c-dFPj9xU7IqhAEkH6Xz3Q13--zsYmcC_WLSYtiPKr_Et0O9x5sj-mZr" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=TIMER-err/qplayer&type=date&legend=top-left&sealed_token=pvVKTlOWl7Lak9qFpFBXwrZXczfPyNb2ZD6ZbfiJY2us9fPe7ck5CffvPIOKcTPhT9B6J92c16ce9UrxUIJ-hwpT4WlDEdPJJ5MFvDSvK9CTG1wry56KYPc0OyDhCujlPX35c-dFPj9xU7IqhAEkH6Xz3Q13--zsYmcC_WLSYtiPKr_Et0O9x5sj-mZr" />
+ </picture>
+</a>
 
 ## 许可证
 
