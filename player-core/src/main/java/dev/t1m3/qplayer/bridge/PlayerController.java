@@ -44,6 +44,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The single QML-facing object. Registered as a context global
@@ -310,6 +311,8 @@ public final class PlayerController {
      *  Bounds automatic skipping when an entire queue is unavailable. */
     private volatile int consecutivePlaybackFailures;
     private long lastPositionPush;
+    /** Monotonic marker used by the host lyric renderer to identify explicit seeks. */
+    private final AtomicLong seekRevision = new AtomicLong();
     private long lastLogVersion = -1;
     private volatile boolean logVisible = false;
 
@@ -2133,10 +2136,15 @@ public final class PlayerController {
     public void seek(long ms) {
         final long t = Math.max(0L, ms);
         onMain(() -> {
+            seekRevision.incrementAndGet();
             backend.seek(t);
             post(() -> positionMs.set(t));
             notifyPlayback();
         });
+    }
+
+    public long seekRevision() {
+        return seekRevision.get();
     }
 
     public long position() {

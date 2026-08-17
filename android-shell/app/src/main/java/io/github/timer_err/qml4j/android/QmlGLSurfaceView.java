@@ -178,6 +178,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                             } else if (action == MotionEvent.ACTION_UP) {
                                 long t = compositor.lyricRenderer().timeAtScreenY(lyDownY);
                                 if (t >= 0L && controller != null) {
+                                    compositor.lyricRenderer().cancelUserScrollForSeek();
                                     controller.seek(t + LyricConfig.instance.offsetMs.getValue());
                                 }
                             }

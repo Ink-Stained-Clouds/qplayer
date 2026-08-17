@@ -83,6 +83,7 @@ public final class LyricCompositor {
     private boolean lyPlayingLast;
     private long lyBaseMs;
     private long lyBaseNanos;
+    private long lySeekRevision = -1L;
 
     // Edge-fade gradient + mask paint, cached by column top + height.
     private float lyShaderColH = -1f;
@@ -133,6 +134,11 @@ public final class LyricCompositor {
     /** The host-drawn lyric renderer; the shell feeds it scroll/seek gestures. */
     public LyricRenderer lyricRenderer() {
         return lyricRenderer;
+    }
+
+    /** Render-thread recreation resumes at a discontinuous playback position. */
+    public void onRenderResumed() {
+        lyricRenderer.easeScrollOnNextRender();
     }
 
     /** Whether the last {@link #composite} skipped the main-tree relayout (idle fast
@@ -389,6 +395,14 @@ public final class LyricCompositor {
             // even though positionMs correctly holds the restored position. Using it
             // here left the lyric column always rendering from the very start.
             long pos = predMs - LyricConfig.instance.offsetMs.getValue();
+            long seekRevision = controller.seekRevision();
+            if (lySeekRevision < 0L) {
+                // First lyric-page render has no previous visual position to animate from.
+                lySeekRevision = seekRevision;
+            } else if (seekRevision != lySeekRevision) {
+                lySeekRevision = seekRevision;
+                lyricRenderer.easeSeekOnNextRender();
+            }
             // Alpha-composite the whole column at lyricShow, and zoom it 0.95 -> 1 about
             // its own centre — matching the QML cover's zoom on the opposite side.
             int alpha = Math.round(Math.max(0f, Math.min(1f, lyricShow)) * 255f);
@@ -526,5 +540,10 @@ public final class LyricCompositor {
     public void onSceneReloaded() {
         lyricChrome = null;
         renderedVersion = -1;
+    }
+
+    /** Release context-bound caches before the host destroys its GPU context. */
+    public void invalidateGpuContext() {
+        fluidBg.invalidateGpuContext();
     }
 }

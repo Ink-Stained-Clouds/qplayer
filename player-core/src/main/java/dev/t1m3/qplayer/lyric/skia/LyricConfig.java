@@ -31,7 +31,8 @@ public final class LyricConfig {
     /** Active-line depth scaling (1.14× emphasis / 0.98× deselected). Off = no
      *  scaling, full-width wrap, no layout reflow. */
     public final Val<Boolean> scaleEmphasis = new Val<>(Boolean.TRUE);
-    /** White glow behind sung syllables on the active line. */
+    /** White glow behind a sustained final timed word/syllable. Real per-syllable
+     * sources only; synthetic plain-LRC timing never enables it. */
     public final Val<Boolean> glow = new Val<>(Boolean.TRUE);
     /** Apple-Music depth of field: blur lyric lines progressively toward the edges
      *  (the focused line stays sharp). Off by default — it adds a per-line blur layer. */

@@ -70,6 +70,7 @@ final class RenderThread extends Thread {
 
             PlayerController controller = win.controller();
             LyricCompositor compositor = win.compositor();
+            if (respawn) compositor.onRenderResumed();
             // glfwSwapInterval normally blocks present until vblank. Some X11/
             // XWayland drivers only honour it for processes launched from an
             // interactive shell, however; a .desktop/AppImage launch then runs this
@@ -134,6 +135,14 @@ final class RenderThread extends Thread {
         } catch (Throwable t) {
             win.onRenderError(t);
         } finally {
+            // LyricCompositor survives render-thread respawns, but SPlayer's cached
+            // GPU Surfaces/snapshots do not. Release them while THIS DirectContext
+            // is still alive; otherwise restore draws stale resources (black), and
+            // the next cover swap can crash in Skia MeshOp on the new context.
+            try {
+                win.compositor().invalidateGpuContext();
+            } catch (Throwable ignored) {
+            }
             // Close the QML scene's GPU-backed Canvas offscreens HERE, while this
             // thread's DirectContext is still current — they were created against it,
             // so deleting their GL/VK objects must happen before the context is

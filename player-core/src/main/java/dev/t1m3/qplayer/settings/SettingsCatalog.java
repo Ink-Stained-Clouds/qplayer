@@ -118,8 +118,8 @@ public final class SettingsCatalog {
         out.add(SettingSpec.toggle("lyricScale", LYRIC, "放大缩放", true)
                 .desc("当前行放大、其余行略缩")
                 .build());
-        out.add(SettingSpec.toggle("lyricGlow", LYRIC, "演唱发光", true)
-                .desc("已唱字词白色辉光(较耗电)")
+        out.add(SettingSpec.toggle("lyricGlow", LYRIC, "尾字发光", true)
+                .desc("仅逐字歌词：尾字持续至少1.5秒时显示白色辉光(较耗电)")
                 .build());
         out.add(SettingSpec.toggle("lyricLinearAnim", LYRIC, "非逐字歌词线性动画", false)
                 .desc("关闭时整行一起点亮")

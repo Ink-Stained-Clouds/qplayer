@@ -118,6 +118,10 @@ public final class FluidBackground {
     // looks substantially sharper and brighter than SPlayer.
     private final ImageFilter splayerBlurFilter = ImageFilter.makeBlur(
             20f, 20f, FilterTileMode.CLAMP);
+    // The mesh framebuffer contains transparent pixels between/around sprites.
+    // Without an opaque base, the main page shows through while the lyric page is
+    // sliding, then disappears abruptly when LyricCompositor stops drawing it.
+    private final Paint splayerBasePaint = new Paint().setColor(0xFF0A0A0E);
     private final Paint splayerBlurPaint = new Paint().setImageFilter(splayerBlurFilter);
     private final Paint splayerShadePaint = new Paint().setColor(0x80000000);
     // Cached full-bleed draw rect -- rebuilt only when the viewport size changes,
@@ -388,6 +392,10 @@ public final class FluidBackground {
             }
         }
 
+        // Keep the backdrop opaque from its very first opening frame. The SPlayer
+        // mesh deliberately has transparent gaps; those should reveal this base,
+        // never the main player scene underneath the lyric overlay.
+        canvas.drawRect(fullRect, splayerBasePaint);
         int layer = canvas.saveLayer(fullRect, splayerBlurPaint);
         if (splayerFrame != null) {
             canvas.drawImageRect(splayerFrame,
@@ -477,6 +485,22 @@ public final class FluidBackground {
         splayerFrameNs = 0L;
     }
 
+    /**
+     * Release every object backed by the current Skia {@link DirectContext}.
+     *
+     * <p>The desktop compositor survives minimize-to-tray render-thread respawns,
+     * while its DirectContext does not. Keeping an SPlayer Surface/snapshot across
+     * that boundary first renders black, then crashes inside Skia MeshOp when a
+     * track switch tries to close or reuse the stale objects on the new context.
+     * Call this on the owning render thread before that context is destroyed.
+     * Raster cover images/shaders are intentionally retained and will be uploaded
+     * again when the next context lazily rebuilds these caches.
+     */
+    public void invalidateGpuContext() {
+        invalidateStatic();
+        invalidateSplayerFrame();
+    }
+
     public void dispose() {
         decoder.shutdownNow();
         if (decoded != null) { decoded.close(); decoded = null; }
@@ -500,6 +524,7 @@ public final class FluidBackground {
         invalidateStatic();
         invalidateSplayerFrame();
         fluidPaint.close();
+        splayerBasePaint.close();
         splayerBlurPaint.close();
         splayerShadePaint.close();
         splayerStatePaint.close();

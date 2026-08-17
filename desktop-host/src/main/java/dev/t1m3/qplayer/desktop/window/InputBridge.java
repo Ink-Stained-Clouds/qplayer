@@ -332,6 +332,11 @@ final class InputBridge {
             } else {
                 long t = c.lyricRenderer().timeAtScreenY(lyDownY);
                 if (t >= 0L && controller != null) {
+                    // A pending eased wheel tail would otherwise call scrollByWheel()
+                    // next frame and re-enter manual-scroll mode after this seek.
+                    pendingScrollX = pendingScrollY = 0.0;
+                    lastScrollNanos = 0L;
+                    c.lyricRenderer().cancelUserScrollForSeek();
                     controller.seek(t + LyricConfig.instance.offsetMs.getValue());
                 }
             }
