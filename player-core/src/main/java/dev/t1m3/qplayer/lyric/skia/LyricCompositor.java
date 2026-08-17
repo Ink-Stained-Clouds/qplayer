@@ -41,6 +41,8 @@ public final class LyricCompositor {
         float topInset();
         /** Static cached backdrop instead of the animated fluid (battery saver). */
         boolean lyricBgStatic();
+        /** Fluid renderer selected in settings; see SettingsCatalog.BG_STYLE_* values. */
+        int lyricBgStyle();
     }
 
     // Reserved height (logical px) for the lyric-page transport bar at the bottom
@@ -344,8 +346,12 @@ public final class LyricCompositor {
             lyCoverKey = title + "|" + coverUrl;
         }
         boolean bgStatic = settings != null && settings.lyricBgStatic();
+        int bgStyle = settings != null ? settings.lyricBgStyle() : FluidBackground.STYLE_AMLL_S;
+        int bgClip = canvas.save();
+        canvas.clipRect(Rect.makeWH(w, h));
         fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,
-                System.nanoTime(), bgStatic);
+                System.nanoTime(), bgStatic, bgStyle);
+        canvas.restoreToCount(bgClip);
 
         // 2) the lyrics column. The title (top band) and transport (bottom band) are
         // drawn by the QML LyricOverlay on top of this; only the lyrics column is

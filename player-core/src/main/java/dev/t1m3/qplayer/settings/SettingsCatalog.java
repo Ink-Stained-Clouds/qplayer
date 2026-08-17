@@ -40,6 +40,13 @@ public final class SettingsCatalog {
      *  migration in SettingsCore.load. */
     public static final String BG_MODE_KEY = "lyricBgMode";
 
+    /** Fluid backdrop renderer, kept separate from dynamic/static so every style
+     *  can still use the existing battery-saving static cache. */
+    public static final String BG_STYLE_KEY = "lyricBgStyle";
+    public static final int BG_STYLE_AMLL_S = 0;
+    public static final int BG_STYLE_SPLAYER = 1;
+    public static final int BG_STYLE_CLASSIC = 2;
+
     // Dark-mode row values (the segmented control's indices).
     public static final int MODE_SYSTEM = 0;
     public static final int MODE_LIGHT = 1;
@@ -125,6 +132,10 @@ public final class SettingsCatalog {
                 .build());
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
                 .desc("动态流动 / 静态(渲染一次,更省电)")
+                .build());
+        out.add(SettingSpec.radio(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_AMLL_S,
+                        "S 曲线", "SPlayer", "经典")
+                .desc("切换歌词页的流体背景算法")
                 .build());
         // ---- 本地 -----------------------------------------------------------
         out.add(SettingSpec.stepper("maxCacheSizeMB", LOCAL, "最大缓存", 200, 50, 1024, 50)

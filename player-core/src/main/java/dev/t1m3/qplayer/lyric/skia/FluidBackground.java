@@ -1,12 +1,14 @@
 package dev.t1m3.qplayer.lyric.skia;
 
 import io.github.humbleui.skija.Bitmap;
+import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.ColorAlphaType;
 import io.github.humbleui.skija.ColorType;
 import io.github.humbleui.skija.DirectContext;
 import io.github.humbleui.skija.FilterTileMode;
 import io.github.humbleui.skija.Image;
+import io.github.humbleui.skija.ImageFilter;
 import io.github.humbleui.skija.ImageInfo;
 import io.github.humbleui.skija.Matrix33;
 import io.github.humbleui.skija.Paint;
@@ -17,97 +19,59 @@ import io.github.humbleui.skija.Shader;
 import io.github.humbleui.skija.Surface;
 import io.github.humbleui.types.Rect;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.Random;
 
-/**
- * Apple Music-style fluid backdrop (ported from Haedus FluidBackground for
- * Android). The cover is downscaled to 32x32 and AMLL-adjusted CPU-side, then a
- * SkSL shader warps + rotates the UV before sampling — all motion comes from
- * the shader. The cover decode is done with Skija itself (Image.makeFromEncoded
- * + a 32x32 raster Bitmap), so this class is fully platform-neutral and shared
- * verbatim by the Android shell and the desktop host.
- */
+/** Three selectable album-driven fluid backdrops, implemented in SkSL for both hosts. */
 public final class FluidBackground {
+
+    public static final int STYLE_AMLL_S = 0;
+    public static final int STYLE_SPLAYER = 1;
+    public static final int STYLE_CLASSIC = 2;
 
     private static final int TEX_SIZE = 32;
 
-    // Embedded SkSL (was resources/shaders/fluid_mesh.sksl). Compiled once. Two variants
-    // share the warp/rotate body: the steady-state one samples the single current cover;
-    // the fade one also samples the previous cover and lerps by `fade` for a track-switch
-    // cross-fade. Split so the common case pays one texture eval per pixel, not two.
-    private static final String SKSL_HEAD =
-            "const float TEX_SIZE  = 32.0;\n" +
-            "const float WARP_A    = 0.10;\n" +
-            "const float WARP_B    = 0.06;\n" +
-            "const float ROT_SPEED = 0.18;\n" +
-            "half4 main(float2 fragCoord) {\n" +
-            "    float2 screenUV = fragCoord / resolution;\n" +
-            "    // cover-fit the square texture: scale by the long axis, crop the\n" +
-            "    // short one so the cover never stretches with the viewport aspect.\n" +
-            "    float2 corr = float2(min(1.0, resolution.x / resolution.y),\n" +
-            "                         min(1.0, resolution.y / resolution.x));\n" +
-            "    float2 uv = (screenUV - 0.5) * corr + 0.5;\n" +
-            "    float2 w1 = float2(sin(time * 0.42 + uv.y * 3.7),\n" +
-            "                       cos(time * 0.37 + uv.x * 3.1));\n" +
-            "    float2 w2 = float2(cos(time * 0.29 + uv.x * 2.3),\n" +
-            "                       sin(time * 0.51 + uv.y * 4.4));\n" +
-            "    float2 warpedUV = uv + WARP_A * w1 + WARP_B * w2;\n" +
-            "    float a  = time * ROT_SPEED;\n" +
-            "    float cs = cos(a);\n" +
-            "    float sn = sin(a);\n" +
-            "    float2 c = warpedUV - 0.5;\n" +
-            "    float2 rotUV = float2(c.x * cs - c.y * sn,\n" +
-            "                          c.x * sn + c.y * cs) + 0.5;\n" +
-            "    rotUV = clamp(rotUV, float2(0.005), float2(0.995));\n";
-    private static final String SKSL_TAIL =
-            "    float vignette = smoothstep(0.8, 0.3, distance(screenUV, float2(0.5)));\n" +
-            "    half3 rgb = col.rgb * half(0.6 + vignette * 0.4);\n" +
-            "    float dither = fract(sin(dot(fragCoord, float2(12.9898, 78.233))) * 43758.5453);\n" +
-            "    rgb += half3(dither - 0.5) / 255.0;\n" +
-            "    return half4(rgb, 1.0);\n" +
-            "}\n";
-    private static final String SKSL =
-            "uniform float2 resolution;\n" +
-            "uniform float  time;\n" +
-            "uniform shader cover;\n" +
-            SKSL_HEAD +
-            "    half4 col = cover.eval(rotUV * TEX_SIZE);\n" +
-            SKSL_TAIL;
-    private static final String SKSL_FADE =
-            "uniform float2 resolution;\n" +
-            "uniform float  time;\n" +
-            "uniform shader cover;\n" +
-            "uniform shader coverPrev;\n" +
-            "uniform float  fade;\n" +
-            SKSL_HEAD +
-            "    half4 col = mix(coverPrev.eval(rotUV * TEX_SIZE), cover.eval(rotUV * TEX_SIZE), fade);\n" +
-            SKSL_TAIL;
+    private static final String SHADER_ROOT = "/shaders/fluid/";
+    private static final String[][] SHADER_FILES = {
+            {"amll_s.sksl", "amll_s_fade.sksl"},
+            {"splayer.sksl", "splayer_fade.sksl"},
+            {"classic.sksl", "classic_fade.sksl"}
+    };
+    private static final RuntimeEffect[][] EFFECTS = new RuntimeEffect[3][2];
 
-    private static RuntimeEffect effect;
-    private static RuntimeEffect effectFade;
-
-    private static RuntimeEffect effect() {
-        if (effect == null) {
-            try {
-                effect = RuntimeEffect.makeForShader(SKSL);
-            } catch (Throwable t) {
-                dev.t1m3.qplayer.util.Logger.warn("fluid sksl compile failed: {}", t.getMessage());
-                throw t;
-            }
-        }
-        return effect;
+    private static RuntimeEffect makeEffect(int style, boolean fade) {
+        int safeStyle = normalizeStyle(style);
+        int variant = fade ? 1 : 0;
+        RuntimeEffect cached = EFFECTS[safeStyle][variant];
+        if (cached != null) return cached;
+        String file = SHADER_FILES[safeStyle][variant];
+        cached = compileResource(SHADER_ROOT + file, file);
+        EFFECTS[safeStyle][variant] = cached;
+        return cached;
     }
 
-    private static RuntimeEffect effectFade() {
-        if (effectFade == null) {
-            try {
-                effectFade = RuntimeEffect.makeForShader(SKSL_FADE);
-            } catch (Throwable t) {
-                dev.t1m3.qplayer.util.Logger.warn("fluid fade sksl compile failed: {}", t.getMessage());
-                throw t;
-            }
+    private static RuntimeEffect compileResource(String path, String label) {
+        try (InputStream in = FluidBackground.class.getResourceAsStream(path)) {
+            if (in == null) throw new IOException("resource not found: " + path);
+            InputStreamReader reader = new InputStreamReader(in, StandardCharsets.UTF_8);
+            StringBuilder source = new StringBuilder(4096);
+            char[] buffer = new char[2048];
+            int read;
+            while ((read = reader.read(buffer)) >= 0) source.append(buffer, 0, read);
+            return RuntimeEffect.makeForShader(source.toString());
+        } catch (Throwable t) {
+            dev.t1m3.qplayer.util.Logger.warn("{} fluid sksl compile failed: {}", label, t.getMessage());
+            if (t instanceof RuntimeException) throw (RuntimeException) t;
+            throw new IllegalStateException("Failed to load fluid shader " + label, t);
         }
-        return effectFade;
+    }
+
+    private static int normalizeStyle(int style) {
+        return style >= STYLE_AMLL_S && style <= STYLE_CLASSIC ? style : STYLE_AMLL_S;
     }
 
     private final long startNs;
@@ -116,11 +80,20 @@ public final class FluidBackground {
     // track change, so build the child shader once (not per frame) and reuse it;
     // makeShader + close on the cover every frame was needless native churn.
     private Shader coverShader;
+    private Image coverAdjusted;
+    private Shader coverAdjustedShader;
     private String coverKey;
+    private float[] coverAngles = new float[4];
+    private SPlayerMesh.Data coverMesh;
+    private final float bendDirection;
     // Previous cover, kept alive to cross-fade into the new one on a track switch. Both
     // shader + image are released once the fade completes (or the page is disposed).
     private Shader coverPrevShader;
     private Image coverPrev;
+    private Shader coverPrevAdjustedShader;
+    private Image coverPrevAdjusted;
+    private float[] coverPrevAngles;
+    private SPlayerMesh.Data coverPrevMesh;
     private long fadeStartNs;
     private static final float FADE_DUR = 0.6f; // seconds
     // Off-thread cover decode. The heavy decode + 32x32 downscale + CPU blur must NOT
@@ -134,12 +107,19 @@ public final class FluidBackground {
                 t.setDaemon(true);
                 return t;
             });
-    private volatile Image decodedCover;  // built off-thread, awaiting the render thread
-    private volatile String decodedKey;   // the track key decodedCover belongs to
+    private volatile DecodedTextures decoded; // built off-thread, awaiting render thread
     private volatile String decodingKey;  // the track key currently queued/decoding
     // Reused across frames -- the per-frame `new Paint()` was a native alloc/free
     // each frame the lyric page is visible.
     private final Paint fluidPaint = new Paint();
+    // SPlayer's PlayerBackground.vue places a fixed rgba(0,0,0,.5) layer with
+    // backdrop-filter: blur(20px) above the AMLL canvas. Keep that final CSS
+    // composite as part of this selectable mode, otherwise the same mesh still
+    // looks substantially sharper and brighter than SPlayer.
+    private final ImageFilter splayerBlurFilter = ImageFilter.makeBlur(
+            20f, 20f, FilterTileMode.CLAMP);
+    private final Paint splayerBlurPaint = new Paint().setImageFilter(splayerBlurFilter);
+    private final Paint splayerShadePaint = new Paint().setColor(0x80000000);
     // Cached full-bleed draw rect -- rebuilt only when the viewport size changes,
     // instead of a fresh Rect.makeXYWH every frame.
     private Rect fullRect;
@@ -152,9 +132,24 @@ public final class FluidBackground {
     private Image staticImage;
     private int staticW = -1;
     private int staticH = -1;
+    // SPlayer renders its AMLL canvas at 0.5 device scale and caps it at 30 FPS,
+    // then CSS stretches the canvas to the player bounds. Cache that intermediate
+    // framebuffer instead of drawing the dense 50-subdivision mesh at full size on
+    // every compositor frame.
+    private Surface splayerSurface;
+    private Surface splayerMeshSurface;
+    private Image splayerFrame;
+    private int splayerFrameW = -1;
+    private int splayerFrameH = -1;
+    private long splayerFrameNs;
+    private static final long SPLAYER_FRAME_INTERVAL_NS = 1_000_000_000L / 30L;
+    private static final float SPLAYER_RENDER_SCALE = 0.5f;
+    private final Paint splayerStatePaint = new Paint();
+    private int activeStyle = -1;
 
     public FluidBackground(long startNs) {
         this.startNs = startNs;
+        this.bendDirection = (startNs & 1L) == 0L ? 1f : -1f;
     }
 
     /**
@@ -165,7 +160,14 @@ public final class FluidBackground {
      * used to build the device-resolution static cache.
      */
     public void render(Canvas canvas, DirectContext ctx, float uiScale, float w, float h,
-                       byte[] coverBytes, String trackKey, long nowNs, boolean staticMode) {
+                       byte[] coverBytes, String trackKey, long nowNs, boolean staticMode,
+                       int style) {
+        int selectedStyle = normalizeStyle(style);
+        if (selectedStyle != activeStyle) {
+            activeStyle = selectedStyle;
+            invalidateStatic();
+            invalidateSplayerFrame();
+        }
         boolean keyChanged = !Objects.equals(trackKey, coverKey);
         boolean nullButReady = cover == null && coverBytes != null && coverBytes.length > 0;
         // Kick an off-thread decode for a newly-selected cover, once per key.
@@ -175,27 +177,39 @@ public final class FluidBackground {
             final byte[] cb = coverBytes;
             final String key = trackKey;
             decoder.submit(() -> {
-                Image tex = buildTexture(cb);
-                if (tex != null) { decodedKey = key; decodedCover = tex; }
+                DecodedTextures textures = buildTextures(cb, key);
+                if (textures != null) decoded = textures;
             });
         }
         // Publish a ready off-thread texture (render thread): swap the shader, drop the
         // old cover. Cheap — the expensive work already happened on the decoder thread.
-        if (decodedCover != null && Objects.equals(decodedKey, trackKey)
+        DecodedTextures ready = decoded;
+        if (ready != null && Objects.equals(ready.key, trackKey)
                 && !Objects.equals(coverKey, trackKey)) {
             // Retire the current cover to the "prev" slot and cross-fade to the new one
             // rather than snapping. Both stay alive until the fade ends (releasePrev).
             releasePrev();
             coverPrevShader = coverShader;   // null on the very first cover
             coverPrev = cover;
-            cover = decodedCover;
-            decodedCover = null;
+            coverPrevAdjustedShader = coverAdjustedShader;
+            coverPrevAdjusted = coverAdjusted;
+            coverPrevAngles = coverPrevShader == null ? null : coverAngles;
+            coverPrevMesh = coverPrevShader == null ? null : coverMesh;
+            cover = ready.raw;
+            coverAdjusted = ready.adjusted;
+            decoded = null;
             coverKey = trackKey;
+            coverAngles = ready.angles;
+            coverMesh = ready.mesh;
             coverShader = cover.makeShader(
+                    FilterTileMode.CLAMP, FilterTileMode.CLAMP,
+                    SamplingMode.LINEAR, Matrix33.IDENTITY);
+            coverAdjustedShader = coverAdjusted.makeShader(
                     FilterTileMode.CLAMP, FilterTileMode.CLAMP,
                     SamplingMode.LINEAR, Matrix33.IDENTITY);
             fadeStartNs = nowNs;
             invalidateStatic();   // the source changed -> the cached frame is stale
+            invalidateSplayerFrame();
         }
         if (coverShader == null) {
             renderFallback(canvas, w, h, 0xFF0A0A0E);
@@ -211,6 +225,12 @@ public final class FluidBackground {
             fullRect = Rect.makeXYWH(0, 0, w, h);
             fullRectW = w;
             fullRectH = h;
+        }
+
+        if (activeStyle == STYLE_SPLAYER) {
+            renderSplayerComposite(canvas, ctx, uiScale, w, h, time, nowNs,
+                    staticMode, fadeProgress(nowNs));
+            return;
         }
 
         // Static: blit a once-rendered, device-resolution image. Rebuild it on a
@@ -237,14 +257,25 @@ public final class FluidBackground {
     // Fade progress 0..1 since the last cover swap; releases the previous cover once done.
     private float fadeProgress(long nowNs) {
         if (coverPrevShader == null) return 1f;
-        float t = (nowNs - fadeStartNs) / 1_000_000_000f / FADE_DUR;
-        if (t >= 1f) { releasePrev(); return 1f; }
-        return t < 0f ? 0f : t;
+        float duration = activeStyle == STYLE_SPLAYER ? 0.5f : FADE_DUR;
+        float t = (nowNs - fadeStartNs) / 1_000_000_000f / duration;
+        float releaseAt = activeStyle == STYLE_SPLAYER ? 1.1f : 1f;
+        if (t >= releaseAt) { releasePrev(); return 1f; }
+        if (t <= 0f) return 0f;
+        float clamped = Math.min(1f, t);
+        return 0.5f - 0.5f * (float) Math.cos(Math.PI * clamped);
     }
 
     private void releasePrev() {
         if (coverPrevShader != null) { coverPrevShader.close(); coverPrevShader = null; }
         if (coverPrev != null) { coverPrev.close(); coverPrev = null; }
+        if (coverPrevAdjustedShader != null) {
+            coverPrevAdjustedShader.close();
+            coverPrevAdjustedShader = null;
+        }
+        if (coverPrevAdjusted != null) { coverPrevAdjusted.close(); coverPrevAdjusted = null; }
+        coverPrevAngles = null;
+        coverPrevMesh = null;
     }
 
     // Render the fluid shader into `dstRect` with the given resolution + time. The
@@ -252,16 +283,26 @@ public final class FluidBackground {
     // rebuilds it each call -- but that just instantiates the already-compiled
     // effect; the cover child shader and the Paint are reused.
     private void drawFluid(Canvas canvas, Rect dstRect, float resW, float resH, float time, float fade) {
+        if (activeStyle == STYLE_SPLAYER) {
+            drawSplayer(canvas, resW, resH, time, fade);
+            return;
+        }
         boolean fading = coverPrevShader != null && fade < 1f;
+        boolean rawTexture = activeStyle == STYLE_AMLL_S;
+        Shader currentChild = rawTexture ? coverShader : coverAdjustedShader;
+        Shader previousChild = rawTexture ? coverPrevShader : coverPrevAdjustedShader;
         Shader shaded = null;
         try {
-            try (RuntimeEffectBuilder b = new RuntimeEffectBuilder(fading ? effectFade() : effect())) {
+            try (RuntimeEffectBuilder b = new RuntimeEffectBuilder(makeEffect(activeStyle, fading))) {
                 b.setUniform("resolution", resW, resH);
                 b.setUniform("time", time);
-                b.setChild("cover", coverShader);
+                b.setChild("cover", currentChild);
+                if (activeStyle == STYLE_AMLL_S) b.setUniform("bend", bendDirection);
+                if (activeStyle != STYLE_CLASSIC) b.setUniform("angles", coverAngles);
                 if (fading) {
-                    b.setChild("coverPrev", coverPrevShader);
+                    b.setChild("coverPrev", previousChild);
                     b.setUniform("fade", fade);
+                    if (activeStyle != STYLE_CLASSIC) b.setUniform("anglesPrev", coverPrevAngles);
                 }
                 shaded = b.makeShader();
             }
@@ -273,6 +314,124 @@ public final class FluidBackground {
         } finally {
             fluidPaint.setShader(null);
             if (shaded != null) shaded.close();
+        }
+    }
+
+    private void drawSplayer(Canvas canvas, float w, float h, float time, float fade) {
+        boolean fading = coverPrevAdjustedShader != null && coverPrevMesh != null && fade < 1f;
+        // AMLL keeps previous mesh states fully opaque underneath while the newest
+        // state eases from alpha 0 to 1, then discards all older states at 1.1.
+        if (fading) drawSplayerMesh(canvas, coverPrevMesh, coverPrevAdjustedShader, w, h, time, 1f);
+        drawSplayerMesh(canvas, coverMesh, coverAdjustedShader, w, h, time, fading ? fade : 1f);
+    }
+
+    private void drawSplayerMesh(Canvas canvas, SPlayerMesh.Data mesh, Shader coverChild,
+                                 float w, float h, float time, float alpha) {
+        if (mesh == null || coverChild == null || alpha <= 0f) return;
+        Shader shaded = null;
+        try {
+            try (RuntimeEffectBuilder b = new RuntimeEffectBuilder(makeEffect(STYLE_SPLAYER, false))) {
+                b.setUniform("time", time);
+                b.setChild("cover", coverChild);
+                shaded = b.makeShader();
+            }
+            fluidPaint.setShader(shaded);
+            fluidPaint.setAlphaf(alpha);
+            Canvas._nDrawVertices(canvas._ptr, 0, mesh.points(w, h), null,
+                    mesh.textureCoordinates, mesh.indices, BlendMode.SRC_OVER.ordinal(), fluidPaint._ptr);
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.warn("SPlayer mesh render failed: {}", e.getMessage());
+            renderFallback(canvas, w, h, 0xFF0A0A0E);
+        } finally {
+            fluidPaint.setShader(null);
+            fluidPaint.setAlphaf(1f);
+            if (shaded != null) shaded.close();
+        }
+    }
+
+    private void renderSplayerComposite(Canvas canvas, DirectContext ctx, float uiScale,
+                                        float w, float h, float time, long nowNs,
+                                        boolean staticMode, float fade) {
+        int frameW = Math.max(1, Math.round(w * uiScale * SPLAYER_RENDER_SCALE));
+        int frameH = Math.max(1, Math.round(h * uiScale * SPLAYER_RENDER_SCALE));
+        boolean sizeChanged = splayerFrameW != frameW || splayerFrameH != frameH;
+        boolean frameDue = nowNs - splayerFrameNs >= SPLAYER_FRAME_INTERVAL_NS;
+        if (splayerFrame == null || sizeChanged || (!staticMode && frameDue)) {
+            if (ctx != null) {
+                try {
+                    if (splayerSurface == null || sizeChanged) {
+                        invalidateSplayerFrame();
+                        splayerSurface = Surface.makeRenderTarget(ctx, false,
+                                ImageInfo.makeN32Premul(frameW, frameH));
+                        splayerMeshSurface = Surface.makeRenderTarget(ctx, false,
+                                ImageInfo.makeN32Premul(frameW, frameH));
+                    }
+                    // Drop the prior snapshot before changing the backing Surface;
+                    // otherwise Skia must copy-on-write a fresh GPU allocation every
+                    // frame instead of reusing SPlayer's equivalent of one FBO.
+                    if (splayerFrame != null) {
+                        splayerFrame.close();
+                        splayerFrame = null;
+                    }
+                    Canvas composite = splayerSurface.getCanvas();
+                    composite.clear(0x00000000);
+                    drawSplayerStates(composite, frameW, frameH, time, fade);
+                    splayerFrame = splayerSurface.makeImageSnapshot();
+                    splayerFrameW = frameW;
+                    splayerFrameH = frameH;
+                    splayerFrameNs = nowNs;
+                } catch (Throwable e) {
+                    dev.t1m3.qplayer.util.Logger.warn(
+                            "SPlayer framebuffer render failed: {}", e.getMessage());
+                    invalidateSplayerFrame();
+                }
+            }
+        }
+
+        int layer = canvas.saveLayer(fullRect, splayerBlurPaint);
+        if (splayerFrame != null) {
+            canvas.drawImageRect(splayerFrame,
+                    Rect.makeWH(splayerFrameW, splayerFrameH), fullRect,
+                    SamplingMode.LINEAR, null, true);
+        } else {
+            // A context-less host can still draw the exact mesh directly.
+            drawSplayer(canvas, w, h, time, fade);
+        }
+        canvas.restoreToCount(layer);
+        canvas.drawRect(fullRect, splayerShadePaint);
+    }
+
+    /**
+     * AMLL clears and reuses one mesh FBO for every album state, then draws that
+     * FBO as a quad onto the output framebuffer with the state's eased alpha.
+     * Keeping the two stages separate matters during a cover transition: drawing
+     * both meshes directly into one FBO changes their premultiplied colour mix.
+     */
+    private void drawSplayerStates(Canvas composite, int w, int h, float time, float fade) {
+        if (splayerMeshSurface == null) {
+            drawSplayer(composite, w, h, time, fade);
+            return;
+        }
+        boolean fading = coverPrevAdjustedShader != null && coverPrevMesh != null && fade < 1f;
+        if (fading) compositeSplayerState(composite, coverPrevMesh,
+                coverPrevAdjustedShader, w, h, time, 1f);
+        compositeSplayerState(composite, coverMesh, coverAdjustedShader,
+                w, h, time, fading ? fade : 1f);
+    }
+
+    private void compositeSplayerState(Canvas composite, SPlayerMesh.Data mesh,
+                                       Shader coverChild, int w, int h,
+                                       float time, float alpha) {
+        if (mesh == null || coverChild == null || alpha <= 0f) return;
+        Canvas state = splayerMeshSurface.getCanvas();
+        state.clear(0x00000000);
+        drawSplayerMesh(state, mesh, coverChild, w, h, time, 1f);
+        try (Image snapshot = splayerMeshSurface.makeImageSnapshot()) {
+            splayerStatePaint.setAlphaf(alpha);
+            composite.drawImageRect(snapshot, Rect.makeWH(w, h),
+                    Rect.makeWH(w, h), SamplingMode.LINEAR, splayerStatePaint, true);
+        } finally {
+            splayerStatePaint.setAlphaf(1f);
         }
     }
 
@@ -300,12 +459,27 @@ public final class FluidBackground {
         staticH = -1;
     }
 
+    private void invalidateSplayerFrame() {
+        if (splayerFrame != null) {
+            splayerFrame.close();
+            splayerFrame = null;
+        }
+        if (splayerSurface != null) {
+            splayerSurface.close();
+            splayerSurface = null;
+        }
+        if (splayerMeshSurface != null) {
+            splayerMeshSurface.close();
+            splayerMeshSurface = null;
+        }
+        splayerFrameW = -1;
+        splayerFrameH = -1;
+        splayerFrameNs = 0L;
+    }
+
     public void dispose() {
         decoder.shutdownNow();
-        if (decodedCover != null) {
-            decodedCover.close();
-            decodedCover = null;
-        }
+        if (decoded != null) { decoded.close(); decoded = null; }
         if (coverShader != null) {
             coverShader.close();
             coverShader = null;
@@ -314,20 +488,85 @@ public final class FluidBackground {
             cover.close();
             cover = null;
         }
+        if (coverAdjustedShader != null) {
+            coverAdjustedShader.close();
+            coverAdjustedShader = null;
+        }
+        if (coverAdjusted != null) {
+            coverAdjusted.close();
+            coverAdjusted = null;
+        }
         releasePrev();
         invalidateStatic();
+        invalidateSplayerFrame();
         fluidPaint.close();
+        splayerBlurPaint.close();
+        splayerShadePaint.close();
+        splayerStatePaint.close();
+        splayerBlurFilter.close();
         coverKey = null;
     }
 
-    // ---- AMLL-mirrored CPU preprocessing -----------------------------
+    // PixiRenderer starts every sprite at an independent random rotation. Keep those
+    // angles stable for a track so reopening the lyric page does not visibly jump.
+    private static float[] generateAngles(String trackKey, byte[] coverBytes) {
+        Random random = new Random(seedFor(trackKey, coverBytes));
+        float[] angles = new float[4];
+        for (int i = 0; i < angles.length; i++) {
+            angles[i] = random.nextFloat() * (float) (Math.PI * 2.0);
+        }
+        return angles;
+    }
 
-    private static Image buildTexture(byte[] coverBytes) {
+    private static long seedFor(String trackKey, byte[] coverBytes) {
+        long seed = 0x9E3779B97F4A7C15L;
+        if (trackKey != null) {
+            for (int i = 0; i < trackKey.length(); i++) {
+                seed ^= trackKey.charAt(i);
+                seed *= 0x100000001B3L;
+                seed ^= seed >>> 32;
+            }
+        } else {
+            // A null track key is valid during initial restoration. Sample the bytes
+            // sparsely so generating the rotations stays negligible beside decoding.
+            int stride = Math.max(1, coverBytes.length / 64);
+            for (int i = 0; i < coverBytes.length; i += stride) {
+                seed ^= coverBytes[i] & 0xFFL;
+                seed *= 0x100000001B3L;
+            }
+        }
+        return seed;
+    }
+
+    // ---- Shared cover preprocessing ----------------------------------
+
+    private static final class DecodedTextures {
+        final String key;
+        final Image raw;
+        final Image adjusted;
+        final float[] angles;
+        final SPlayerMesh.Data mesh;
+
+        DecodedTextures(String key, Image raw, Image adjusted, float[] angles, SPlayerMesh.Data mesh) {
+            this.key = key;
+            this.raw = raw;
+            this.adjusted = adjusted;
+            this.angles = angles;
+            this.mesh = mesh;
+        }
+
+        void close() {
+            raw.close();
+            adjusted.close();
+        }
+    }
+
+    private static DecodedTextures buildTextures(byte[] coverBytes, String trackKey) {
         if (coverBytes == null || coverBytes.length == 0) return null;
         try {
             // Decode + downscale to TEX_SIZE with Skija (no platform image lib):
-            // raster the encoded cover into a 32x32 RGBA bitmap, then read back the
-            // pixels as ARGB ints for the AMLL CPU adjust.
+            // raster the encoded cover into a 32x32 RGBA bitmap, then read back its
+            // pixels for the blur-chain approximation.
             Image src = Image.makeDeferredFromEncodedBytes(coverBytes);
             ImageInfo thumbInfo = new ImageInfo(TEX_SIZE, TEX_SIZE,
                     ColorType.RGBA_8888, ColorAlphaType.UNPREMUL);
@@ -343,31 +582,48 @@ public final class FluidBackground {
             thumb.close();
             if (raw == null) return null;
 
+            float[] rgb = new float[TEX_SIZE * TEX_SIZE * 3];
             int[] argb = new int[TEX_SIZE * TEX_SIZE];
-            for (int i = 0; i < argb.length; i++) {
+            for (int i = 0; i < TEX_SIZE * TEX_SIZE; i++) {
                 int r = raw[i * 4] & 0xFF;
                 int g = raw[i * 4 + 1] & 0xFF;
                 int b = raw[i * 4 + 2] & 0xFF;
                 int a = raw[i * 4 + 3] & 0xFF;
+                rgb[i * 3] = r;
+                rgb[i * 3 + 1] = g;
+                rgb[i * 3 + 2] = b;
                 argb[i] = (a << 24) | (r << 16) | (g << 8) | b;
             }
 
-            float[] rgb = amllAdjust(argb);
+            // At 32px, four radius-2 passes approximate the combined visual radius
+            // of Pixi's 5/10/20/40/80px full-stage blur chain.
             boxBlur(rgb, TEX_SIZE, TEX_SIZE, 2, 4);
+            Image rawTexture = imageFromRgb(rgb);
 
-            byte[] px = new byte[argb.length * 4];
-            for (int i = 0; i < argb.length; i++) {
-                px[i * 4] = (byte) clampU8(rgb[i * 3]);
-                px[i * 4 + 1] = (byte) clampU8(rgb[i * 3 + 1]);
-                px[i * 4 + 2] = (byte) clampU8(rgb[i * 3 + 2]);
-                px[i * 4 + 3] = (byte) 0xFF;
-            }
-            ImageInfo info = new ImageInfo(TEX_SIZE, TEX_SIZE,
-                    ColorType.RGBA_8888, ColorAlphaType.OPAQUE);
-            return Image.makeRasterFromBytes(info, px, TEX_SIZE * 4L);
+            // SPlayer's MeshGradientRenderer and QPlayer's classic renderer use the
+            // AMLL 0.5.x cover pipeline before the mesh/warp: contrast .4,
+            // saturation 3, contrast 1.7, brightness .75, then the same blur.
+            float[] adjustedRgb = amllAdjust(argb);
+            boxBlur(adjustedRgb, TEX_SIZE, TEX_SIZE, 2, 4);
+            Image adjustedTexture = imageFromRgb(adjustedRgb);
+            return new DecodedTextures(trackKey, rawTexture, adjustedTexture,
+                    generateAngles(trackKey, coverBytes), SPlayerMesh.create());
         } catch (Throwable e) {
             return null;
         }
+    }
+
+    private static Image imageFromRgb(float[] rgb) {
+        byte[] px = new byte[TEX_SIZE * TEX_SIZE * 4];
+        for (int i = 0; i < TEX_SIZE * TEX_SIZE; i++) {
+            px[i * 4] = (byte) clampU8(rgb[i * 3]);
+            px[i * 4 + 1] = (byte) clampU8(rgb[i * 3 + 1]);
+            px[i * 4 + 2] = (byte) clampU8(rgb[i * 3 + 2]);
+            px[i * 4 + 3] = (byte) 0xFF;
+        }
+        ImageInfo info = new ImageInfo(TEX_SIZE, TEX_SIZE,
+                ColorType.RGBA_8888, ColorAlphaType.OPAQUE);
+        return Image.makeRasterFromBytes(info, px, TEX_SIZE * 4L);
     }
 
     private static float[] amllAdjust(int[] argb) {
@@ -387,13 +643,9 @@ public final class FluidBackground {
             g = gray * -2f + g * 3f;
             b = gray * -2f + b * 3f;
 
-            r = (r - 128f) * 1.7f + 128f;
-            g = (g - 128f) * 1.7f + 128f;
-            b = (b - 128f) * 1.7f + 128f;
-
-            r *= 0.75f;
-            g *= 0.75f;
-            b *= 0.75f;
+            r = ((r - 128f) * 1.7f + 128f) * 0.75f;
+            g = ((g - 128f) * 1.7f + 128f) * 0.75f;
+            b = ((b - 128f) * 1.7f + 128f) * 0.75f;
 
             out[i * 3] = r;
             out[i * 3 + 1] = g;

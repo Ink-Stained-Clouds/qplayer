@@ -276,6 +276,11 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         return intOf(SettingsCatalog.BG_MODE_KEY) == 1;
     }
 
+    @Override
+    public int lyricBgStyle() {
+        return intOf(SettingsCatalog.BG_STYLE_KEY);
+    }
+
     // ---- value plumbing -----------------------------------------------------
 
     private Object read(SettingSpec spec) {
