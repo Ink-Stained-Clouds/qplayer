@@ -1611,6 +1611,14 @@ public final class PlayerController {
 
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        // loadQueue() sets needsReplay because its restored track exists only as
+        // metadata until the user resumes it. Any successful route into playAt(),
+        // including clicking a different song first, is now taking responsibility
+        // for loading a real backend source, so the restore-only marker must not
+        // survive. If it leaked, the first pause -> resume later called playAt()
+        // again instead of backend.resume(); pendingResumeMs had already been
+        // consumed, so that accidental replay restarted the current song at 0.
+        needsReplay = false;
         scrobbleOutgoingTrack(pendingNaturalEnd);
         pendingNaturalEnd = false;
         playIndex = i;
