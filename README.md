@@ -24,13 +24,16 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/1.jpg" width="24%" alt="首页(浅色,莫奈取色)">
-  <img src="docs/screenshots/2.jpg" width="24%" alt="首页(深色)">
-  <img src="docs/screenshots/3.jpg" width="24%" alt="歌词(罗马音 + 翻译)">
-  <img src="docs/screenshots/4.jpg" width="24%" alt="歌词(波浪进度条)">
+  <img src="docs/screenshots/platform-showcase.png" width="100%" alt="QPlayer 在手机、平板和电脑上的推荐、设置与歌词界面">
 </p>
 <p align="center">
-  <sub>首页 · 浅色莫奈 &nbsp;|&nbsp; 首页 · 深色 &nbsp;|&nbsp; 歌词 · 逐字 + 罗马音/翻译 &nbsp;|&nbsp; 歌词 · 流体背景 + 波浪进度</sub>
+  <sub>手机推荐 · 平板设置 · 桌面歌词</sub>
+</p>
+<p align="center">
+  <img src="docs/screenshots/platform-showcase-2.png" width="100%" alt="QPlayer 在电脑、平板和手机上的推荐、设置与歌词界面">
+</p>
+<p align="center">
+  <sub>桌面推荐 · 平板设置 · 手机歌词</sub>
 </p>
 
 界面不使用任何原生 View。除歌词页正文外,所有控件都由 QML 描述并经 qml4j 渲染;歌词正文(逐字滚动 + 流体背景)由宿主通过 Skija 直接手工绘制,不走 QML。qml4j 本身是用纯 Java 实现的 QML 运行时。
@@ -131,6 +134,8 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 - [qml4j](https://github.com/TIMER-err/qml4j) —— 运行整个界面的纯 Java QML 引擎。
 - [Skija](https://github.com/HumbleUI/Skija) —— JVM 上的 Skia 绑定;渲染器与宿主绘制的歌词页都通过它输出。
 - [material-components-qml](https://github.com/sudoevolve/material-components-qml) —— UI 所用的 Material 3 QML 组件库(`md3.Core`,vendored 后适配引擎)。
+- [SPlayer](https://github.com/imsyy/SPlayer) —— 流体歌词背景的视觉与实现参考。
+- [AMLL](https://github.com/amll-dev/amll-player) —— Apple Music 风格歌词与流体背景的设计参考。
 - [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) —— 逐字歌词。
 - [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) —— 网易云请求加密方案(weapi/eapi/xeapi)的算法参照。
 - 歌词渲染改编自 Haedus renderer;图标使用 Material Symbols Rounded。

@@ -24,13 +24,16 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/1.jpg" width="24%" alt="Home (light, Monet)">
-  <img src="docs/screenshots/2.jpg" width="24%" alt="Home (dark)">
-  <img src="docs/screenshots/3.jpg" width="24%" alt="Lyrics (romaji + translation)">
-  <img src="docs/screenshots/4.jpg" width="24%" alt="Lyrics (wavy progress)">
+  <img src="docs/screenshots/platform-showcase.png" width="100%" alt="QPlayer's recommendations, settings, and lyrics UI on phone, tablet, and desktop">
 </p>
 <p align="center">
-  <sub>Home · light (Monet) &nbsp;|&nbsp; Home · dark &nbsp;|&nbsp; Lyrics · per-syllable + romaji/translation &nbsp;|&nbsp; Lyrics · fluid backdrop + wavy progress</sub>
+  <sub>Phone recommendations · Tablet settings · Desktop lyrics</sub>
+</p>
+<p align="center">
+  <img src="docs/screenshots/platform-showcase-2.png" width="100%" alt="QPlayer's recommendations, settings, and lyrics UI on desktop, tablet, and phone">
+</p>
+<p align="center">
+  <sub>Desktop recommendations · Tablet settings · Phone lyrics</sub>
 </p>
 
 The UI uses no native Views. Every control is described in QML and rendered by qml4j — **except** the lyric-page body (per-syllable scrolling + fluid backdrop), which the host draws by hand directly through Skija, not in QML. qml4j is itself a QML runtime written in pure Java.
@@ -131,6 +134,8 @@ Commit, then tag and push `v<versionName>` (e.g. `v0.8.4`) to trigger `release.y
 - [qml4j](https://github.com/TIMER-err/qml4j) — the pure-Java QML engine that runs the UI.
 - [Skija](https://github.com/HumbleUI/Skija) — Skia bindings for the JVM; the renderer and the host-drawn lyric page draw through it.
 - [material-components-qml](https://github.com/sudoevolve/material-components-qml) — the Material 3 QML component library (`md3.Core`) the UI is built from (vendored, engine-adapted).
+- [SPlayer](https://github.com/imsyy/SPlayer) — visual and implementation reference for the fluid lyrics backdrop.
+- [AMLL](https://github.com/amll-dev/amll-player) — design reference for Apple Music-style lyrics and fluid backdrops.
 - [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) — syllable-level lyrics.
 - [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) — reference for the NetEase request-encryption schemes (weapi/eapi/xeapi).
 - Lyric rendering adapted from the Haedus renderer; icons are Material Symbols Rounded.
