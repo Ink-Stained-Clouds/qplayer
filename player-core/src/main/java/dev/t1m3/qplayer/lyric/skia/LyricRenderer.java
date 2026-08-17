@@ -204,20 +204,20 @@ public class LyricRenderer {
 
     // ---- Scroll spring tunings (ported from AMLL computeLinePosYSpringParams) --
     // Keep the established per-line cascade renderer, but use a gently
-    // underdamped spring. ζ≈0.78 keeps one soft overshoot while damping
+    // underdamped spring. ζ≈0.68 keeps one visible overshoot while damping
     // the repeated oscillation that becomes conspicuous across rapid line changes.
     // k=65 preserves the established response speed; only the settling is calmer.
     private static final double SCROLL_STIFFNESS_MIN = 65.0;
     private static final double SCROLL_STIFFNESS_MAX = 65.0;
     private static final double SCROLL_INTERVAL_MIN_MS = 100.0;
     private static final double SCROLL_INTERVAL_MAX_MS = 800.0;
-    private static final double SCROLL_DAMPING_MULT = 1.55; // damping ≈ 12.5 @ k=65, ζ≈0.78
+    private static final double SCROLL_DAMPING_MULT = 1.365; // damping ≈ 11.0 @ k=65, ζ≈0.68
     // Steadier fixed spring while seeking or during an interlude.
     private static final double SCROLL_STIFFNESS_INTERLUDE = 55.0;
-    private static final double SCROLL_DAMPING_INTERLUDE = 11.5;
+    private static final double SCROLL_DAMPING_INTERLUDE = 10.1;
     // Non-spring fallback uses the same current k/damping pair, without cascade.
     private static final double SCROLL_STIFFNESS_FIRM = 65.0;
-    private static final double SCROLL_DAMPING_FIRM = 12.5;
+    private static final double SCROLL_DAMPING_FIRM = 11.0;
     // The original rigid seek spring: slightly overdamped, so the whole column
     // glides to the new position without the newer fixed-duration tween or bounce.
     private static final double SEEK_SPRING_STIFFNESS = 180.0;
@@ -230,6 +230,8 @@ public class LyricRenderer {
     // Peak opacity of the white glow behind a sustained final timed word/syllable.
     private static final float GLOW_ALPHA = 0.55f;
     private static final long TAIL_GLOW_MIN_DURATION_MS = 1500L;
+    private static final float TEXT_SHADOW_OFFSET_Y = 2f;
+    private static final float TEXT_SHADOW_ALPHA = 0.48f;
     // Per-line scroll cascade (Apple Specs.lineDelay = 0.05). The active line and
     // everything ABOVE it move together (delay 0) — lockstep preserves their
     // spacing so the active line never rises into a still-stationary line above it
@@ -289,7 +291,7 @@ public class LyricRenderer {
      * matching Apple Music's lyric flow. Duration-based easing would
      * restart on every line change; the spring carries velocity through.
      */
-    // The global fallback uses the same k=65 / damping=12.5 tuning.
+    // The global fallback uses the same k=65 / damping=11 tuning.
     private final SpringAnim scrollAnim = new SpringAnim(SCROLL_STIFFNESS_FIRM, SCROLL_DAMPING_FIRM);
     private final SpringAnim seekAnim = new SpringAnim(SEEK_SPRING_STIFFNESS, SEEK_SPRING_DAMPING);
     // Last spring-mode flag the scrollAnim was retuned for; -1 = not yet applied.
@@ -404,6 +406,7 @@ public class LyricRenderer {
     // blurred layer; the rest of the sung row never enters this layer.
     private final io.github.humbleui.skija.Paint glowGlyphPaint = newGlowGlyphPaint();
     private final io.github.humbleui.skija.Paint glowLayerPaint = newGlowLayerPaint();
+    private final io.github.humbleui.skija.Paint textShadowPaint = newTextShadowPaint();
     // Per-syllable lift offset for the active row.
     private float[] liftBuf = new float[0];
 
@@ -419,6 +422,15 @@ public class LyricRenderer {
         // the row replaces the old per-glyph mask-filter blur.
         p.setImageFilter(io.github.humbleui.skija.ImageFilter.makeBlur(
                 2.5f, 2.5f, io.github.humbleui.skija.FilterTileMode.CLAMP));
+        return p;
+    }
+
+    private static io.github.humbleui.skija.Paint newTextShadowPaint() {
+        io.github.humbleui.skija.Paint p = new io.github.humbleui.skija.Paint();
+        p.setAntiAlias(true);
+        p.setColor(0xFF000000);
+        p.setMaskFilter(io.github.humbleui.skija.MaskFilter.makeBlur(
+                io.github.humbleui.skija.FilterBlurMode.NORMAL, 2.2f));
         return p;
     }
 
@@ -774,6 +786,7 @@ public class LyricRenderer {
         boolean spring = Boolean.TRUE.equals(cfg.springPhysics.getValue());
         boolean scaleOn = Boolean.TRUE.equals(cfg.scaleEmphasis.getValue());
         boolean glowOn = Boolean.TRUE.equals(cfg.glow.getValue());
+        boolean shadowOn = Boolean.TRUE.equals(cfg.dropShadow.getValue());
         int springMode = spring ? 1 : 0;
         if (springMode != lastSpringMode) {
             // scrollAnim only drives the non-spring fallback; per-line springs
@@ -1422,7 +1435,8 @@ public class LyricRenderer {
                 float wrapRowH = (r == 0) ? rowHeight : (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
                 float rowBaselineY = lineYTop + rowHeight + r * wrapRowH - descent - 4f;
                 drawSyllableRange(line.syllables, lineSylW, from, to, rowX - lead, rowBaselineY, font,
-                        ascent, descent, positionMs, baseAlpha, activeK, animatablePerToken, spring, glowOn);
+                        ascent, descent, positionMs, baseAlpha, activeK, animatablePerToken, spring,
+                        glowOn, shadowOn);
 
                 if (visWidth > maxRowWidth) {
                     maxRowWidth = visWidth;
@@ -1438,8 +1452,10 @@ public class LyricRenderer {
             float subY = lineYTop + rowHeight
                     + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap) + 4f
                     + (subRowCount > 1 ? WRAP_SUB_GAP : 0f);
-            subY = drawSubline(leftX, subFont, subLineHeight, showRomaji, i, alignRight, baseAlpha, maxRowRightX, subY, cachedRomajiRows);
-            subY = drawSubline(leftX, subFont, subLineHeight, showTranslation, i, alignRight, baseAlpha, maxRowRightX, subY, cachedTranslationRows);
+            subY = drawSubline(leftX, subFont, subLineHeight, showRomaji, i, alignRight,
+                    baseAlpha, maxRowRightX, subY, cachedRomajiRows, shadowOn);
+            subY = drawSubline(leftX, subFont, subLineHeight, showTranslation, i, alignRight,
+                    baseAlpha, maxRowRightX, subY, cachedTranslationRows, shadowOn);
 
             canvas.restore();
         }
@@ -1494,12 +1510,15 @@ public class LyricRenderer {
         }
     }
 
-    private float drawSubline(float leftX, Font subFont, float subLineHeight, boolean showRomaji, int i, boolean alignRight, float baseAlpha, float maxRowRightX, float subY, String[][] cachedRomajiRows) {
+    private float drawSubline(float leftX, Font subFont, float subLineHeight,
+                              boolean showRomaji, int i, boolean alignRight,
+                              float baseAlpha, float maxRowRightX, float subY,
+                              String[][] cachedRomajiRows, boolean shadowOn) {
         String[] romajiRows = cachedRomajiRows[i];
         if (romajiRows != null && showRomaji) {
             for (String romajiRow : romajiRows) {
                 drawSubLine(romajiRow, leftX, maxRowRightX, subY, subFont,
-                        baseAlpha * 0.75f, alignRight);
+                        baseAlpha * 0.75f, alignRight, shadowOn);
                 subY += subLineHeight;
             }
         }
@@ -2085,10 +2104,11 @@ public class LyricRenderer {
         return rows.toArray(new String[0]);
     }
 
-    private static void drawSubLine(String text, float leftX, float rightAnchorX, float y,
-                                    Font font, float alpha, boolean alignRight) {
+    private void drawSubLine(String text, float leftX, float rightAnchorX, float y,
+                             Font font, float alpha, boolean alignRight, boolean shadowOn) {
         font = fontForText(text, font);
         float x = alignRight ? rightAnchorX - font.measureTextWidth(text) : leftX;
+        if (shadowOn) drawTextShadow(text, x, y, font, alpha);
         Paint paint = LyricSkia.scratchPaint();
         paint.setColor(0xFFE6E6E6);
         paint.setAlphaf(alpha);
@@ -2141,7 +2161,7 @@ public class LyricRenderer {
                                    float startX, float baselineY, Font font,
                                    float ascent, float descent, long pos,
                                    float baseAlpha, float activeK, boolean enableLift, boolean spring,
-                                   boolean glowOn) {
+                                   boolean glowOn, boolean shadowOn) {
         if (from >= to) return;
         Canvas canvas = LyricSkia.getCanvas();
 
@@ -2153,7 +2173,9 @@ public class LyricRenderer {
             paint.setAntiAlias(true);
             for (int i = from; i < to; i++) {
                 String st = syllables.get(i).text;
-                canvas.drawString(st, x, baselineY, fontForText(st, font), paint);
+                Font textFont = fontForText(st, font);
+                if (shadowOn) drawTextShadow(st, x, baselineY, textFont, baseAlpha);
+                canvas.drawString(st, x, baselineY, textFont, paint);
                 x += sylWidths[i];
             }
             return;
@@ -2230,6 +2252,17 @@ public class LyricRenderer {
                 }
             }
 
+            // Drop-shadow pass follows each syllable's lift. It lives inside the
+            // row's composite layer, so baseAlpha and the sweep mask affect shadow
+            // and foreground identically.
+            if (shadowOn) {
+                for (int s = 0; s < n; s++) {
+                    String st = syllables.get(from + s).text;
+                    drawTextShadow(st, sylLeft[s], baselineY + liftBuf[s],
+                            fontForText(st, font), 1f);
+                }
+            }
+
             // Tail-glow pass: only the final non-whitespace timed word/syllable is
             // blurred, and only when that token is a sustained note.
             if (tailGlowAlpha > 0.01f) {
@@ -2282,6 +2315,12 @@ public class LyricRenderer {
         } finally {
             canvas.restore();
         }
+    }
+
+    private void drawTextShadow(String text, float x, float baselineY, Font font, float alpha) {
+        textShadowPaint.setAlphaf(alpha * TEXT_SHADOW_ALPHA);
+        LyricSkia.getCanvas().drawString(text, x, baselineY + TEXT_SHADOW_OFFSET_Y,
+                font, textShadowPaint);
     }
 
     /**

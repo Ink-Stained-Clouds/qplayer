@@ -42,8 +42,13 @@ Item {
     // Internal State
     property bool menuOpen: false
     property bool isFocused: menuOpen || activeFocus
-    property bool isFloated: isFocused || currentText.length > 0 || (leadingIcon !== "") 
-    property bool _actuallyFloated: isFocused || currentText.length > 0
+    // A label-less outlined combo (the settings dropdown) must not create the
+    // floating-label notch. Previously currentText alone floated an empty Text,
+    // whose background mask rendered as a small dark square at the top-left.
+    property bool isFloated: label.length > 0
+            && (isFocused || currentText.length > 0 || leadingIcon !== "")
+    property bool _actuallyFloated: label.length > 0
+            && (isFocused || currentText.length > 0)
 
     // Menu Model Adapter
     property var _menuModel: {
@@ -142,6 +147,7 @@ Item {
         Text {
             id: labelText
             text: control.label
+            visible: control.label.length > 0
             
             // Layout Logic:
             // restingX: If icon present, 16 (icon) + 16 (gap) = 32? No.
@@ -172,6 +178,7 @@ Item {
             // Background for Outlined Label (to hide border)
             Rectangle {
                 visible: control.type === "outlined" && control._actuallyFloated
+                        && control.label.length > 0
                 color: control.labelBackgroundColor
                 z: -1
                 anchors.fill: parent

@@ -34,6 +34,8 @@ public final class LyricConfig {
     /** White glow behind a sustained final timed word/syllable. Real per-syllable
      * sources only; synthetic plain-LRC timing never enables it. */
     public final Val<Boolean> glow = new Val<>(Boolean.TRUE);
+    /** Soft drop shadow behind lyric, background-vocal and sub-line glyphs. */
+    public final Val<Boolean> dropShadow = new Val<>(Boolean.TRUE);
     /** Apple-Music depth of field: blur lyric lines progressively toward the edges
      *  (the focused line stays sharp). Off by default — it adds a per-line blur layer. */
     public final Val<Boolean> edgeBlur = new Val<>(Boolean.FALSE);

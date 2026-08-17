@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Effects
 import md3.Core
 import "."
 
@@ -67,6 +68,15 @@ Item {
         radius: Math.min(width, height) * 0.06
         iconSize: 72
         fadeIn: true
+        layer.enabled: visible
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: "#CC000000"
+            shadowBlur: 0.65
+            shadowVerticalOffset: 8
+            shadowOpacity: 0.46
+            blurMax: 48
+        }
         // Only the resolved local cover path, not the coverUrl fallback: on a track
         // switch coverPath clears to "" until the new art is ready, so the placeholder
         // shows through (fadeIn) instead of the previous song's cover lingering.
@@ -451,6 +461,15 @@ Item {
                 iconSize: 64
                 fadeIn: true
                 source: player.coverPath
+                layer.enabled: visible
+                layer.effect: MultiEffect {
+                    shadowEnabled: true
+                    shadowColor: "#CC000000"
+                    shadowBlur: 0.65
+                    shadowVerticalOffset: 8
+                    shadowOpacity: 0.46
+                    blurMax: 48
+                }
 
                 // Same tap-to-return as the portrait cover above; harmless (no-op)
                 // when already showing lyrics.

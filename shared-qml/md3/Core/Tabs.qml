@@ -48,6 +48,14 @@ Item {
                     property bool selected: index === root.currentIndex
                     property var itemData: modelData
                     property real contentWidth: contentLayout.implicitWidth
+
+                    // RowLayout recomputes delegate geometry when the window is
+                    // resized, but currentIndex does not change, so the indicator's
+                    // old absolute coordinates otherwise remain behind. Update from
+                    // the selected delegate after its actual geometry has changed.
+                    onXChanged: if (selected) tabBar.updateIndicator(true)
+                    onWidthChanged: if (selected) tabBar.updateIndicator(true)
+                    onContentWidthChanged: if (selected) tabBar.updateIndicator(true)
                     
                     ColumnLayout {
                         id: contentLayout
@@ -215,4 +223,3 @@ Item {
         clip: true
     }
 }
-

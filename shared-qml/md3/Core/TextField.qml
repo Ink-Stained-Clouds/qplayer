@@ -143,6 +143,12 @@ Item {
                     id: labelText
                     text: control.label
                     color: _labelColor
+                    // Long URL-template hints used to paint beyond the outlined
+                    // field on narrow screens. Keep the label inside the same text
+                    // area as the editable body and truncate it at the trailing edge.
+                    width: parent.width
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
                     
                     // Position logic
                     // Filled: Center (y=16 approx) -> Top (y=8)
@@ -303,4 +309,3 @@ Item {
         visible: text !== ""
     }
 }
-
