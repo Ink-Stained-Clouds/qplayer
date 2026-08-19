@@ -64,11 +64,11 @@ public final class PlaybackService extends Service {
         session.setCallback(new MediaSessionCompat.Callback() {
             @Override public void onPlay() {
                 PlayerController c = controller;
-                if (c != null && !c.isPlaying()) c.toggle();
+                if (c != null) c.mediaResume();
             }
             @Override public void onPause() {
                 PlayerController c = controller;
-                if (c != null && c.isPlaying()) c.toggle();
+                if (c != null) c.mediaPause();
             }
             @Override public void onSkipToNext() {
                 PlayerController c = controller;
@@ -84,7 +84,7 @@ public final class PlaybackService extends Service {
             }
             @Override public void onStop() {
                 PlayerController c = controller;
-                if (c != null && c.isPlaying()) c.toggle();
+                if (c != null) c.mediaPause();
                 clearNotification();
                 stopSelf();
             }

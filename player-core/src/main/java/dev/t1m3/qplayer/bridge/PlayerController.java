@@ -3733,6 +3733,59 @@ public final class PlayerController {
         return playingIntent;
     }
 
+    /** Pause playback immediately — intended for MediaSession callbacks that may
+     *  arrive on a binder thread on some OEM ROMs (MIUI/HyperOS, HarmonyOS)
+     *  where main-thread message delivery is throttled in the background. */
+    public void mediaPause() {
+        if (!playingIntent) return;
+        playingIntent = false;
+        post(() -> playing.set(false));
+        if (fadeEnabled) {
+            startFadeOut(FADE_OUT_MS, () -> { if (!playingIntent) backend.pause(); });
+        } else {
+            backend.pause();
+        }
+        notifyPlayback();
+    }
+
+    /** Resume playback immediately — counterpart to {@link #mediaPause()} for
+     *  MediaSession callbacks that may run off the main thread. */
+    public void mediaResume() {
+        if (playingIntent) return;
+        if (needsReplay && playIndex >= 0) {
+            needsReplay = false;
+            onMain(() -> playAt(playIndex));
+            return;
+        }
+        if (fadeStartAt != 0L && backend.isPlaying()) {
+            fadeCompleteAction = null;
+            if (fadeEnabled) {
+                fadeFromGain = currentFadeGain();
+                fadeToGain = 1f;
+                fadeDurationMs = FADE_IN_MS;
+                fadeStartAt = System.currentTimeMillis();
+            } else {
+                fadeStartAt = 0L;
+                backend.setVolume(volume.peek());
+            }
+        } else {
+            if (fadeEnabled) {
+                fadeFromGain = 0f;
+                fadeToGain = 1f;
+                fadeDurationMs = FADE_IN_MS;
+                fadeStartAt = System.currentTimeMillis();
+                backend.setVolume(0f);
+            } else {
+                fadeStartAt = 0L;
+                backend.setVolume(volume.peek());
+            }
+            backend.resume();
+        }
+        playingIntent = true;
+        post(() -> playing.set(true));
+        notifyPlayback();
+    }
+
     /** Current source duration in ms (0 if unknown). */
     public long duration() {
         long d = backend.duration();
