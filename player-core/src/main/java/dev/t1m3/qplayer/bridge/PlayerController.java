@@ -2143,6 +2143,16 @@ public final class PlayerController {
         });
     }
 
+    /** Seek immediately — like {@link #mediaPause()} / {@link #mediaResume()},
+     *  bypasses the main-thread Handler to avoid OEM background throttling. */
+    public void mediaSeek(long ms) {
+        final long t = Math.max(0L, ms);
+        seekRevision.incrementAndGet();
+        backend.seek(t);
+        post(() -> positionMs.set(t));
+        notifyPlayback();
+    }
+
     public long seekRevision() {
         return seekRevision.get();
     }

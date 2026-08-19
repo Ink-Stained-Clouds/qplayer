@@ -80,7 +80,7 @@ public final class PlaybackService extends Service {
             }
             @Override public void onSeekTo(long pos) {
                 PlayerController c = controller;
-                if (c != null) c.seek(pos);
+                if (c != null) c.mediaSeek(pos);
             }
             @Override public void onStop() {
                 PlayerController c = controller;
