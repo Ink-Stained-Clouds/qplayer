@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class PlayerControllerPlaybackTest {
 
@@ -51,8 +53,44 @@ public class PlayerControllerPlaybackTest {
         }
     }
 
+    @Test
+    public void mediaSessionControlsBypassRenderDrivenFade() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("media-pause").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"track\",\"durationMs\":120000,\"filePath\":\"track.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+
+            int pausesBeforeMediaCommand = backend.pauseCalls;
+            controller.mediaPause();
+
+            assertEquals(pausesBeforeMediaCommand + 1, backend.pauseCalls);
+            assertFalse(backend.playing);
+
+            int resumesBeforeMediaCommand = backend.resumeCalls;
+            controller.mediaResume();
+
+            assertEquals(resumesBeforeMediaCommand + 1, backend.resumeCalls);
+            assertTrue(backend.playing);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
     private static final class FakeAudioBackend implements AudioBackend {
         int playCalls;
+        int pauseCalls;
         int resumeCalls;
         boolean playing;
         long position;
@@ -63,7 +101,7 @@ public class PlayerControllerPlaybackTest {
             playing = true;
         }
 
-        @Override public void pause() { playing = false; }
+        @Override public void pause() { pauseCalls++; playing = false; }
 
         @Override public void resume() {
             resumeCalls++;

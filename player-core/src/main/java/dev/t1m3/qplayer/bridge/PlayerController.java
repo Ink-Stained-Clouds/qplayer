@@ -44,6 +44,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -81,18 +84,33 @@ public final class PlayerController {
         t.setDaemon(true);
         return t;
     });
-    // Custom-API search/resolve get their own single-threaded queue, separate from
-    // `worker` above: netease's background calls (covers, lyrics, login refresh)
-    // share `worker` and can each take a long time to time out on a slow/unreachable
-    // connection, which head-of-line-blocks anything queued behind them — a custom
-    // source search or play-url resolve could sit stuck for minutes behind an
-    // unrelated stalled netease request, looking exactly like "does nothing" even
-    // though it eventually succeeds. See dev.t1m3.qplayer.customapi.
+    // Interactive searches must not queue behind cover/home/playlist requests on
+    // worker, and rapid typing must not leave an unbounded list of obsolete searches
+    // in memory. Keep at most the request currently running plus the newest pending
+    // request; DiscardOldestPolicy coalesces everything in between.
+    private final ExecutorService searchWorker = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
+                Thread t = new Thread(r, "qplayer-search");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.DiscardOldestPolicy());
+    // Custom-API play-url and lyric resolves get their own single-threaded queue,
+    // separate from `worker` above. Search has an independently bounded executor
+    // below, so rapid queries cannot delay a user-selected track's resolve.
     private final ExecutorService customWorker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "qplayer-custom-api");
         t.setDaemon(true);
         return t;
     });
+    // Custom-source searches are independently coalesced as well. They must not
+    // fill customWorker's queue ahead of a play-url/lyric resolve, since repeated
+    // searches could otherwise make tapping a result appear to freeze playback.
+    private final ExecutorService customSearchWorker = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
+                Thread t = new Thread(r, "qplayer-custom-search");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.DiscardOldestPolicy());
     // Bulk, non-urgent disk-cache downloads (full audio files, thumbnails) get their
     // own queue for the exact same head-of-line-blocking reason customWorker above
     // was split off: a full-track FLAC download is tens of MB and can take many
@@ -2657,7 +2675,7 @@ public final class PlayerController {
 
     // --- Queue persistence ------------------------------------------------
 
-    private void saveQueue() {
+    private synchronized void saveQueue() {
         try {
             java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "queue.json");
             f.getParentFile().mkdirs();
@@ -2697,8 +2715,21 @@ public final class PlayerController {
                 sb.append('}');
             }
             sb.append("]}");
-            java.nio.file.Files.write(f.toPath(),
+            // Never leave a truncated queue when Android kills the process during
+            // a periodic checkpoint. Write beside the destination, then replace it
+            // atomically (with a normal replace fallback for unusual filesystems).
+            java.nio.file.Path target = f.toPath();
+            java.nio.file.Path pending = target.resolveSibling(f.getName() + ".pending");
+            java.nio.file.Files.write(pending,
                     sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try {
+                java.nio.file.Files.move(pending, target,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                java.nio.file.Files.move(pending, target,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (Throwable e) {
             Logger.warn("saveQueue failed: {}", e.getMessage());
         }
@@ -2903,7 +2934,7 @@ public final class PlayerController {
             Logger.info("search cache hit: {}", key);
             return;
         }
-        worker.submit(() -> {
+        searchWorker.submit(() -> {
             try {
                 if (!key.equals(currentSearchKey)) return;
                 // Double-check: another search for the same keyword may have
@@ -2978,7 +3009,7 @@ public final class PlayerController {
         }
         final String key = keyword.trim();
         currentCustomSearchKey = key;
-        customWorker.submit(() -> {
+        customSearchWorker.submit(() -> {
             try {
                 List<CustomSong> r = CustomApiClient.search(cfg, key);
                 if (!key.equals(currentCustomSearchKey)) return;
@@ -3750,11 +3781,13 @@ public final class PlayerController {
         if (!playingIntent) return;
         playingIntent = false;
         post(() -> playing.set(false));
-        if (fadeEnabled) {
-            startFadeOut(FADE_OUT_MS, () -> { if (!playingIntent) backend.pause(); });
-        } else {
-            backend.pause();
-        }
+        // MediaSession callbacks must never depend on tickFade(), which is driven by
+        // the GL/render pump and stops while Android has the UI in the background.
+        // The old fade path therefore delayed the real pause until the app reopened.
+        fadeCompleteAction = null;
+        fadeStartAt = 0L;
+        backend.setVolume(volume.peek());
+        backend.pause();
         notifyPlayback();
     }
 
@@ -3767,30 +3800,12 @@ public final class PlayerController {
             onMain(() -> playAt(playIndex));
             return;
         }
-        if (fadeStartAt != 0L && backend.isPlaying()) {
-            fadeCompleteAction = null;
-            if (fadeEnabled) {
-                fadeFromGain = currentFadeGain();
-                fadeToGain = 1f;
-                fadeDurationMs = FADE_IN_MS;
-                fadeStartAt = System.currentTimeMillis();
-            } else {
-                fadeStartAt = 0L;
-                backend.setVolume(volume.peek());
-            }
-        } else {
-            if (fadeEnabled) {
-                fadeFromGain = 0f;
-                fadeToGain = 1f;
-                fadeDurationMs = FADE_IN_MS;
-                fadeStartAt = System.currentTimeMillis();
-                backend.setVolume(0f);
-            } else {
-                fadeStartAt = 0L;
-                backend.setVolume(volume.peek());
-            }
-            backend.resume();
-        }
+        // Symmetric with mediaPause(): a fade-in would remain silent at gain=0 until
+        // the suspended render pump ran again. Restore full gain and resume inline.
+        fadeCompleteAction = null;
+        fadeStartAt = 0L;
+        backend.setVolume(volume.peek());
+        if (!backend.isPlaying()) backend.resume();
         playingIntent = true;
         post(() -> playing.set(true));
         notifyPlayback();
@@ -3947,7 +3962,9 @@ public final class PlayerController {
         saveLyricOffsets();
         backend.release();
         worker.shutdownNow();
+        searchWorker.shutdownNow();
         customWorker.shutdownNow();
+        customSearchWorker.shutdownNow();
         cacheWorker.shutdownNow();
         lyricWorker.shutdownNow();
         retryWorker.shutdownNow();

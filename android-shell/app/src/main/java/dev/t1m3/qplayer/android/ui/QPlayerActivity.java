@@ -154,13 +154,13 @@ public final class QPlayerActivity extends Activity {
         // keeps playback foregrounded so it survives + auto-advances when backgrounded.
         mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         controller.setMainExecutor(mainHandler::post);
-        PlaybackService.controller = controller;
         // Boot-start listener: starts the foreground service (from the foreground, on
         // first play). Once alive the service registers itself and handles refreshes
         // in-process, so this only fires before the service exists.
-        PlayerController.PlaybackListener bootstrap = this::onPlaybackChanged;
-        PlaybackService.bootstrapListener = bootstrap;
-        controller.setPlaybackListener(bootstrap);
+        Context playbackContext = getApplicationContext();
+        PlayerController.PlaybackListener bootstrap = () ->
+                requestPlaybackRefresh(playbackContext);
+        PlaybackService.attachController(controller, bootstrap);
         // Back on the home screen sends the app to the background (like Home) instead
         // of finishing — playback keeps running and the QML scene survives, so
         // re-entering doesn't recompile/reload the whole UI.
@@ -392,9 +392,13 @@ public final class QPlayerActivity extends Activity {
     /** Playback state / track changed (main thread): poke the foreground service to
      *  refresh the media session + notification. */
     private void onPlaybackChanged() {
+        requestPlaybackRefresh(getApplicationContext());
+    }
+
+    private static void requestPlaybackRefresh(Context context) {
         try {
-            Intent i = new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_REFRESH);
-            androidx.core.content.ContextCompat.startForegroundService(this, i);
+            Intent i = new Intent(context, PlaybackService.class).setAction(PlaybackService.ACTION_REFRESH);
+            androidx.core.content.ContextCompat.startForegroundService(context, i);
         } catch (Throwable e) {
             dev.t1m3.qplayer.util.Logger.error("startForegroundService failed: {}", e.toString());
         }
@@ -826,7 +830,6 @@ public final class QPlayerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
         if (controller != null && lyricsOpenListener != null) {
             controller.lyricsOpen.removeListener(lyricsOpenListener);
             lyricsOpenListener = null;
@@ -836,14 +839,16 @@ public final class QPlayerActivity extends Activity {
         //   - non-owner Activities (PiP recreations) that outlive the owner
         // Playing controllers must survive for background/foreground-service use;
         // stopWithTask="true" handles the force-stop case via PlaybackService.onDestroy().
-        if (controller != null && !controller.isPlaying()) {
+        if (controller != null && !controller.isPlaying() && !PlaybackService.isRunning()) {
             controller.shutdown();
             sharedController = null;
         }
         if (glView != null) {
+            glView.dispose();
             glView = null;
         }
         reader = null;
+        super.onDestroy();
     }
 
     private String readAsset(String name) throws IOException {

@@ -868,6 +868,10 @@ public final class DesktopWindow {
             } catch (Throwable ignored) {
             }
         }
+        try {
+            compositor.dispose();
+        } catch (Throwable ignored) {
+        }
         org.lwjgl.glfw.Callbacks.glfwFreeCallbacks(window);
         GLFW.glfwDestroyWindow(window);
         GLFW.glfwTerminate();

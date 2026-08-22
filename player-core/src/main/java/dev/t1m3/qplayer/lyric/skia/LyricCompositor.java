@@ -136,6 +136,32 @@ public final class LyricCompositor {
         return lyricRenderer;
     }
 
+    /** Release scene-lifetime CPU/native resources. Must run on the owning render
+     * thread after GPU-context caches have been invalidated. */
+    public void dispose() {
+        fluidBg.dispose();
+        lyricRenderer.dispose();
+        if (lyFadeShader != null) {
+            lyFadeShader.close();
+            lyFadeShader = null;
+        }
+        if (blurBandShader != null) {
+            blurBandShader.close();
+            blurBandShader = null;
+        }
+        if (sharpBandShader != null) {
+            sharpBandShader.close();
+            sharpBandShader = null;
+        }
+        if (blurFilter != null) {
+            blurFilter.close();
+            blurFilter = null;
+        }
+        lyMaskPaint.close();
+        blurBasePaint.close();
+        lyLayerPaint.close();
+    }
+
     /** Render-thread recreation resumes at a discontinuous playback position. */
     public void onRenderResumed() {
         lyricRenderer.easeScrollOnNextRender();

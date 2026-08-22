@@ -6,6 +6,7 @@ import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.PowerManager;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.util.Logger;
@@ -60,6 +61,11 @@ public final class AndroidAudioBackend implements AudioBackend {
         requestFocus();
 
         MediaPlayer mp = new MediaPlayer();
+        // Network-backed tracks still need the CPU while the screen is off. Without
+        // MediaPlayer's partial wake lock some OEMs suspend the streaming/decoder
+        // path, report a MEDIA_ERROR_* and make PlayerController skip to the next
+        // track even though the current song has not actually reached its end.
+        mp.setWakeMode(appContext, PowerManager.PARTIAL_WAKE_LOCK);
         mp.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)

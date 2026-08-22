@@ -466,6 +466,20 @@ public class LyricRenderer {
         return !lines.isEmpty();
     }
 
+    /** Release the renderer's reusable native Skia objects with its owning scene. */
+    public void dispose() {
+        if (sweepShader != null) {
+            sweepShader.close();
+            sweepShader = null;
+        }
+        lyricLayerPaint.close();
+        dotPaint.close();
+        sweepPaint.close();
+        glowGlyphPaint.close();
+        glowLayerPaint.close();
+        textShadowPaint.close();
+    }
+
     /** Route the next playback-position change through the original rigid seek spring. */
     public void easeSeekOnNextRender() {
         cancelUserScrollForSeek();

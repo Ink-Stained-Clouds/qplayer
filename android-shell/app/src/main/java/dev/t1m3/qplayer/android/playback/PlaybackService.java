@@ -25,6 +25,10 @@ import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.util.Logger;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 /**
  * Foreground service that bridges {@link PlayerController} to the system media
  * session: lockscreen / notification / bluetooth transport controls, and — by
@@ -46,19 +50,22 @@ public final class PlaybackService extends Service {
     public static final int NOTIF_ID = 1;
 
     /** Set by the activity before the service is started (same-process handoff). */
-    public static volatile PlayerController controller;
+    private static volatile PlayerController controller;
     /** The activity's listener that boot-starts this service; restored on destroy so a
      *  later play re-bootstraps. While the service lives it registers itself instead, so
      *  refreshes run in-process (no startForegroundService — which is barred from the
      *  background on Android 12+, the bug that left controls stuck after a focus pause). */
-    public static volatile PlayerController.PlaybackListener bootstrapListener;
+    private static volatile PlayerController.PlaybackListener bootstrapListener;
+    private static volatile PlaybackService instance;
 
     private MediaSessionCompat session;
     private final PlayerController.PlaybackListener selfListener = this::onControllerChanged;
+    private ScheduledExecutorService checkpointWorker;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         createChannel();
         session = new MediaSessionCompat(this, "qplayer");
         session.setCallback(new MediaSessionCompat.Callback() {
@@ -90,6 +97,18 @@ public final class PlaybackService extends Service {
             }
         });
         session.setActive(true);
+        // Android does not call onDestroy() for a low-memory process kill. Keep the
+        // queue/position checkpoint close to the live play head so a rare kill loses
+        // at most a few seconds instead of restoring the beginning of the track.
+        checkpointWorker = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "playback-checkpoint");
+            t.setDaemon(true);
+            return t;
+        });
+        checkpointWorker.scheduleWithFixedDelay(() -> {
+            PlayerController current = controller;
+            if (current != null && current.isPlaying()) current.saveSessionState();
+        }, 15L, 15L, TimeUnit.SECONDS);
         // Take over as the controller's listener so state changes refresh us directly,
         // in-process, instead of round-tripping through startForegroundService.
         PlayerController c = controller;
@@ -108,6 +127,8 @@ public final class PlaybackService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         // Hardware / bluetooth media buttons routed through the session callback.
         MediaButtonReceiver.handleIntent(session, intent);
+        PlayerController c = controller;
+        if (c != null) c.setPlaybackListener(selfListener);
         try {
             refresh();
         } catch (Throwable e) {
@@ -125,6 +146,11 @@ public final class PlaybackService extends Service {
     public void onDestroy() {
         // Stop playback and release audio backend — called when the task is
         // swiped away (stopWithTask="true") or explicitly stopped.
+        if (instance == this) instance = null;
+        if (checkpointWorker != null) {
+            checkpointWorker.shutdownNow();
+            checkpointWorker = null;
+        }
         PlayerController c = controller;
         if (c != null) {
             // Capture position/queue/playMode before anything below pauses/tears
@@ -144,6 +170,20 @@ public final class PlaybackService extends Service {
         // handler in QPlayerApplication for the paths where it might not).
         clearNotification();
         super.onDestroy();
+    }
+
+    /** Connect a newly-created/recreated Activity to the already-running playback
+     * service without letting the Activity steal the controller listener. */
+    public static void attachController(PlayerController c,
+                                        PlayerController.PlaybackListener bootstrap) {
+        controller = c;
+        bootstrapListener = bootstrap;
+        PlaybackService live = instance;
+        c.setPlaybackListener(live != null ? live.selfListener : bootstrap);
+    }
+
+    public static boolean isRunning() {
+        return instance != null;
     }
 
     /** Swiping the task away from Recents calls this instead of a normal destroy
@@ -204,9 +244,12 @@ public final class PlaybackService extends Service {
         // PlayerController.applyLyrics's lyricIndex sync -- this is the fourth
         // (notification / lock-screen / Bluetooth media control progress) spot
         // reading that same clock, missed when the other three were fixed.
-        Long posProp = c.positionMs.peek();
         Long durProp = c.durationMs.peek();
-        long pos = playing ? c.position() : (posProp != null ? posProp : 0L);
+        // This also reads the backend clock after a real background pause. Using
+        // positionMs while paused regressed the notification to the last render-
+        // thread tick (the GL pump is suspended in background), even though the
+        // backend and periodic checkpoint had the correct newer position.
+        long pos = c.mediaSessionPosition();
         long dur = playing ? c.duration() : (durProp != null && durProp > 0 ? durProp : 0L);
 
         MediaMetadataCompat.Builder mb = new MediaMetadataCompat.Builder();

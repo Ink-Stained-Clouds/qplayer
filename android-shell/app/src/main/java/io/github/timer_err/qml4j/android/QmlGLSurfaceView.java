@@ -37,6 +37,8 @@ import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -53,7 +55,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private volatile boolean failed;
     private ErrorListener errorListener;
     private SplashListener splashListener;
-    private boolean readyFired;
+    private volatile boolean readyFired;
+    private volatile boolean disposed;
+    private volatile boolean gpuPaused;
+    private volatile boolean pauseRequested;
+    private boolean glThreadPaused;
 
     /** Drives a host splash while the QML tree compiles: per-component progress
      *  (on the GL thread) and a one-shot ready signal at the first painted frame. */
@@ -101,16 +107,116 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         this.uiScale = uiScale > 0 ? uiScale : 1f;
         setEGLContextClientVersion(2);
         setEGLConfigChooser(8, 8, 8, 8, 0, 8);
-        // Keep the EGL context across pause/resume. Otherwise the context (and all GL
-        // resources) is destroyed when the app backgrounds, so Canvas-backed content
-        // drawn into offscreen buffers -- the QR code, LoadingIndicator, the wavy
-        // progress -- comes back blank until something triggers a repaint (a static
-        // Canvas like the QR never does).
-        setPreserveEGLContextOnPause(true);
+        // Release the EGL context while backgrounded. Keeping a full-screen Skija
+        // context alive cost ~75 MB on the test device and made this foreground-media
+        // process an OEM low-memory-killer target. onPause() explicitly invalidates
+        // Canvas/fluid GPU caches first, so they rebuild cleanly on resume.
+        setPreserveEGLContextOnPause(false);
         setRenderer(new GlRenderer());
         setRenderMode(RENDERMODE_CONTINUOUSLY);
         setFocusable(true);
         setFocusableInTouchMode(true);
+    }
+
+    @Override
+    public void onPause() {
+        pauseRequested = true;
+        // QmlView.load() performs the first D8 compilation on the GL thread. The
+        // platform GLSurfaceView.onPause() waits for that thread without a timeout,
+        // which turns a quick Home gesture during cold start into a main-thread ANR.
+        // Let compilation finish off-screen, then pause from the ready callback.
+        if (!readyFired || disposed || glThreadPaused) return;
+        pauseGlThread();
+    }
+
+    private void pauseGlThread() {
+        gpuPaused = true;
+        runOnGlThreadAndWait(() -> {
+            if (view != null) invalidateCanvasCaches(view.root());
+            compositor.invalidateGpuContext();
+            if (surface != null) {
+                surface.dispose();
+                surface = null;
+            }
+        });
+        super.onPause();
+        glThreadPaused = true;
+    }
+
+    @Override
+    public void onResume() {
+        pauseRequested = false;
+        if (glThreadPaused) {
+            super.onResume();
+            glThreadPaused = false;
+        }
+    }
+
+    /** Tear down QML bindings, images, shaders and decoder workers before an
+     * Activity recreation drops this view. QmlView.dispose() is what unsubscribes
+     * bindings from the process-wide shared PlayerController; omitting it retained
+     * each destroyed Activity and its native image graph. */
+    public void dispose() {
+        if (disposed) return;
+        disposed = true;
+        runOnGlThreadAndWait(() -> {
+            failed = true;
+            if (view != null) {
+                view.dispose();
+                view = null;
+            }
+            compositor.dispose();
+            if (surface != null) {
+                surface.dispose();
+                surface = null;
+            }
+            controller = null;
+            settings = null;
+            errorListener = null;
+            splashListener = null;
+        });
+    }
+
+    private void runOnGlThreadAndWait(Runnable action) {
+        CountDownLatch done = new CountDownLatch(1);
+        try {
+            queueEvent(() -> {
+                try {
+                    action.run();
+                } finally {
+                    done.countDown();
+                }
+            });
+            if (!done.await(1500, TimeUnit.MILLISECONDS)) {
+                dev.t1m3.qplayer.util.Logger.warn("GL cleanup timed out");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable e) {
+            dev.t1m3.qplayer.util.Logger.warn("GL cleanup failed: {}", e.toString());
+        }
+    }
+
+    private static void invalidateCanvasCaches(io.github.timer_err.qml4j.render.items.core.Item item) {
+        if (item == null) return;
+        if (item instanceof io.github.timer_err.qml4j.render.items.core.Canvas) {
+            io.github.timer_err.qml4j.render.items.core.Canvas canvas =
+                    (io.github.timer_err.qml4j.render.items.core.Canvas) item;
+            if (canvas.backing != null) {
+                try {
+                    canvas.backing.close();
+                } catch (Throwable ignored) {
+                }
+                canvas.backing = null;
+                canvas.backingW = 0;
+                canvas.backingH = 0;
+                canvas.dirty = true;
+                canvas.requestPaint();
+            }
+        }
+        for (int i = 0; i < item.children.size(); i++) {
+            invalidateCanvasCaches(item.children.get(i));
+        }
     }
 
     @Override
@@ -381,12 +487,14 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private final class GlRenderer implements GLSurfaceView.Renderer {
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+            if (disposed) return;
             surface = new SkijaGlSurface();
+            gpuPaused = false;
         }
 
         @Override
         public void onSurfaceChanged(GL10 gl, int width, int height) {
-            if (failed) return;
+            if (failed || disposed || surface == null) return;
             surface.resize(width, height);
             try {
                 if (view == null) {
@@ -435,7 +543,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
         @Override
         public void onDrawFrame(GL10 gl) {
-            if (failed || view == null) return;
+            if (failed || disposed || gpuPaused || view == null || surface == null) return;
             DirtyQueue dq = view.dirtyQueue();
             dq.install();
             try {
@@ -462,6 +570,14 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                     readyFired = true;
                     SplashListener l = splashListener;
                     if (l != null) l.onReady();
+                    // Do not call GLSurfaceView.onPause() from its own GL thread.
+                    // Re-check on the UI thread because the Activity may already
+                    // have resumed while the initial QML compilation was running.
+                    post(() -> {
+                        if (pauseRequested && !disposed && !glThreadPaused) {
+                            pauseGlThread();
+                        }
+                    });
                 }
             } catch (Throwable t) {
                 reportError(t);

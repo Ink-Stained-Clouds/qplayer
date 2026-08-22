@@ -10,6 +10,31 @@ Item {
     // 0 = 折叠(5条), 1 = 展开(30条), 2 = 展开(70条), 3 = 展开全部(100条)
     property int historyExpandLevel: 0
 
+    // Coalesce rapid IME edits into one network/local/custom search. Previously
+    // every individual composition update synchronously filtered the full local
+    // library and also queued two network searches, which could stall the render
+    // thread and retain many obsolete result/cover generations after repeated use.
+    Timer {
+        id: searchDebounce
+        interval: 350
+        repeat: false
+        onTriggered: page.runSearch(false)
+    }
+
+    function runSearch(addHistory) {
+        var text = query.text
+        if (text.length === 0) return
+        player.search(text)
+        player.searchLocal(text)
+        player.searchCustom(text)
+        if (addHistory) player.addSearchHistory(text)
+    }
+
+    function runSearchNow(addHistory) {
+        searchDebounce.stop()
+        runSearch(addHistory)
+    }
+
     Component.onCompleted: player.loadHotSearches()
 
     ColumnLayout {
@@ -29,31 +54,21 @@ Item {
                 leadingIcon: "search"
                 label: "搜索歌曲"
                 // Real-time search on every keystroke. searchLocal is a synchronous
-                // in-memory filter (no network round-trip to debounce), so it's safe
-                // to run on every keystroke unlike the netease search() call.
+                // in-memory filter, but large libraries still make it expensive enough
+                // to debounce together with the two network sources.
                 onTextChanged: {
-                    if (text.length > 0) { player.search(text); player.searchLocal(text); player.searchCustom(text) }
-                    else page.historyExpandLevel = 0
+                    if (text.length > 0) searchDebounce.restart()
+                    else { searchDebounce.stop(); page.historyExpandLevel = 0 }
                 }
                 onAccepted: {
-                    if (query.text.length > 0) {
-                        player.search(query.text)
-                        player.searchLocal(query.text)
-                        player.searchCustom(query.text)
-                        player.addSearchHistory(query.text)
-                    }
+                    if (query.text.length > 0) page.runSearchNow(true)
                 }
             }
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "filled"; icon: "search"
                 onClicked: {
-                    if (query.text.length > 0) {
-                        player.search(query.text)
-                        player.searchLocal(query.text)
-                        player.searchCustom(query.text)
-                        player.addSearchHistory(query.text)
-                    }
+                    if (query.text.length > 0) page.runSearchNow(true)
                 }
             }
         }
@@ -181,10 +196,7 @@ Item {
                                         var kw = player.searchHistory && player.searchHistory[index] ? player.searchHistory[index] : ""
                                         if (kw.length > 0) {
                                             query.text = kw
-                                            player.search(kw)
-                                            player.searchLocal(kw)
-                                            player.searchCustom(kw)
-                                            player.addSearchHistory(kw)
+                                            page.runSearchNow(true)
                                         }
                                     }
                                 }
@@ -304,10 +316,7 @@ Item {
                                 id: hma; anchors.fill: parent
                                 onClicked: {
                                     query.text = modelData
-                                    player.search(modelData)
-                                    player.searchLocal(modelData)
-                                    player.searchCustom(modelData)
-                                    player.addSearchHistory(modelData)
+                                    page.runSearchNow(true)
                                 }
                             }
                         }

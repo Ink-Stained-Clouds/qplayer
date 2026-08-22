@@ -205,6 +205,14 @@ final class WinFrameless {
 
         double titleBarPhysical = titleBarHeightLogicalPx * window.uiScale();
         if (y - rect.top < titleBarPhysical) {
+            // The normal custom title bar is hidden on the lyric page and its own
+            // collapse button occupies this same top-left strip. Treat the whole
+            // strip as client area while lyrics are open; otherwise WM_NCHITTEST
+            // returns HTCAPTION before GLFW/qml4j ever receives the click (#25).
+            if (window.controller() != null
+                    && Boolean.TRUE.equals(window.controller().lyricsOpen.peek())) {
+                return new LRESULT(HTCLIENT);
+            }
             double buttonStripPhysical =
                     WindowChrome.BUTTON_WIDTH_LOGICAL_PX * WindowChrome.BUTTON_COUNT * window.uiScale();
             if (rect.right - x <= buttonStripPhysical) return new LRESULT(HTCLIENT);
