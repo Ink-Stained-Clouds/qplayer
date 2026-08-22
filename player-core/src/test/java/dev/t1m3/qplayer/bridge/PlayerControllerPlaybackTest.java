@@ -88,12 +88,66 @@ public class PlayerControllerPlaybackTest {
         }
     }
 
+    @Test
+    public void lyricClockWaitsForAudioAndFollowsRealPauseState() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("lyric-clock").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"track\",\"durationMs\":120000,\"filePath\":\"track.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+
+            // play() only means the decoder was asked to start. Lyrics must remain at
+            // the baseline until the backend confirms that audio is actually audible.
+            backend.position = 800L;
+            assertFalse(controller.isLyricClockRunning());
+            assertEquals(0L, controller.lyricClockPosition());
+
+            backend.fireStarted();
+            assertTrue(controller.isLyricClockRunning());
+
+            backend.position = 3210L;
+            controller.toggle();
+            // The pause button starts an audible fade-out. The backend is still
+            // playing during that tail, so lyrics must continue with it.
+            assertTrue(controller.isLyricClockRunning());
+            assertEquals(3210L, controller.lyricClockPosition());
+
+            backend.position = 3500L;
+            assertEquals(3500L, controller.lyricClockPosition());
+
+            // Once the fade completes and the backend really pauses, both clocks
+            // stop at the same position. Resume therefore has no catch-up jump.
+            backend.pause();
+            assertFalse(controller.isLyricClockRunning());
+            backend.position = 3500L;
+            assertEquals(3500L, controller.lyricClockPosition());
+
+            controller.toggle();
+            assertTrue(controller.isLyricClockRunning());
+            assertEquals(3500L, controller.lyricClockPosition());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
     private static final class FakeAudioBackend implements AudioBackend {
         int playCalls;
         int pauseCalls;
         int resumeCalls;
         boolean playing;
         long position;
+        Runnable onStarted;
 
         @Override public void play(String source, long startMs) {
             playCalls++;
@@ -114,6 +168,11 @@ public class PlayerControllerPlaybackTest {
         @Override public long duration() { return 120000L; }
         @Override public void setVolume(float volume) { }
         @Override public void setOnComplete(Runnable callback) { }
+        @Override public void setOnStarted(Runnable callback) { onStarted = callback; }
         @Override public void release() { playing = false; }
+
+        void fireStarted() {
+            if (onStarted != null) onStarted.run();
+        }
     }
 }

@@ -204,6 +204,15 @@ public final class PlayerController {
     // backend.isPlaying() is briefly false right after play() — reporting that to the
     // media session shows a stale "paused". The session uses this intent instead.
     private volatile boolean playingIntent = false;
+    // The lyric renderer needs a stricter state than playingIntent: play() expresses
+    // intent before an async source has opened/decoded/primed, while lyrics may already
+    // be available. Only onStarted marks the media clock as genuinely running.
+    private volatile boolean playbackStarted = false;
+    // Stable visual position before a source has actually started (loading/session
+    // restore). Once started, the backend position remains authoritative while paused.
+    private volatile long stoppedLyricPositionMs = 0L;
+    // Track changes are discontinuities even when two tracks share the same position.
+    private final AtomicLong playbackRevision = new AtomicLong();
     private volatile PlaybackListener playbackListener;
 
     /** Host hook (e.g. the Android foreground service) notified on the main thread
@@ -543,6 +552,8 @@ public final class PlayerController {
         backend.setOnStarted(() -> {
             errorRetryId = -1;
             consecutivePlaybackFailures = 0;
+            stoppedLyricPositionMs = Math.max(0L, backend.position());
+            playbackStarted = true;
             post(() -> loading.set(false));
             notifyPlayback();
             startFadeIn();
@@ -1649,6 +1660,7 @@ public final class PlayerController {
         long resumeMs = (i == pendingResumeIndex) ? Math.max(0L, pendingResumeMs) : 0L;
         pendingResumeMs = 0L;
         pendingResumeIndex = -1;
+        beginLyricClockLoad(resumeMs);
         // Blank the now-playing surface (lyrics + cover fall back to their
         // placeholders) and start the progress bars' loading sweep, whether or not
         // the outgoing track fades. The loaders below re-apply the real lyrics/cover
@@ -2155,6 +2167,7 @@ public final class PlayerController {
         final long t = Math.max(0L, ms);
         onMain(() -> {
             seekRevision.incrementAndGet();
+            stoppedLyricPositionMs = t;
             backend.seek(t);
             post(() -> positionMs.set(t));
             notifyPlayback();
@@ -2166,6 +2179,7 @@ public final class PlayerController {
     public void mediaSeek(long ms) {
         final long t = Math.max(0L, ms);
         seekRevision.incrementAndGet();
+        stoppedLyricPositionMs = t;
         backend.seek(t);
         post(() -> positionMs.set(t));
         notifyPlayback();
@@ -2177,6 +2191,32 @@ public final class PlayerController {
 
     public long position() {
         return backend.position();
+    }
+
+    /** True only while song time should advance visually. Unlike {@link #isPlaying()},
+     * this stays false during async source loading. During a manual fade-out it stays
+     * true until the backend really pauses, keeping lyrics aligned with audible audio. */
+    public boolean isLyricClockRunning() {
+        return playbackStarted && backend.isPlaying();
+    }
+
+    /** Exact lyric-clock baseline. While running this is the live backend position;
+     * after a source has started, its paused position remains the source of truth too,
+     * so pause/resume cannot diverge and then visibly jump back into alignment. */
+    public long lyricClockPosition() {
+        return playbackStarted
+                ? Math.max(0L, backend.position())
+                : Math.max(0L, stoppedLyricPositionMs);
+    }
+
+    public long playbackRevision() {
+        return playbackRevision.get();
+    }
+
+    private void beginLyricClockLoad(long startMs) {
+        stoppedLyricPositionMs = Math.max(0L, startMs);
+        playbackStarted = false;
+        playbackRevision.incrementAndGet();
     }
 
     /**
@@ -2795,6 +2835,7 @@ public final class PlayerController {
                 playIndex = idx;
                 needsReplay = true;
                 long clampedPos = Math.max(0L, savedPos);
+                stoppedLyricPositionMs = clampedPos;
                 pendingResumeIndex = idx;
                 pendingResumeMs = clampedPos;
                 final int finalIdx = idx;
@@ -3184,6 +3225,7 @@ public final class PlayerController {
             long backendMs = Math.max(0L, backend.position());
             Long shown = positionMs.peek();
             long resumeMs = Math.max(backendMs, shown != null ? shown : 0L);
+            beginLyricClockLoad(resumeMs);
             Logger.warn("playback error on netease track {}, clearing stale url and retrying at {}ms",
                     t.neteaseId, resumeMs);
             t.streamUrl = null;
@@ -3201,6 +3243,8 @@ public final class PlayerController {
         consecutivePlaybackFailures++;
         int failures = consecutivePlaybackFailures;
         if (queue.size() <= 1 || failures >= queue.size()) {
+            stoppedLyricPositionMs = Math.max(0L, backend.position());
+            playbackStarted = false;
             playingIntent = false;
             backend.pause();
             post(() -> {

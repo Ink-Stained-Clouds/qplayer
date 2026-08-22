@@ -143,10 +143,11 @@ Item {
                     id: labelText
                     text: control.label
                     color: _labelColor
-                    // Long URL-template hints used to paint beyond the outlined
-                    // field on narrow screens. Keep the label inside the same text
-                    // area as the editable body and truncate it at the trailing edge.
-                    width: parent.width
+                    // Long URL-template hints must stay inside a narrow field. While
+                    // inline, use the full text area for elision; once floated, shrink
+                    // back to the painted label width (capped by the field) so the
+                    // outlined-border mask does not become a full-width colour strip.
+                    width: control.isFloating ? Math.min(implicitWidth, parent.width) : parent.width
                     elide: Text.ElideRight
                     maximumLineCount: 1
                     
@@ -173,6 +174,7 @@ Item {
                     // Background for Outlined Label (to hide border behind label)
                     Rectangle {
                         visible: type === "outlined" && control.isFloating
+                                && control.label.length > 0
                         color: control.labelBackgroundColor // Use specified background color to mask border
                         anchors.fill: parent
                         anchors.margins: -4

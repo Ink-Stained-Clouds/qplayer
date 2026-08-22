@@ -78,11 +78,15 @@ public final class LyricCompositor {
     // the host fluid; looked up once after the scene loads.
     private Item lyricChrome;
 
-    // Wall-clock extrapolation of the coarse backend position for a smooth progress bar.
+    // Wall-clock extrapolation of the coarse backend position for smooth lyric motion.
+    // The clock uses PlayerController's actual-started state, not its play-button intent:
+    // lyrics can finish loading before an async audio source has made a sound.
     private long lyRawLast = -1;
-    private boolean lyPlayingLast;
+    private boolean lyClockRunningLast;
     private long lyBaseMs;
     private long lyBaseNanos;
+    private long lyPlaybackRevision = -1L;
+    private long lyClockSeekRevision = -1L;
     private long lySeekRevision = -1L;
 
     // Edge-fade gradient + mask paint, cached by column top + height.
@@ -295,31 +299,28 @@ public final class LyricCompositor {
         // bump the change version every frame, defeating the renderer's idle skip.
         if (lyricSlide <= 0.001f && !open) return;
 
-        // Per-frame playback fraction for the QML wavy progress bar. backend.position()
-        // is coarse (~5 Hz), so extrapolate from the last change with wall-clock time;
-        // resync when the backend jumps (seek) or play/pause toggles.
+        // Per-frame playback fraction for the QML wavy progress bar and the word
+        // renderer. backend.position() is coarse, so extrapolate with wall-clock time.
+        // Crucially, isLyricClockRunning() stays false until backend.onStarted, then
+        // follows the backend's real playback state. UI `playing` is only user intent:
+        // it can lead audio during loading and turns false before a pause fade finishes.
         long durMs = controller.durationMs.peek();
-        boolean playing = Boolean.TRUE.equals(controller.playing.peek());
-        // While paused, backend.position() reads whatever the audio backend's last
-        // actual playback was — 0 if it has never been told to play anything yet,
-        // e.g. right after a session restore (positionMs.set() ran, but playAt()
-        // itself only fires on the user's first tap). Fall back to the UI's
-        // positionMs Property there instead, which session-restore does set correctly.
-        long raw;
-        if (playing) {
-            raw = controller.position();
-        } else {
-            Long posProp = controller.positionMs.peek();
-            raw = posProp != null ? posProp : 0L;
-        }
+        boolean clockRunning = controller.isLyricClockRunning();
+        long raw = controller.lyricClockPosition();
         long nowN = System.nanoTime();
-        if (raw != lyRawLast || playing != lyPlayingLast) {
+        long playbackRevision = controller.playbackRevision();
+        long clockSeekRevision = controller.seekRevision();
+        boolean discontinuity = playbackRevision != lyPlaybackRevision
+                || clockSeekRevision != lyClockSeekRevision;
+        if (discontinuity || raw != lyRawLast || clockRunning != lyClockRunningLast) {
             lyRawLast = raw;
-            lyPlayingLast = playing;
+            lyClockRunningLast = clockRunning;
             lyBaseMs = raw;
             lyBaseNanos = nowN;
+            lyPlaybackRevision = playbackRevision;
+            lyClockSeekRevision = clockSeekRevision;
         }
-        long predMs = playing ? lyBaseMs + (nowN - lyBaseNanos) / 1_000_000L : raw;
+        long predMs = clockRunning ? lyBaseMs + (nowN - lyBaseNanos) / 1_000_000L : lyBaseMs;
         if (durMs > 0 && predMs > durMs) predMs = durMs;
         controller.lyricProgress.set(durMs > 0 ? Math.min(1.0, predMs / (double) durMs) : 0.0);
 
