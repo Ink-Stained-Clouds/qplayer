@@ -339,6 +339,9 @@ public class LyricRenderer {
     /** HarfBuzz output for every final visual row. TextBlob and caret positions are
      * immutable and reused until a layout input changes; playback never reshapes. */
     private ShapedRow[][] cachedShapedRows;
+    /** Renderer-owned timing fragments used only when an oversized source token
+     * must be split at a Unicode/grapheme boundary to make wrapping possible. */
+    private List<List<Syllable>> cachedLayoutSyllables;
     // Per-syllable advances obtained from the full-line HarfBuzz result. These are
     // used only to choose wrap boundaries; actual drawing uses each row's TextBlob.
     private float[][] cachedSylWidths;
@@ -665,6 +668,7 @@ public class LyricRenderer {
         closeTexts(cachedRomajiRows);
         closeTexts(cachedTranslationRows);
         cachedShapedRows = null;
+        cachedLayoutSyllables = null;
         cachedRomajiRows = null;
         cachedTranslationRows = null;
         cachedRowStarts = null;
@@ -996,6 +1000,7 @@ public class LyricRenderer {
         int colW = Math.round(columnWidth);
         boolean layoutValid = cachedRowStarts != null
                 && cachedShapedRows != null
+                && cachedLayoutSyllables != null
                 && layoutKeyLines == lines
                 && layoutKeyN == n
                 && layoutKeyLyricSize == lyricFontSize
@@ -1015,6 +1020,7 @@ public class LyricRenderer {
             ShapedText[][] romajiRows = new ShapedText[n][];
             ShapedText[][] translationRows = new ShapedText[n][];
             ShapedRow[][] shapedRows = new ShapedRow[n][];
+            List<List<Syllable>> layoutSyllables = new ArrayList<>(n);
             float[][] sylWidths = new float[n][];
             for (int i = 0; i < n; i++) {
                 LyricLine line = lines.get(i);
@@ -1030,16 +1036,18 @@ public class LyricRenderer {
                 // scales, so both wrap to the full column.
                 float wrapW = (isBg || !scaleOn) ? columnWidth : columnWidth / EMPHASIS_SCALE;
 
-                int sylCount = line.syllables.size();
-                float[] widths = shapeSyllableAdvances(line.syllables, font);
+                List<Syllable> rowSyllables = splitOversizedSyllables(
+                        line.syllables, font, wrapW);
+                layoutSyllables.add(rowSyllables);
+                float[] widths = shapeSyllableAdvances(rowSyllables, font);
                 sylWidths[i] = widths;
-                rowStarts[i] = wrapStarts(line.syllables, widths, wrapW);
+                rowStarts[i] = wrapStarts(rowSyllables, widths, wrapW);
                 int subRowCount = Math.max(1, rowStarts[i].length - 1);
                 shapedRows[i] = new ShapedRow[subRowCount];
                 for (int r = 0; r < subRowCount; r++) {
                     int from = rowStarts[i][r];
                     int to = rowStarts[i][r + 1];
-                    shapedRows[i][r] = shapeMainRow(line.syllables, from, to, font);
+                    shapedRows[i][r] = shapeMainRow(rowSyllables, from, to, font);
                 }
 
                 float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
@@ -1069,6 +1077,7 @@ public class LyricRenderer {
             cachedRomajiRows = romajiRows;
             cachedTranslationRows = translationRows;
             cachedShapedRows = shapedRows;
+            cachedLayoutSyllables = layoutSyllables;
             cachedSylWidths = sylWidths;
             layoutKeyLines = lines;
             layoutKeyN = n;
@@ -1610,7 +1619,7 @@ public class LyricRenderer {
 
                 float wrapRowH = (r == 0) ? rowHeight : (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
                 float rowBaselineY = lineYTop + rowHeight + r * wrapRowH - descent - 4f;
-                drawShapedRow(line.syllables, shapedRow, rowX - lead, rowBaselineY,
+                drawShapedRow(cachedLayoutSyllables.get(i), shapedRow, rowX - lead, rowBaselineY,
                         ascent, descent, positionMs, baseAlpha, activeK, animatablePerToken, spring,
                         glowOn, shadowOn);
 
@@ -1848,43 +1857,143 @@ public class LyricRenderer {
         return Math.min(v, hi);
     }
 
-    /**
-     * Word-aware greedy wrapper over syllables. Returns the starting syllable
-     * index of each sub-row plus a trailing sentinel (= syllables.size()).
-     *
-     * <p>Per-syllable (YRC) lyrics split a word into several timed syllables, so
-     * breaking at any syllable boundary would tear a word across two rows. A break
-     * is only taken at a WORD boundary (whitespace at the junction, or a CJK char
-     * on either side); on overflow mid-word we back up to the word's start and move
-     * the whole word down. A single word wider than the column is the one case that
-     * still breaks mid-word (otherwise it could never fit) — it clips at the edge.
-     */
-    private static int[] wrapStarts(List<Syllable> syls, float[] sylWidths, float maxW) {
-        int sz = sylWidths.length;
-        if (sz == 0) return new int[]{0, 0};
+    private static final float MIN_FINAL_ROW_WIDTH_RATIO = 0.60f;
 
-        java.util.ArrayList<Integer> starts = new java.util.ArrayList<>();
+    /**
+     * Word-aware mostly-greedy wrapper. Normal rows fill naturally from top to
+     * bottom; only an abnormally short final row is adjusted, and then by moving
+     * the minimum number of complete words from its predecessor. This preserves
+     * the familiar slightly-ragged lyric shape without leaving a one-word orphan.
+     *
+     * <p>Unicode line-break boundaries supplement whitespace/CJK boundaries. If a
+     * script exposes no dictionary breaks, safe timed-syllable junctions remain an
+     * emergency fallback rather than making the complete line unwrappable.
+     */
+    static int[] wrapStarts(List<Syllable> syls, float[] sylWidths, float maxW) {
+        int size = sylWidths.length;
+        if (size == 0) return new int[]{0, 0};
+        float limit = Math.max(1f, maxW);
+        float[] prefix = new float[size + 1];
+        for (int i = 0; i < size; i++) prefix[i + 1] = prefix[i] + Math.max(0f, sylWidths[i]);
+        boolean[] safe = safeBreaks(syls);
+        boolean[] preferred = preferredBreaks(syls);
+        ArrayList<Integer> starts = new ArrayList<>();
         starts.add(0);
         int rowStart = 0;
-        int wordStart = 0;   // start of the current word within the row (latest break point)
-        float curW = 0f;
-        for (int i = 0; i < sz; i++) {
-            if (i > rowStart && canBreakBefore(syls, i)) wordStart = i;
-            if (i > rowStart && curW + sylWidths[i] > maxW) {
-                int breakAt = (wordStart > rowStart) ? wordStart : i;
-                starts.add(breakAt);
-                rowStart = breakAt;
-                wordStart = breakAt;
-                curW = 0f;
-                for (int j = rowStart; j <= i; j++) curW += sylWidths[j];
-                continue;
+        while (rowStart < size) {
+            int preferredEnd = -1;
+            int emergencyEnd = -1;
+            for (int end = rowStart + 1; end <= size; end++) {
+                if (end < size && !safe[end]) continue;
+                if (!rowFits(prefix, safe, rowStart, end, limit)) break;
+                emergencyEnd = end;
+                if (preferred[end]) preferredEnd = end;
             }
-            curW += sylWidths[i];
+            int next = preferredEnd > rowStart ? preferredEnd : emergencyEnd;
+            if (next <= rowStart) {
+                next = rowStart + 1;
+                while (next < size && !safe[next]) next++;
+            }
+            starts.add(next);
+            rowStart = next;
         }
-        starts.add(sz);
-        int[] arr = new int[starts.size()];
-        for (int i = 0; i < arr.length; i++) arr[i] = starts.get(i);
-        return arr;
+
+        softenFinalOrphan(starts, prefix, safe, preferred, limit);
+        int[] result = new int[starts.size()];
+        for (int i = 0; i < result.length; i++) result[i] = starts.get(i);
+        return result;
+    }
+
+    private static void softenFinalOrphan(ArrayList<Integer> starts, float[] prefix,
+                                          boolean[] safe, boolean[] preferred,
+                                          float maxWidth) {
+        if (starts.size() < 3) return;
+        int end = starts.get(starts.size() - 1);
+        int splitSlot = starts.size() - 2;
+        int split = starts.get(splitSlot);
+        int previousStart = starts.get(splitSlot - 1);
+        float previousWidth = prefix[split] - prefix[previousStart];
+        float finalWidth = prefix[end] - prefix[split];
+        float currentRatio = shorterToLongerRatio(previousWidth, finalWidth);
+        if (currentRatio >= MIN_FINAL_ROW_WIDTH_RATIO) return;
+
+        int best = split;
+        float bestRatio = currentRatio;
+        // Walk backwards from the greedy break: the first candidate satisfying
+        // the threshold moves the fewest complete words possible.
+        for (int candidate = split - 1; candidate > previousStart; candidate--) {
+            if (!safe[candidate] || !preferred[candidate]
+                    || !rowFits(prefix, safe, previousStart, candidate, maxWidth)
+                    || !rowFits(prefix, safe, candidate, end, maxWidth)) continue;
+            float upper = prefix[candidate] - prefix[previousStart];
+            float lower = prefix[end] - prefix[candidate];
+            float ratio = shorterToLongerRatio(upper, lower);
+            if (ratio > bestRatio + 0.0001f) {
+                best = candidate;
+                bestRatio = ratio;
+            }
+            if (ratio >= MIN_FINAL_ROW_WIDTH_RATIO) {
+                best = candidate;
+                break;
+            }
+        }
+        if (best != split) starts.set(splitSlot, best);
+    }
+
+    private static float shorterToLongerRatio(float a, float b) {
+        float longer = Math.max(a, b);
+        return longer <= 0.001f ? 1f : Math.min(a, b) / longer;
+    }
+
+    private static boolean rowFits(float[] prefix, boolean[] safe, int start, int end,
+                                   float maxWidth) {
+        if (prefix[end] - prefix[start] <= maxWidth + 0.5f) return true;
+        // One indivisible grapheme cluster may itself exceed a very narrow
+        // viewport. It still needs a row, but no legal break may be skipped.
+        for (int i = start + 1; i < end; i++) if (safe[i]) return false;
+        return true;
+    }
+
+    private static boolean[] safeBreaks(List<Syllable> syllables) {
+        int size = syllables.size();
+        boolean[] result = new boolean[size + 1];
+        result[0] = true;
+        result[size] = true;
+        StringBuilder text = new StringBuilder();
+        int[] offsets = new int[size + 1];
+        for (int i = 0; i < size; i++) {
+            offsets[i] = text.length();
+            String value = syllables.get(i).text;
+            if (value != null) text.append(value);
+        }
+        offsets[size] = text.length();
+        String fullText = text.toString();
+        for (int i = 1; i < size; i++) {
+            result[i] = isSafeGraphemeBoundary(fullText, offsets[i]);
+        }
+        return result;
+    }
+
+    private static boolean[] preferredBreaks(List<Syllable> syllables) {
+        int size = syllables.size();
+        boolean[] result = new boolean[size + 1];
+        result[0] = true;
+        result[size] = true;
+        StringBuilder text = new StringBuilder();
+        int[] offsets = new int[size + 1];
+        for (int i = 0; i < size; i++) {
+            offsets[i] = text.length();
+            String value = syllables.get(i).text;
+            if (value != null) text.append(value);
+        }
+        offsets[size] = text.length();
+        String fullText = text.toString();
+        boolean[] unicodeBreaks = unicodeLineBreakOffsets(fullText);
+        for (int i = 1; i < size; i++) {
+            result[i] = isSafeGraphemeBoundary(fullText, offsets[i])
+                    && (canBreakBefore(syllables, i) || unicodeBreaks[offsets[i]]);
+        }
+        return result;
     }
 
     /**
@@ -2205,8 +2314,192 @@ public class LyricRenderer {
         return shaper().shapeLine(text, fontForText(text, baseFont));
     }
 
+    /** Split only source tokens that cannot fit on a row by themselves. Normal
+     * timed syllables remain untouched; the rare oversized token is divided at a
+     * locale-aware line boundary, falling back to a grapheme boundary so Thai,
+     * Khmer, Lao and other no-space scripts can never become an unwrappable row.
+     * Fragment timing is proportional to logical text progress, preserving one
+     * continuous karaoke sweep across the original token. */
+    private List<Syllable> splitOversizedSyllables(List<Syllable> source, Font font,
+                                                   float maxWidth) {
+        if (source == null || source.isEmpty() || maxWidth <= 0f) return source;
+        ArrayList<Syllable> result = null;
+        for (int sourceIndex = 0; sourceIndex < source.size(); sourceIndex++) {
+            Syllable syllable = source.get(sourceIndex);
+            List<Syllable> fragments = splitOversizedSyllable(syllable, font, maxWidth);
+            if (fragments == null) {
+                if (result != null) result.add(syllable);
+                continue;
+            }
+            if (result == null) {
+                result = new ArrayList<>(source.size() + fragments.size());
+                result.addAll(source.subList(0, sourceIndex));
+            }
+            result.addAll(fragments);
+        }
+        return result == null ? source : result;
+    }
+
+    /** Returns null when no split is necessary. */
+    private List<Syllable> splitOversizedSyllable(Syllable syllable, Font font,
+                                                  float maxWidth) {
+        String text = syllable.text == null ? "" : syllable.text;
+        if (text.isEmpty()) return null;
+        try (TextLine line = shapeLine(text, font)) {
+            if (line.getWidth() <= maxWidth + 0.5f) return null;
+
+            boolean[] preferred = unicodeLineBreakOffsets(text);
+            int[] graphemes = graphemeBoundaries(text);
+            boolean usableCaretWidths = false;
+            float origin = line.getCoordAtOffset(0);
+            for (int i = 1; i + 1 < graphemes.length; i++) {
+                if (Math.abs(line.getCoordAtOffset(graphemes[i]) - origin) > 0.01f) {
+                    usableCaretWidths = true;
+                    break;
+                }
+            }
+            ArrayList<Syllable> out = new ArrayList<>();
+            int start = 0;
+            while (start < text.length()) {
+                int bestPreferred = -1;
+                int bestGrapheme = -1;
+                for (int boundary : graphemes) {
+                    if (boundary <= start) continue;
+                    float width;
+                    if (usableCaretWidths) {
+                        width = Math.abs(line.getCoordAtOffset(boundary)
+                                - line.getCoordAtOffset(start));
+                    } else {
+                        try (TextLine fragment = shapeLine(text.substring(start, boundary), font)) {
+                            width = fragment.getWidth();
+                        }
+                    }
+                    if (width <= maxWidth + 0.5f || bestGrapheme < 0) {
+                        bestGrapheme = boundary;
+                        if (preferred[boundary]) bestPreferred = boundary;
+                    } else {
+                        break;
+                    }
+                }
+                int end = bestPreferred > start ? bestPreferred : bestGrapheme;
+                if (end <= start) {
+                    int cp = text.codePointAt(start);
+                    end = start + Character.charCount(cp);
+                }
+
+                double startProgress = start / (double) text.length();
+                double endProgress = end / (double) text.length();
+                long fragmentStart = syllable.startMs
+                        + Math.round(syllable.durationMs * startProgress);
+                long fragmentEnd = end == text.length()
+                        ? syllable.startMs + syllable.durationMs
+                        : syllable.startMs + Math.round(syllable.durationMs * endProgress);
+                out.add(new Syllable(text.substring(start, end), fragmentStart,
+                        Math.max(0L, fragmentEnd - fragmentStart)));
+                start = end;
+            }
+            return out.size() <= 1 ? null : out;
+        }
+    }
+
+    private static int[] graphemeBoundaries(String text) {
+        java.text.BreakIterator iterator = java.text.BreakIterator.getCharacterInstance(
+                lineBreakLocale(text));
+        iterator.setText(text);
+        ArrayList<Integer> offsets = new ArrayList<>();
+        for (int boundary = iterator.first(); boundary != java.text.BreakIterator.DONE;
+             boundary = iterator.next()) {
+            if (isSafeGraphemeBoundary(text, boundary)) offsets.add(boundary);
+        }
+        if (offsets.isEmpty() || offsets.get(0) != 0) offsets.add(0, 0);
+        if (offsets.get(offsets.size() - 1) != text.length()) offsets.add(text.length());
+        int[] result = new int[offsets.size()];
+        for (int i = 0; i < result.length; i++) result[i] = offsets.get(i);
+        return result;
+    }
+
+    private static boolean[] unicodeLineBreakOffsets(String text) {
+        boolean[] result = new boolean[text.length() + 1];
+        java.text.BreakIterator iterator = java.text.BreakIterator.getLineInstance(
+                lineBreakLocale(text));
+        iterator.setText(text);
+        for (int boundary = iterator.first(); boundary != java.text.BreakIterator.DONE;
+             boundary = iterator.next()) {
+            if (isSafeGraphemeBoundary(text, boundary)) result[boundary] = true;
+        }
+        result[0] = true;
+        result[text.length()] = true;
+        return result;
+    }
+
+    /** java.text.BreakIterator differs across the desktop JDK and Android ICU.
+     * Apply the non-negotiable extended-grapheme rules ourselves so neither may
+     * strand a virama/coeng, combining mark, variation selector or emoji joiner at
+     * a row edge. */
+    private static boolean isSafeGraphemeBoundary(String text, int offset) {
+        if (offset <= 0 || offset >= text.length()) return true;
+        int previous = text.codePointBefore(offset);
+        int next = text.codePointAt(offset);
+        int nextType = Character.getType(next);
+        if (nextType == Character.NON_SPACING_MARK
+                || nextType == Character.COMBINING_SPACING_MARK
+                || nextType == Character.ENCLOSING_MARK
+                || isVariationSelector(next)
+                || isEmojiModifier(next)
+                || next == 0x200D) {
+            return false;
+        }
+        return previous != 0x200D && !isVirama(previous);
+    }
+
+    private static boolean isVariationSelector(int cp) {
+        return (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF);
+    }
+
+    private static boolean isEmojiModifier(int cp) {
+        return cp >= 0x1F3FB && cp <= 0x1F3FF;
+    }
+
+    private static boolean isVirama(int cp) {
+        switch (cp) {
+            case 0x094D: // Devanagari
+            case 0x09CD: // Bengali
+            case 0x0A4D: // Gurmukhi
+            case 0x0ACD: // Gujarati
+            case 0x0B4D: // Oriya
+            case 0x0BCD: // Tamil
+            case 0x0C4D: // Telugu
+            case 0x0CCD: // Kannada
+            case 0x0D4D: // Malayalam
+            case 0x0DCA: // Sinhala
+            case 0x0E3A: // Thai phinthu
+            case 0x0EBA: // Lao semivowel sign
+            case 0x1039: // Myanmar virama
+            case 0x17D2: // Khmer coeng
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static java.util.Locale lineBreakLocale(String text) {
+        for (int i = 0; i < text.length();) {
+            int cp = text.codePointAt(i);
+            Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+            if (script == Character.UnicodeScript.THAI) return new java.util.Locale("th");
+            if (script == Character.UnicodeScript.KHMER) return new java.util.Locale("km");
+            if (script == Character.UnicodeScript.LAO) return new java.util.Locale("lo");
+            if (script == Character.UnicodeScript.MYANMAR) return new java.util.Locale("my");
+            i += Character.charCount(cp);
+        }
+        return java.util.Locale.ROOT;
+    }
+
     /** Shape the complete source line once and read HarfBuzz caret coordinates at
-     * syllable boundaries. These advances only drive wrapping. */
+     * syllable boundaries. These advances only drive wrapping. Some Skija builds
+     * report every intermediate caret as zero for RTL runs; when the resulting
+     * advances do not add back up to the shaped line width, measure the immutable
+     * syllable strings individually during this cached layout rebuild. */
     private float[] shapeSyllableAdvances(List<Syllable> syllables, Font font) {
         int n = syllables.size();
         float[] widths = new float[n];
@@ -2220,9 +2513,23 @@ public class LyricRenderer {
         }
         offsets[n] = text.length();
         try (TextLine line = shapeLine(text.toString(), font)) {
+            float measuredTotal = 0f;
+            int nonZeroAdvances = 0;
             for (int i = 0; i < n; i++) {
-                widths[i] = Math.max(0f,
+                widths[i] = Math.abs(
                         line.getCoordAtOffset(offsets[i + 1]) - line.getCoordAtOffset(offsets[i]));
+                measuredTotal += widths[i];
+                if (widths[i] > 0.01f) nonZeroAdvances++;
+            }
+            float tolerance = Math.max(1f, line.getWidth() * 0.02f);
+            boolean collapsedCarets = n > 1 && nonZeroAdvances <= 1 && line.getWidth() > 0.01f;
+            if (collapsedCarets || Math.abs(measuredTotal - line.getWidth()) > tolerance) {
+                for (int i = 0; i < n; i++) {
+                    String value = syllables.get(i).text;
+                    try (TextLine segment = shapeLine(value == null ? "" : value, font)) {
+                        widths[i] = segment.getWidth();
+                    }
+                }
             }
         }
         return widths;

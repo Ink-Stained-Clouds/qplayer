@@ -2,8 +2,10 @@ package dev.t1m3.qplayer.lyric.skia;
 
 import dev.t1m3.qplayer.lyric.LrcParser;
 import dev.t1m3.qplayer.lyric.LyricLine;
+import dev.t1m3.qplayer.lyric.Syllable;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -59,5 +61,73 @@ public class LyricRendererTest {
         assertEquals(4, words.length); // hold, on, 再, 见
         assertEquals("hold", "hold on, 再见".substring(words[0][0], words[0][1]));
         assertEquals("on", "hold on, 再见".substring(words[1][0], words[1][1]));
+    }
+
+    @Test
+    public void wrappingBalancesAOneWordOrphanAcrossBothRows() {
+        List<Syllable> words = Arrays.asList(
+                new Syllable("one ", 0, 100),
+                new Syllable("two ", 100, 100),
+                new Syllable("three ", 200, 100),
+                new Syllable("four", 300, 100));
+
+        int[] starts = LyricRenderer.wrapStarts(words,
+                new float[]{30f, 30f, 30f, 30f}, 100f);
+
+        assertEquals(3, starts.length);
+        assertEquals(0, starts[0]);
+        assertEquals(2, starts[1]);
+        assertEquals(4, starts[2]);
+    }
+
+    @Test
+    public void wrappingKeepsGreedyShapeWhenFinalRowIsNotTooShort() {
+        List<Syllable> words = Arrays.asList(
+                new Syllable("one ", 0, 100),
+                new Syllable("two ", 100, 100),
+                new Syllable("three ", 200, 100),
+                new Syllable("four ", 300, 100),
+                new Syllable("five", 400, 100));
+
+        int[] starts = LyricRenderer.wrapStarts(words,
+                new float[]{30f, 30f, 30f, 30f, 30f}, 100f);
+
+        assertEquals(3, starts.length);
+        assertEquals(0, starts[0]);
+        assertEquals(3, starts[1]);
+        assertEquals(5, starts[2]);
+    }
+
+    @Test
+    public void noSpaceMinorityScriptStillHasEmergencyWrapPoints() {
+        List<Syllable> khmer = Arrays.asList(
+                new Syllable("ខ្ញុំ", 0, 100),
+                new Syllable("ស្រឡាញ់", 100, 100),
+                new Syllable("ភាសា", 200, 100),
+                new Syllable("ខ្មែរ", 300, 100));
+
+        int[] starts = LyricRenderer.wrapStarts(khmer,
+                new float[]{30f, 30f, 30f, 30f}, 65f);
+
+        assertEquals(3, starts.length);
+        assertEquals(0, starts[0]);
+        assertEquals(2, starts[1]);
+        assertEquals(4, starts[2]);
+    }
+
+    @Test
+    public void wrappingNeverStrandsKhmerCoengAtThePreviousRowEnd() {
+        List<Syllable> conjunct = Arrays.asList(
+                new Syllable("ខ្", 0, 100),
+                new Syllable("ម ", 100, 100),
+                new Syllable("បន្ទាប់", 200, 100));
+
+        int[] starts = LyricRenderer.wrapStarts(conjunct,
+                new float[]{40f, 40f, 30f}, 50f);
+
+        assertEquals(3, starts.length);
+        assertEquals(0, starts[0]);
+        assertEquals(2, starts[1]);
+        assertEquals(3, starts[2]);
     }
 }
