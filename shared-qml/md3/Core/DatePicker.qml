@@ -384,7 +384,6 @@ Item {
                                     placeholderText: "MM/DD/YYYY"
                                     text: Qt.formatDate(control.selectedDate, "MM/dd/yyyy")
                                     type: "outlined"
-                                    labelBackgroundColor: _colors.surfaceContainerHigh
                                     
                                     onAccepted: {
                                         var parts = text.split('/')
@@ -469,4 +468,3 @@ Item {
         }
     }
 }
-

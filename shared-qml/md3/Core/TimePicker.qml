@@ -488,7 +488,6 @@ Item {
                                         }
                                         label: "Hour"
                                         type: "outlined"
-                                        labelBackgroundColor: _colors.surfaceContainerHigh
                                         
                                         onEditingFinished: {
                                             var val = parseInt(text)
@@ -531,7 +530,6 @@ Item {
                                         text: _tempMinute.toString().padStart(2, '0')
                                         label: "Minute"
                                         type: "outlined"
-                                        labelBackgroundColor: _colors.surfaceContainerHigh
                                         
                                         onEditingFinished: {
                                             var val = parseInt(text)
@@ -639,4 +637,3 @@ Item {
         }
     }
 }
-

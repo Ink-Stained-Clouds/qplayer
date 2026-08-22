@@ -13,7 +13,6 @@ Item {
     property string trailingIcon: "arrow_drop_down"
     property string type: "filled" // "filled" | "outlined"
     property bool enabled: true
-    property color labelBackgroundColor: Theme.color.background
     
     // Read-only
     property string currentText: {
@@ -80,16 +79,28 @@ Item {
         
         color: (control.type === "filled") ? _colors.surfaceContainerHighest : "transparent"
         
-        border.width: (control.type === "outlined") ? 1 : 0
-        border.color: (control.type === "outlined") ? _colors.outline : "transparent"
+        border.width: 0
+
+        OutlinedBorder {
+            anchors.fill: parent
+            visible: control.type === "outlined"
+            cornerRadius: parent.radius
+            strokeWidth: 1
+            strokeColor: _colors.outline
+            notchVisible: control._actuallyFloated && control.label.length > 0
+            notchX: content.x + labelText.x - 4
+            notchWidth: labelText.width * labelText.scale + 8
+        }
         
         // Focus Border for Outlined (Overlay)
-        Rectangle {
+        OutlinedBorder {
             anchors.fill: parent
-            radius: parent.radius
-            color: "transparent"
-            border.width: 2
-            border.color: _colors.primary
+            cornerRadius: parent.radius
+            strokeWidth: 2
+            strokeColor: _colors.primary
+            notchVisible: control._actuallyFloated && control.label.length > 0
+            notchX: content.x + labelText.x - 4
+            notchWidth: labelText.width * labelText.scale + 8
             opacity: (control.type === "outlined" && control.isFocused) ? 1 : 0
             visible: control.type === "outlined"
             
@@ -126,6 +137,7 @@ Item {
     
     // Content Layout
     Item {
+        id: content
         anchors.fill: parent
         anchors.leftMargin: 16
         anchors.rightMargin: 16
@@ -175,17 +187,6 @@ Item {
             Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: 150 } }
             
-            // Background for Outlined Label (to hide border)
-            Rectangle {
-                visible: control.type === "outlined" && control._actuallyFloated
-                        && control.label.length > 0
-                color: control.labelBackgroundColor
-                z: -1
-                anchors.fill: parent
-                anchors.leftMargin: -4
-                anchors.rightMargin: -4
-                height: 2 
-            }
         }
         
         // Selected Text

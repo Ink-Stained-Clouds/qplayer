@@ -20,7 +20,6 @@ ColumnLayout {
             id: field
             Layout.fillWidth: true
             type: "outlined"
-            labelBackgroundColor: Theme.color.surfaceContainerHighest
             label: row.spec ? row.spec.hint : ""
             text: row.spec ? settings.value(row.spec.key) : ""
             onAccepted: settings.setValue(row.spec.key, field.text)

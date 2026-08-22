@@ -26,6 +26,7 @@ NavigationRail 1.0 NavigationRail.qml
 SideSheet 1.0 SideSheet.qml
 Tabs 1.0 Tabs.qml
 TextField 1.0 TextField.qml
+OutlinedBorder 1.0 OutlinedBorder.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 DatePicker 1.0 DatePicker.qml
 TimePicker 1.0 TimePicker.qml

@@ -16,7 +16,6 @@ Item {
     property string type: "filled" // "filled", "outlined"
     property bool enabled: true
     property bool readOnly: false
-    property color labelBackgroundColor: Theme.color.surface // Background color for label mask in outlined mode
     
     // Password features
     property bool isPassword: false
@@ -82,18 +81,32 @@ Item {
         
         color: _containerColor
         
-        // Base Border for Outlined (Always 1px, static color)
-        border.width: type === "outlined" ? 1 : 0
-        border.color: type === "outlined" ? _outlineColor : "transparent"
+        border.width: 0
 
-        // Focus Border for Outlined (Overlay, 2px, animates opacity)
-        Rectangle {
+        // The floating-label gap is clipped out of the border itself. No opaque
+        // surface-coloured rectangle is painted behind the label.
+        OutlinedBorder {
+            anchors.fill: parent
+            visible: type === "outlined"
+            cornerRadius: parent.radius
+            strokeWidth: 1
+            strokeColor: _outlineColor
+            notchVisible: control.isFloating && control.label.length > 0
+            notchX: contentLayout.x + textArea.x + labelText.x - 4
+            notchWidth: labelText.width + 8
+        }
+
+        // Focus Border for Outlined (Overlay, 2px, animates opacity), using the
+        // exact same clipped notch as the resting outline.
+        OutlinedBorder {
             id: focusBorder
             anchors.fill: parent
-            radius: parent.radius
-            color: "transparent"
-            border.width: 2
-            border.color: error ? _colors.error : _colors.primary
+            cornerRadius: parent.radius
+            strokeWidth: 2
+            strokeColor: error ? _colors.error : _colors.primary
+            notchVisible: control.isFloating && control.label.length > 0
+            notchX: contentLayout.x + textArea.x + labelText.x - 4
+            notchWidth: labelText.width + 8
             opacity: (type === "outlined" && focused) ? 1 : 0
             visible: type === "outlined"
             
@@ -114,6 +127,7 @@ Item {
 
         // Layout
         RowLayout {
+            id: contentLayout
             anchors.fill: parent
             anchors.leftMargin: leadingIcon ? 12 : 16
             anchors.rightMargin: (trailingIcon || isPassword) ? 12 : 16
@@ -135,6 +149,7 @@ Item {
 
             // Text Area Container
             Item {
+                id: textArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 
@@ -171,15 +186,6 @@ Item {
                     Behavior on y { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     Behavior on font.pixelSize { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     
-                    // Background for Outlined Label (to hide border behind label)
-                    Rectangle {
-                        visible: type === "outlined" && control.isFloating
-                                && control.label.length > 0
-                        color: control.labelBackgroundColor // Use specified background color to mask border
-                        anchors.fill: parent
-                        anchors.margins: -4
-                        z: -1
-                    }
                 }
 
                 // Input
