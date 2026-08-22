@@ -7,10 +7,24 @@ import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.Font;
 import io.github.humbleui.skija.FontEdging;
 import io.github.humbleui.skija.FontHinting;
+import io.github.humbleui.skija.FilterTileMode;
+import io.github.humbleui.skija.Image;
+import io.github.humbleui.skija.Matrix33;
 import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.RuntimeEffect;
+import io.github.humbleui.skija.RuntimeEffectBuilder;
+import io.github.humbleui.skija.SamplingMode;
 import io.github.humbleui.skija.Shader;
+import io.github.humbleui.skija.Surface;
+import io.github.humbleui.skija.TextBlob;
+import io.github.humbleui.skija.TextLine;
+import io.github.humbleui.skija.shaper.Shaper;
 import io.github.humbleui.types.Rect;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -19,14 +33,15 @@ import java.util.List;
  * Apple Music-style lyric column. Lines are left-anchored at {@code leftX}
  * and wrap into a column of width {@code columnWidth}. The active line is
  * vertically centered in the visible area; surrounding lines flow above/
- * below in a dimmer style. Per-character lift on the active line carries
- * the highlight (font size doesn't change).
+ * below in a dimmer style. Each visual row is shaped once with HarfBuzz and
+ * cached as a TextBlob; a runtime shader applies independently timed syllable
+ * lift without splitting that shaped row back into draw calls.
  *
- * <p>Layout pass runs every frame: each line is broken at syllable
+ * <p>The layout/shaping pass is cached: each line is broken at syllable
  * boundaries when its width exceeds the column, and every wrapped sub-row
  * counts toward the line's total height. Scroll is driven by cumulative
- * {@code lineTops}, not a fixed per-line spacing, so wrapped lines push
- * later lines down without overlapping.
+ * {@code lineTops}, not a fixed per-line spacing, so wrapped lines push later
+ * lines down without overlapping while playback frames reuse native blobs.
  */
 public class LyricRenderer {
 
@@ -227,11 +242,22 @@ public class LyricRenderer {
     // Apple liftSpring: mass 1, stiffness 14, damping 7 → ω0=√14, ζ≈0.935.
     private static final double LIFT_OMEGA0 = 3.7416574; // sqrt(14)
     private static final double LIFT_ZETA = 0.935414;    // 7 / (2·√14)
-    // Peak opacity of the white glow behind a sustained final timed word/syllable.
+    // Peak opacity of the white glow behind a sustained timed display word.
     private static final float GLOW_ALPHA = 0.55f;
-    private static final long TAIL_GLOW_MIN_DURATION_MS = 1500L;
+    private static final long WORD_GLOW_MIN_DURATION_MS = 1500L;
+    private static final float WORD_RIBBON_LIFT_PX = 2f;
+    private static final float MAX_SHADER_LIFT_PX = LIFT_PEAK_PX + WORD_RIBBON_LIFT_PX;
     private static final float TEXT_SHADOW_OFFSET_Y = 2f;
     private static final float TEXT_SHADOW_ALPHA = 0.48f;
+    /** Fixed SkSL uniform capacity. A wrapped visual row is normally below 30
+     * timed tokens; 128 leaves ample room for pathological no-break lyrics while
+     * keeping the per-frame upload small (2 KiB). */
+    private static final int MAX_LIFT_SEGMENTS = 128;
+    private static final int MAX_WORD_LIFT_SEGMENTS = 32;
+    private static final float TEXT_SUPERSAMPLE = 2f;
+    private static final float TEXT_RASTER_PAD = 8f;
+    private static final int MAX_HIGH_RES_ROWS = 12;
+    private static final String LIFT_SHADER_RESOURCE = "/shaders/lyric/syllable_lift.sksl";
     // Per-line scroll cascade (Apple Specs.lineDelay = 0.05). The active line and
     // everything ABOVE it move together (delay 0) — lockstep preserves their
     // spacing so the active line never rises into a still-stationary line above it
@@ -255,8 +281,8 @@ public class LyricRenderer {
      *  decided how the lines were tokenized. */
     private boolean animatablePerToken = false;
     /** True only when the source itself carries real per-word/per-syllable timing.
-     * Synthetic timing generated for plain LRC must never enable tail glow. */
-    private boolean tailGlowSupported = false;
+     * Synthetic timing generated for plain LRC must never enable word glow. */
+    private boolean wordGlowSupported = false;
     /**
      * Lines bundled into "active groups". A solo line is its own group; a
      * pair (or chain) of overlapping DUET_LEFT / DUET_RIGHT lines becomes
@@ -304,26 +330,17 @@ public class LyricRenderer {
     // them and rebuild only when an input changes; per frame we recompute just the
     // play-head-dependent interlude slots and cumulative tops (plain arithmetic,
     // reused buffers). Mirrors the engine's "don't recompute invariants per frame".
-    // Per-char advance-width cache, keyed by font instance then char. Measuring a glyph
-    // re-shapes text (font.measureTextWidth) — the dominant cost of the layout rebuild on
-    // a song switch. CJK lyrics reuse characters heavily across songs, so a cache that
-    // persists for the session turns most of that measuring into map lookups (the layout
-    // rebuild drops from tens of ms to a few once warm). Fonts from Fonts.get are stable
-    // instances; the animation flags mutated per frame don't change advance widths.
-    private final java.util.IdentityHashMap<Font, java.util.HashMap<Integer, Float>> charWidthCache =
-            new java.util.IdentityHashMap<>();
-
     private int[][] cachedRowStarts;
     private float[] cachedLineHeights;
     // Wrapped sub-line rows per line (null when absent/hidden), cached with the layout
     // so the per-frame draw never re-splits or allocates.
-    private String[][] cachedRomajiRows;
-    private String[][] cachedTranslationRows;
-    // Per-syllable advance widths per line, cached with the layout. Measuring a
-    // syllable's width re-shapes text and (via perCharWidth) allocated a String
-    // per character every frame for every visible row — the lyric page's biggest
-    // per-frame garbage source. Widths depend only on (text, font), which the
-    // layout key already covers, so cache them and the per-frame draw reads floats.
+    private ShapedText[][] cachedRomajiRows;
+    private ShapedText[][] cachedTranslationRows;
+    /** HarfBuzz output for every final visual row. TextBlob and caret positions are
+     * immutable and reused until a layout input changes; playback never reshapes. */
+    private ShapedRow[][] cachedShapedRows;
+    // Per-syllable advances obtained from the full-line HarfBuzz result. These are
+    // used only to choose wrap boundaries; actual drawing uses each row's TextBlob.
     private float[][] cachedSylWidths;
     private float[] lineTopsBuf = new float[0];
     private float[] effHeightsBuf = new float[0];
@@ -381,7 +398,7 @@ public class LyricRenderer {
     private final float[] dragSampleY = new float[SCROLL_VEL_SAMPLES];
     private int dragSampleCount;
 
-    // Reused per active line each frame (syllable left edges); was new float[n+1].
+    // Reused per active line each frame (syllable left edges in screen coordinates).
     private float[] sylLeftBuf = new float[0];
     // Reused saveLayer paint for the active row's composite alpha; was a native
     // Paint allocated per active line per frame. Kept alive for the renderer's
@@ -402,13 +419,19 @@ public class LyricRenderer {
     private Shader sweepShader;
     private float sweepShaderDark = Float.NaN;
     private final Rect sweepBigRect = Rect.makeLTRB(-100000f, -100000f, 100000f, 100000f);
-    // White glow behind a sustained final timed word/syllable. It is rendered through one
-    // blurred layer; the rest of the sung row never enters this layer.
+    // White glow behind the currently sustained display word. It is rendered through one
+    // blurred layer; completed and not-yet-active words never enter this layer.
     private final io.github.humbleui.skija.Paint glowGlyphPaint = newGlowGlyphPaint();
     private final io.github.humbleui.skija.Paint glowLayerPaint = newGlowLayerPaint();
     private final io.github.humbleui.skija.Paint textShadowPaint = newTextShadowPaint();
     // Per-syllable lift offset for the active row.
     private float[] liftBuf = new float[0];
+    private final float[] liftUniformBuf = new float[MAX_LIFT_SEGMENTS * 4];
+    private final float[] wordLiftUniformBuf = new float[MAX_WORD_LIFT_SEGMENTS * 4];
+    private Shaper harfBuzzShaper;
+    private RuntimeEffect liftEffect;
+    private RuntimeEffectBuilder liftBuilder;
+    private final java.util.ArrayDeque<ShapedRow> highResRowLru = new java.util.ArrayDeque<>();
 
     private static io.github.humbleui.skija.Paint newGlowGlyphPaint() {
         io.github.humbleui.skija.Paint p = new io.github.humbleui.skija.Paint();
@@ -444,6 +467,90 @@ public class LyricRenderer {
     private boolean layoutKeyRomaji;
     private boolean layoutKeyTranslation;
     private boolean layoutKeyScale = true;
+    private Font layoutKeyLyricFont;
+    private Font layoutKeySubFont;
+    private Font layoutKeyBgFont;
+
+    /** Cached immutable HarfBuzz row. Syllable coordinates are local to the blob. */
+    private static final class ShapedRow implements AutoCloseable {
+        final int from;
+        final int to;
+        final TextBlob blob;
+        final float width;
+        final float leadingWidth;
+        final float[] syllableX;
+        final WordSpan[] words;
+        Image highResImage;
+        Shader highResImageShader;
+        float rasterLeft;
+        float rasterTop;
+        float rasterWidth;
+        float rasterHeight;
+        boolean rasterWithShadow;
+
+        ShapedRow(int from, int to, TextBlob blob, float width, float leadingWidth,
+                  float[] syllableX, WordSpan[] words) {
+            this.from = from;
+            this.to = to;
+            this.blob = blob;
+            this.width = width;
+            this.leadingWidth = leadingWidth;
+            this.syllableX = syllableX;
+            this.words = words;
+        }
+
+        @Override public void close() {
+            closeRaster();
+            if (blob != null) blob.close();
+        }
+
+        void closeRaster() {
+            if (highResImageShader != null) {
+                highResImageShader.close();
+                highResImageShader = null;
+            }
+            if (highResImage != null) {
+                highResImage.close();
+                highResImage = null;
+            }
+        }
+    }
+
+    private static final class ShapedText implements AutoCloseable {
+        final TextBlob blob;
+        final float width;
+
+        ShapedText(TextBlob blob, float width) {
+            this.blob = blob;
+            this.width = width;
+        }
+
+        @Override public void close() {
+            if (blob != null) blob.close();
+        }
+    }
+
+    /** A display word, independent from its timed syllables. In "en"+"dure"
+     * this spans both syllables for whole-word glow/ribbon lift, while the base
+     * syllable lift still keeps two independently timed segments. */
+    static final class WordSpan {
+        final int firstSyllable;
+        final int lastSyllable;
+        final int utf16Start;
+        final int utf16End;
+        final float x0;
+        final float x1;
+
+        WordSpan(int firstSyllable, int lastSyllable, int utf16Start,
+                 int utf16End, float x0, float x1) {
+            this.firstSyllable = firstSyllable;
+            this.lastSyllable = lastSyllable;
+            this.utf16Start = utf16Start;
+            this.utf16End = utf16End;
+            this.x0 = x0;
+            this.x1 = x1;
+        }
+    }
 
     private static Fonts.Weight toFontsWeight(LyricConfig.FontWeight w) {
         switch (w) {
@@ -468,9 +575,22 @@ public class LyricRenderer {
 
     /** Release the renderer's reusable native Skia objects with its owning scene. */
     public void dispose() {
+        clearLayoutCache();
         if (sweepShader != null) {
             sweepShader.close();
             sweepShader = null;
+        }
+        if (harfBuzzShaper != null) {
+            harfBuzzShaper.close();
+            harfBuzzShaper = null;
+        }
+        if (liftBuilder != null) {
+            liftBuilder.close();
+            liftBuilder = null;
+        }
+        if (liftEffect != null) {
+            liftEffect.close();
+            liftEffect = null;
         }
         lyricLayerPaint.close();
         dotPaint.close();
@@ -507,11 +627,12 @@ public class LyricRenderer {
     }
 
     public void setLyrics(List<LyricLine> newLines) {
+        clearLayoutCache();
         boolean linearPlainLrc = Boolean.TRUE.equals(LyricConfig.instance.linearAnimForPlainLrc.getValue());
         PreparedLyrics prepared = prepareLyrics(newLines, linearPlainLrc);
         this.lines = prepared.lines;
         this.animatablePerToken = prepared.animatablePerToken;
-        this.tailGlowSupported = prepared.perSyllableSource;
+        this.wordGlowSupported = prepared.perSyllableSource;
         this.groups = buildGroups(this.lines);
         this.lineToGroup = new int[this.lines.size()];
         for (int gi = 0; gi < this.groups.size(); gi++) {
@@ -536,6 +657,39 @@ public class LyricRenderer {
         this.userReturning = false;
         this.userScrollPrevAnchor = Integer.MIN_VALUE;
         this.userHoldAnchor = Integer.MIN_VALUE;
+    }
+
+    private void clearLayoutCache() {
+        closeRows(cachedShapedRows);
+        highResRowLru.clear();
+        closeTexts(cachedRomajiRows);
+        closeTexts(cachedTranslationRows);
+        cachedShapedRows = null;
+        cachedRomajiRows = null;
+        cachedTranslationRows = null;
+        cachedRowStarts = null;
+        cachedSylWidths = null;
+        cachedLineHeights = null;
+        layoutKeyLines = null;
+        layoutKeyLyricFont = null;
+        layoutKeySubFont = null;
+        layoutKeyBgFont = null;
+    }
+
+    private static void closeRows(ShapedRow[][] rows) {
+        if (rows == null) return;
+        for (ShapedRow[] line : rows) {
+            if (line == null) continue;
+            for (ShapedRow row : line) if (row != null) row.close();
+        }
+    }
+
+    private static void closeTexts(ShapedText[][] rows) {
+        if (rows == null) return;
+        for (ShapedText[] line : rows) {
+            if (line == null) continue;
+            for (ShapedText row : line) if (row != null) row.close();
+        }
     }
 
     /**
@@ -580,13 +734,13 @@ public class LyricRenderer {
             }
         }
         // Settings-driven: whether a plain-LRC line's synthetic per-token timing
-        // is spread evenly (linear front-to-back sweep/lift/glow, matching a real
+        // is spread evenly (linear front-to-back sweep/lift, matching a real
         // per-syllable source) or collapsed to the whole line's own start/duration
-        // (the whole line lights up together as one block instead — still gets
-        // the line-level scaleEmphasis/glow, just no per-character sweep motion).
+        // (the whole line lights up together as one block instead — it still gets
+        // line-level scale emphasis, just no per-character sweep motion).
         // Read once per load, same as {@code perSyl} itself; a live mid-song
         // toggle only takes effect on the next track change, not the current
-        // line's already-tokenized syllables.
+        // line's already-tokenized syllables. Word glow still requires real timing.
         boolean animatablePerToken = perSyl || linearPlainLrc;
 
         // LRC (line-level) lyrics parse to a single syllable per line, so the
@@ -638,12 +792,11 @@ public class LyricRenderer {
     //    start + (i+1)*(dur/n), the last one absorbing the integer-division
     //    remainder so the tokens' spans still sum to the line's real duration
     //    exactly. Synthetic (not real per-word timing), but monotonically
-    //    increasing, which is all the sweep/lift/glow code (written for real
-    //    per-syllable sources) actually needs to run on it — linear front-to-
-    //    back instead of the whole line lighting up as one block.
+    //    increasing, which is all the sweep/lift code needs to run on it —
+    //    linear front-to-back instead of the whole line lighting as one block.
     //  - false: every token keeps the WHOLE line's start/duration (all
     //    identical) — only good enough for wrapStarts to find a break point,
-    //    NOT for the sweep/lift/glow code (identical timestamps collapse its
+    //    NOT for the sweep/lift code (identical timestamps collapse its
     //    "which token is active" search); callers must gate that off when
     //    passing false (see animatablePerToken).
     private static List<Syllable> tokenizeForWrap(Syllable s, boolean spreadEvenly) {
@@ -836,12 +989,13 @@ public class LyricRenderer {
         boolean showTranslation = cfg.showTranslation.getValue();
 
         // ---- Layout pass. Wrapping + per-line heights depend only on the inputs
-        // below, NOT on the play head, so compute them once and cache. wrapStarts()
-        // reshapes text and allocates an int[] per line; doing that for all N lines
-        // every frame was the lyric page's dominant per-frame cost + garbage.
+        // below, NOT on the play head, so compute them once and cache. HarfBuzz is
+        // intentionally confined to this rebuild; playback frames only read TextBlob
+        // and caret arrays.
         int n = lines.size();
         int colW = Math.round(columnWidth);
         boolean layoutValid = cachedRowStarts != null
+                && cachedShapedRows != null
                 && layoutKeyLines == lines
                 && layoutKeyN == n
                 && layoutKeyLyricSize == lyricFontSize
@@ -851,12 +1005,16 @@ public class LyricRenderer {
                 && layoutKeyRowRatio == rowHeightRatio
                 && layoutKeyRomaji == showRomaji
                 && layoutKeyTranslation == showTranslation
-                && layoutKeyScale == scaleOn;
+                && layoutKeyScale == scaleOn
+                && layoutKeyLyricFont == lyricFont
+                && layoutKeySubFont == subFont
+                && layoutKeyBgFont == bgFont;
         if (!layoutValid) {
             int[][] rowStarts = new int[n][];
             float[] lineHeights = new float[n];
-            String[][] romajiRows = new String[n][];
-            String[][] translationRows = new String[n][];
+            ShapedText[][] romajiRows = new ShapedText[n][];
+            ShapedText[][] translationRows = new ShapedText[n][];
+            ShapedRow[][] shapedRows = new ShapedRow[n][];
             float[][] sylWidths = new float[n][];
             for (int i = 0; i < n; i++) {
                 LyricLine line = lines.get(i);
@@ -873,14 +1031,16 @@ public class LyricRenderer {
                 float wrapW = (isBg || !scaleOn) ? columnWidth : columnWidth / EMPHASIS_SCALE;
 
                 int sylCount = line.syllables.size();
-                float[] widths = new float[sylCount];
-                for (int s = 0; s < sylCount; s++) {
-                    String st = line.syllables.get(s).text;
-                    widths[s] = perCharWidth(st, fontForText(st, font));
-                }
+                float[] widths = shapeSyllableAdvances(line.syllables, font);
                 sylWidths[i] = widths;
                 rowStarts[i] = wrapStarts(line.syllables, widths, wrapW);
                 int subRowCount = Math.max(1, rowStarts[i].length - 1);
+                shapedRows[i] = new ShapedRow[subRowCount];
+                for (int r = 0; r < subRowCount; r++) {
+                    int from = rowStarts[i][r];
+                    int to = rowStarts[i][r + 1];
+                    shapedRows[i][r] = shapeMainRow(line.syllables, from, to, font);
+                }
 
                 float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
                 boolean hasSub = (line.romaji != null && showRomaji) || (line.translation != null && showTranslation);
@@ -889,11 +1049,11 @@ public class LyricRenderer {
                 // room (reserved here so neighbours don't overlap; drawn at subY).
                 if (hasSub && subRowCount > 1) lh += WRAP_SUB_GAP;
                 if (line.romaji != null && showRomaji) {
-                    romajiRows[i] = wrapText(line.romaji, subFont, wrapW);
+                    romajiRows[i] = shapeWrappedText(line.romaji, subFont, wrapW);
                     lh += subLineHeight * romajiRows[i].length;
                 }
                 if (line.translation != null && showTranslation) {
-                    translationRows[i] = wrapText(line.translation, subFont, wrapW);
+                    translationRows[i] = shapeWrappedText(line.translation, subFont, wrapW);
                     lh += subLineHeight * translationRows[i].length;
                 }
                 lh += lineGap;
@@ -901,10 +1061,14 @@ public class LyricRenderer {
                 // lines never shift when the BG scales in / collapses.
                 lineHeights[i] = lh;
             }
+            closeRows(cachedShapedRows);
+            closeTexts(cachedRomajiRows);
+            closeTexts(cachedTranslationRows);
             cachedRowStarts = rowStarts;
             cachedLineHeights = lineHeights;
             cachedRomajiRows = romajiRows;
             cachedTranslationRows = translationRows;
+            cachedShapedRows = shapedRows;
             cachedSylWidths = sylWidths;
             layoutKeyLines = lines;
             layoutKeyN = n;
@@ -916,10 +1080,12 @@ public class LyricRenderer {
             layoutKeyRomaji = showRomaji;
             layoutKeyTranslation = showTranslation;
             layoutKeyScale = scaleOn;
+            layoutKeyLyricFont = lyricFont;
+            layoutKeySubFont = subFont;
+            layoutKeyBgFont = bgFont;
         }
         int[][] rowStarts = cachedRowStarts;
         float[] lineHeights = cachedLineHeights;
-        float[][] sylWidths = cachedSylWidths;
 
         // Font vertical metrics are invariant per (face,size) but Font.getMetrics()
         // allocates a fresh FontMetrics on every call — pull them once per frame
@@ -1321,7 +1487,6 @@ public class LyricRenderer {
             float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
             float descent = isBg ? bgDescent : lyricDescent;
             float ascent = isBg ? bgAscent : lyricAscent;
-            float[] lineSylW = sylWidths[i];
             // baseAlpha interpolates idle ↔ active so the line's overall
             // brightness rises/falls with the group transition rather
             // than snapping at the boundary.
@@ -1432,23 +1597,20 @@ public class LyricRenderer {
             canvas.translate(-anchorX, -anchorY);
 
             for (int r = 0; r < subRowCount; r++) {
-                int from = starts[r];
-                int to = (r + 1 < starts.length) ? starts[r + 1] : line.syllables.size();
-
-                float rowWidth = sumWidths(lineSylW, from, to);
+                ShapedRow shapedRow = cachedShapedRows[i][r];
                 // Drop leading whitespace on every row: a continuation row inherits the
                 // space the source kept at the wrap point, and the first row can carry a
                 // leading space from the source line itself (common in JP lyrics) — both
                 // would sit the text one space in from the column's left edge.
-                float lead = leadingWsWidth(line.syllables, lineSylW, from, to, font);
-                float visWidth = rowWidth - lead;
+                float lead = shapedRow.leadingWidth;
+                float visWidth = shapedRow.width - lead;
                 float rowX = alignRight
                         ? Math.max(leftX, leftX + columnWidth - visWidth)
                         : leftX;
 
                 float wrapRowH = (r == 0) ? rowHeight : (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
                 float rowBaselineY = lineYTop + rowHeight + r * wrapRowH - descent - 4f;
-                drawSyllableRange(line.syllables, lineSylW, from, to, rowX - lead, rowBaselineY, font,
+                drawShapedRow(line.syllables, shapedRow, rowX - lead, rowBaselineY,
                         ascent, descent, positionMs, baseAlpha, activeK, animatablePerToken, spring,
                         glowOn, shadowOn);
 
@@ -1466,9 +1628,9 @@ public class LyricRenderer {
             float subY = lineYTop + rowHeight
                     + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap) + 4f
                     + (subRowCount > 1 ? WRAP_SUB_GAP : 0f);
-            subY = drawSubline(leftX, subFont, subLineHeight, showRomaji, i, alignRight,
+            subY = drawSubline(leftX, subLineHeight, showRomaji, i, alignRight,
                     baseAlpha, maxRowRightX, subY, cachedRomajiRows, shadowOn);
-            subY = drawSubline(leftX, subFont, subLineHeight, showTranslation, i, alignRight,
+            subY = drawSubline(leftX, subLineHeight, showTranslation, i, alignRight,
                     baseAlpha, maxRowRightX, subY, cachedTranslationRows, shadowOn);
 
             canvas.restore();
@@ -1524,14 +1686,14 @@ public class LyricRenderer {
         }
     }
 
-    private float drawSubline(float leftX, Font subFont, float subLineHeight,
+    private float drawSubline(float leftX, float subLineHeight,
                               boolean showRomaji, int i, boolean alignRight,
                               float baseAlpha, float maxRowRightX, float subY,
-                              String[][] cachedRomajiRows, boolean shadowOn) {
-        String[] romajiRows = cachedRomajiRows[i];
+                              ShapedText[][] cachedRomajiRows, boolean shadowOn) {
+        ShapedText[] romajiRows = cachedRomajiRows[i];
         if (romajiRows != null && showRomaji) {
-            for (String romajiRow : romajiRows) {
-                drawSubLine(romajiRow, leftX, maxRowRightX, subY, subFont,
+            for (ShapedText romajiRow : romajiRows) {
+                drawSubLine(romajiRow, leftX, maxRowRightX, subY,
                         baseAlpha * 0.75f, alignRight, shadowOn);
                 subY += subLineHeight;
             }
@@ -1770,47 +1932,6 @@ public class LyricRenderer {
         return ch == LyricLine.VocalChannel.BACKGROUND
                 || ch == LyricLine.VocalChannel.BACKGROUND_LEFT
                 || ch == LyricLine.VocalChannel.BACKGROUND_RIGHT;
-    }
-
-    /**
-     * Per-character measurement so the measured total matches what
-     * {@link #drawSyllableRange} actually advances. Using {@code measureTextWidth}
-     * on the whole string yields a slightly smaller total because of
-     * kerning, which makes right-aligned positions jitter on the active line.
-     */
-    private float perCharWidth(String text, Font font) {
-        java.util.HashMap<Integer, Float> m = charWidthCache.get(font);
-        if (m == null) { m = new java.util.HashMap<>(); charWidthCache.put(font, m); }
-        float w = 0f;
-        for (int i = 0; i < text.length(); i++) {
-            int c = text.charAt(i);
-            Float cached = m.get(c);
-            if (cached == null) {
-                cached = font.measureTextWidth(String.valueOf((char) c));
-                m.put(c, cached);
-            }
-            w += cached;
-        }
-        return w;
-    }
-
-    // Width of the run of leading whitespace at the start of a wrapped row [from, to):
-    // whole whitespace-only syllables, plus the leading spaces of the first syllable
-    // that carries visible text. A continuation row can begin on the space the source
-    // kept at the wrap point (a leading-space syllable or a standalone space token),
-    // which would otherwise indent it out of line with the first row.
-    private float leadingWsWidth(List<Syllable> syls, float[] sylW, int from, int to, Font font) {
-        float ws = 0f;
-        for (int i = from; i < to; i++) {
-            String st = syls.get(i).text;
-            if (st == null || st.isEmpty()) continue;
-            int k = 0;
-            while (k < st.length() && Character.isWhitespace(st.charAt(k))) k++;
-            if (k == st.length()) { ws += sylW[i]; continue; } // whole syllable is blank
-            if (k > 0) ws += perCharWidth(st.substring(0, k), fontForText(st, font));
-            break;
-        }
-        return ws;
     }
 
     // Hangul: Syllables + Jamo Extended-B (AC00-D7FF), Jamo (1100-11FF), Compatibility
@@ -2072,62 +2193,233 @@ public class LyricRenderer {
         return Math.min(0f, v + d);
     }
 
-    /**
-     * Sum cached per-syllable widths over {@code [from, to)} — no measuring, no alloc.
-     */
-    private static float sumWidths(float[] sylWidths, int from, int to) {
-        float w = 0f;
-        for (int i = from; i < to; i++) w += sylWidths[i];
-        return w;
+    private Shaper shaper() {
+        if (harfBuzzShaper == null) harfBuzzShaper = Shaper.makeBestAvailable();
+        return harfBuzzShaper;
     }
 
-    /**
-     * Greedy width-wrap of a plain sub-line (romaji / translation) into rows that fit
-     * {@code maxWidth}. Breaks at spaces when present (latin / romaji), else at the
-     * character boundary (CJK translations have no spaces). Called only from the cached
-     * layout pass, so the per-row allocation is not on the per-frame path.
-     */
-    private static String[] wrapText(String text, Font font, float maxWidth) {
-        if (text == null || text.isEmpty()) return new String[]{""};
-        font = fontForText(text, font);
-        if (font.measureTextWidth(text) <= maxWidth) return new String[]{text};
-        java.util.List<String> rows = new java.util.ArrayList<>();
-        int n = text.length();
-        int lineStart = 0;
-        int lastSpace = -1;
-        float w = 0f;
+    private TextLine shapeLine(String text, Font baseFont) {
+        // The bundled face covers Latin + Han. For scripts it lacks, preserve the
+        // established platform fallback selection, then HarfBuzz shapes the entire
+        // visual row with that face instead of switching per timed syllable.
+        return shaper().shapeLine(text, fontForText(text, baseFont));
+    }
+
+    /** Shape the complete source line once and read HarfBuzz caret coordinates at
+     * syllable boundaries. These advances only drive wrapping. */
+    private float[] shapeSyllableAdvances(List<Syllable> syllables, Font font) {
+        int n = syllables.size();
+        float[] widths = new float[n];
+        if (n == 0) return widths;
+        StringBuilder text = new StringBuilder();
+        int[] offsets = new int[n + 1];
+        for (int i = 0; i < n; i++) {
+            offsets[i] = text.length();
+            String s = syllables.get(i).text;
+            if (s != null) text.append(s);
+        }
+        offsets[n] = text.length();
+        try (TextLine line = shapeLine(text.toString(), font)) {
+            for (int i = 0; i < n; i++) {
+                widths[i] = Math.max(0f,
+                        line.getCoordAtOffset(offsets[i + 1]) - line.getCoordAtOffset(offsets[i]));
+            }
+        }
+        return widths;
+    }
+
+    private ShapedRow shapeMainRow(List<Syllable> syllables, int from, int to, Font font) {
+        int n = Math.max(0, to - from);
+        StringBuilder text = new StringBuilder();
+        int[] offsets = new int[n + 1];
+        for (int i = 0; i < n; i++) {
+            offsets[i] = text.length();
+            String s = syllables.get(from + i).text;
+            if (s != null) text.append(s);
+        }
+        offsets[n] = text.length();
+
+        try (TextLine line = shapeLine(text.toString(), font)) {
+            float[] x = new float[n + 1];
+            for (int i = 0; i <= n; i++) x[i] = line.getCoordAtOffset(offsets[i]);
+            int visibleOffset = 0;
+            while (visibleOffset < text.length()) {
+                int cp = text.codePointAt(visibleOffset);
+                if (!Character.isWhitespace(cp)) break;
+                visibleOffset += Character.charCount(cp);
+            }
+            WordSpan[] words = buildWordSpans(text.toString(), offsets, line);
+            return new ShapedRow(from, to, line.getTextBlob(), line.getWidth(),
+                    line.getCoordAtOffset(visibleOffset), x, words);
+        }
+    }
+
+    /** Pure tokenizer used by the glow cache and unit tests. Adjacent Latin
+     * fragments have no knowledge of syllable boundaries, so en+dure is one range. */
+    static int[][] displayWordRanges(String text) {
+        if (text == null || text.isEmpty()) return new int[0][];
+        ArrayList<int[]> out = new ArrayList<>();
         int i = 0;
-        while (i < n) {
-            char c = text.charAt(i);
-            float cw = font.measureTextWidth(String.valueOf(c));
-            if (c == ' ') lastSpace = i;
-            if (w + cw > maxWidth && i > lineStart) {
-                int breakAt = lastSpace > lineStart ? lastSpace : i;
-                int nextStart = lastSpace > lineStart ? lastSpace + 1 : i;
-                rows.add(text.substring(lineStart, breakAt));
-                lineStart = nextStart;
-                lastSpace = -1;
-                i = nextStart;
-                w = 0f;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            int cc = Character.charCount(cp);
+            if (!isWordCodePoint(cp)) {
+                i += cc;
                 continue;
             }
-            w += cw;
-            i++;
+            int start = i;
+            if (isEastAsianCodePoint(cp)) {
+                i += cc;
+                while (i < text.length() && isCombiningMark(text.codePointAt(i))) {
+                    i += Character.charCount(text.codePointAt(i));
+                }
+            } else {
+                Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+                i += cc;
+                while (i < text.length()) {
+                    int next = text.codePointAt(i);
+                    if (isCombiningMark(next)) {
+                        i += Character.charCount(next);
+                        continue;
+                    }
+                    if ((next == '\'' || next == 0x2019 || next == '-')
+                            && hasWordCodePointAfter(text, i + Character.charCount(next))) {
+                        i += Character.charCount(next);
+                        continue;
+                    }
+                    if (!isWordCodePoint(next) || isEastAsianCodePoint(next)) break;
+                    Character.UnicodeScript nextScript = Character.UnicodeScript.of(next);
+                    if (script != Character.UnicodeScript.COMMON
+                            && nextScript != Character.UnicodeScript.COMMON
+                            && nextScript != script) break;
+                    i += Character.charCount(next);
+                }
+            }
+            out.add(new int[]{start, i});
         }
-        if (lineStart < n) rows.add(text.substring(lineStart));
-        return rows.toArray(new String[0]);
+        return out.toArray(new int[0][]);
     }
 
-    private void drawSubLine(String text, float leftX, float rightAnchorX, float y,
-                             Font font, float alpha, boolean alignRight, boolean shadowOn) {
-        font = fontForText(text, font);
-        float x = alignRight ? rightAnchorX - font.measureTextWidth(text) : leftX;
-        if (shadowOn) drawTextShadow(text, x, y, font, alpha);
+    private static WordSpan[] buildWordSpans(String text, int[] syllableOffsets, TextLine line) {
+        int[][] ranges = displayWordSyllableRanges(text, syllableOffsets);
+        WordSpan[] words = new WordSpan[ranges.length];
+        for (int w = 0; w < ranges.length; w++) {
+            int start = ranges[w][0];
+            int end = ranges[w][1];
+            int first = ranges[w][2];
+            int last = ranges[w][3];
+            words[w] = new WordSpan(first, last, start, end,
+                    line.getCoordAtOffset(start), line.getCoordAtOffset(end));
+        }
+        return words;
+    }
+
+    /** Adds first/last independently animated syllable indices to each display-word
+     * range. Kept pure so the crucial en+dure grouping is testable without Skia. */
+    static int[][] displayWordSyllableRanges(String text, int[] syllableOffsets) {
+        int[][] words = displayWordRanges(text);
+        int[][] result = new int[words.length][4];
+        for (int i = 0; i < words.length; i++) {
+            int start = words[i][0];
+            int end = words[i][1];
+            result[i][0] = start;
+            result[i][1] = end;
+            result[i][2] = syllableAtOffset(syllableOffsets, start);
+            result[i][3] = syllableAtOffset(syllableOffsets, Math.max(start, end - 1));
+        }
+        return result;
+    }
+
+    private static int syllableAtOffset(int[] offsets, int offset) {
+        int lo = 0, hi = offsets.length - 2, result = 0;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (offsets[mid] <= offset) {
+                result = mid;
+                lo = mid + 1;
+            } else hi = mid - 1;
+        }
+        return Math.min(result, offsets.length - 2);
+    }
+
+    private static boolean hasWordCodePointAfter(String text, int offset) {
+        return offset < text.length() && isWordCodePoint(text.codePointAt(offset));
+    }
+
+    private static boolean isWordCodePoint(int cp) {
+        return Character.isLetterOrDigit(cp) || isCombiningMark(cp);
+    }
+
+    private static boolean isCombiningMark(int cp) {
+        int type = Character.getType(cp);
+        return type == Character.NON_SPACING_MARK
+                || type == Character.COMBINING_SPACING_MARK
+                || type == Character.ENCLOSING_MARK;
+    }
+
+    private static boolean isEastAsianCodePoint(int cp) {
+        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+        return script == Character.UnicodeScript.HAN
+                || script == Character.UnicodeScript.HIRAGANA
+                || script == Character.UnicodeScript.KATAKANA;
+    }
+
+    private ShapedText shapeText(String text, Font font) {
+        try (TextLine line = shapeLine(text, font)) {
+            return new ShapedText(line.getTextBlob(), line.getWidth());
+        }
+    }
+
+    /** HarfBuzz-aware wrap for translation/romaji. The source is shaped once to
+     * locate breaks, then only the final visual rows are shaped and cached. */
+    private ShapedText[] shapeWrappedText(String text, Font font, float maxWidth) {
+        if (text == null || text.isEmpty()) return new ShapedText[]{shapeText("", font)};
+        ArrayList<ShapedText> rows = new ArrayList<>();
+        try (TextLine full = shapeLine(text, font)) {
+            int start = 0;
+            while (start < text.length()) {
+                float startX = full.getCoordAtOffset(start);
+                int best = start;
+                int bestBreak = -1;
+                int p = start;
+                while (p < text.length()) {
+                    int cp = text.codePointAt(p);
+                    int next = p + Character.charCount(cp);
+                    if (Character.isWhitespace(cp)) bestBreak = p;
+                    if (full.getCoordAtOffset(next) - startX > maxWidth && p > start) break;
+                    best = next;
+                    p = next;
+                }
+                int end = best;
+                int nextStart = best;
+                if (p < text.length() && bestBreak > start) {
+                    end = bestBreak;
+                    nextStart = bestBreak;
+                    while (nextStart < text.length()
+                            && Character.isWhitespace(text.codePointAt(nextStart))) {
+                        nextStart += Character.charCount(text.codePointAt(nextStart));
+                    }
+                }
+                if (end <= start) {
+                    end = Math.min(text.length(), start + Character.charCount(text.codePointAt(start)));
+                }
+                rows.add(shapeText(text.substring(start, end), font));
+                start = Math.max(end, nextStart);
+            }
+        }
+        return rows.toArray(new ShapedText[0]);
+    }
+
+    private void drawSubLine(ShapedText text, float leftX, float rightAnchorX, float y,
+                             float alpha, boolean alignRight, boolean shadowOn) {
+        if (text == null || text.blob == null) return;
+        float x = alignRight ? rightAnchorX - text.width : leftX;
+        if (shadowOn) drawTextShadow(text.blob, x, y, alpha);
         Paint paint = LyricSkia.scratchPaint();
         paint.setColor(0xFFE6E6E6);
         paint.setAlphaf(alpha);
         paint.setAntiAlias(true);
-        LyricSkia.getCanvas().drawString(text, x, y, font, paint);
+        LyricSkia.getCanvas().drawTextBlob(text.blob, x, y, paint);
     }
 
     private int findActiveGroup(long pos) {
@@ -2168,173 +2460,281 @@ public class LyricRenderer {
      *       sweep snapping anything.</li>
      * </ol>
      *
-     * <p>{@code activeK ≤ 0.001} short-circuits to a flat per-syllable
-     * draw — past the group's fade-out window, no animation work needed.
+     * <p>{@code activeK ≤ 0.001} short-circuits to one flat TextBlob draw —
+     * past the group's fade-out window, no animation work is needed.
      */
-    private void drawSyllableRange(List<Syllable> syllables, float[] sylWidths, int from, int to,
-                                   float startX, float baselineY, Font font,
+    private void drawShapedRow(List<Syllable> syllables, ShapedRow row,
+                                   float startX, float baselineY,
                                    float ascent, float descent, long pos,
                                    float baseAlpha, float activeK, boolean enableLift, boolean spring,
                                    boolean glowOn, boolean shadowOn) {
-        if (from >= to) return;
+        if (row == null || row.blob == null || row.from >= row.to || row.width <= 0f) return;
         Canvas canvas = LyricSkia.getCanvas();
 
         if (activeK <= 0.001f) {
-            float x = startX;
             Paint paint = LyricSkia.scratchPaint();
             paint.setColor(0xFFFFFFFF);
             paint.setAlphaf(baseAlpha);
             paint.setAntiAlias(true);
-            for (int i = from; i < to; i++) {
-                String st = syllables.get(i).text;
-                Font textFont = fontForText(st, font);
-                if (shadowOn) drawTextShadow(st, x, baselineY, textFont, baseAlpha);
-                canvas.drawString(st, x, baselineY, textFont, paint);
-                x += sylWidths[i];
-            }
+            if (shadowOn) drawTextShadow(row.blob, startX, baselineY, baseAlpha);
+            canvas.drawTextBlob(row.blob, startX, baselineY, paint);
             return;
         }
 
-        // Pre-compute syllable left edges + row geometry.
-        int n = to - from;
+        int n = row.to - row.from;
         if (sylLeftBuf.length < n + 1) sylLeftBuf = new float[n + 1];
         float[] sylLeft = sylLeftBuf;
-        sylLeft[0] = startX;
-        for (int i = 0; i < n; i++) {
-            sylLeft[i + 1] = sylLeft[i] + sylWidths[from + i];
+        for (int i = 0; i <= n; i++) sylLeft[i] = startX + row.syllableX[i];
+        float rowRightX = startX + row.width;
+        float sweepX = enableLift
+                ? computeSweepX(syllables, row.from, row.to, sylLeft, pos) : 0f;
+
+        if (liftBuf.length < n) liftBuf = new float[n];
+        for (int s = 0; s < n; s++) {
+            float k = syllableAnimationK(syllables.get(row.from + s), pos, spring);
+            float lift = enableLift ? -LIFT_PEAK_PX * k * activeK : 0f;
+            liftBuf[s] = lift;
         }
-        float rowRightX = sylLeft[n];
-        if (rowRightX - startX <= 0f) return;
 
-        // enableLift == every token here has monotonically increasing timing to
-        // interpolate across (real per-syllable, or linearAnimForPlainLrc's
-        // synthetic evenly-spread tokens) — false means plain-LRC tokens all
-        // share the whole line's identical start/duration (tokenizeForWrap's
-        // spreadEvenly=false path), which would collapse computeSweepX's
-        // "which token is active" search instead of sweeping meaningfully.
-        float sweepX = enableLift ? computeSweepX(syllables, from, to, sylLeft, pos) : 0f;
-
-        // Layer bounds wide enough for the peak lift + glyph descender, plus the
-        // white glow blur radius (~8px) so the glow isn't clipped at row edges. The
-        // float overload avoids allocating a Rect per active row per frame (the
-        // last per-frame allocation on the lyric draw path).
         Paint layerPaint = lyricLayerPaint;
         layerPaint.setAlphaf(baseAlpha);
         canvas.saveLayer(
                 startX - 8f,
-                baselineY + ascent - LIFT_PEAK_PX - 8f,
+                baselineY + ascent - MAX_SHADER_LIFT_PX - 8f,
                 rowRightX + 8f,
                 baselineY + descent + 8f,
                 layerPaint);
         try {
-            // Per-syllable lift, computed once and reused by the tail-glow and text passes.
-            if (liftBuf.length < n) liftBuf = new float[n];
-            int tailIndex = -1;
-            for (int i = syllables.size() - 1; i >= 0; i--) {
-                String text = syllables.get(i).text;
-                if (text != null && !text.trim().isEmpty()) {
-                    tailIndex = i;
-                    break;
+            ensureHighResRaster(row, ascent, descent, shadowOn);
+            try (Shader liftedShader = makeLiftShader(row, startX, baselineY, rowRightX, n,
+                    syllables, pos, sweepX, activeK, glowOn)) {
+                Paint textPaint = LyricSkia.scratchPaint();
+                textPaint.setShader(liftedShader);
+                textPaint.setAlphaf(1f);
+                textPaint.setAntiAlias(true);
+                canvas.drawRect(Rect.makeLTRB(
+                        startX + row.rasterLeft,
+                        baselineY + row.rasterTop - MAX_SHADER_LIFT_PX,
+                        startX + row.rasterLeft + row.rasterWidth,
+                        baselineY + row.rasterTop + row.rasterHeight), textPaint);
+                textPaint.setShader(null);
+                // Apply the karaoke sweep to the base text first. The word glow is
+                // deliberately composited afterwards: masking it with the sweep made
+                // the unsung half dark, so an "entire word" glow still looked like a
+                // tail-only glow while the play head was inside a split word.
+                if (enableLift) {
+                    float maskDark = 1f - (1f - DARK_MASK_ALPHA) * activeK;
+                    applySweepMask(canvas, sweepX, maskDark);
                 }
-            }
-            int tailLocal = tailIndex - from;
-            boolean tailGlowEligible = tailGlowSupported && glowOn
-                    && tailIndex >= from && tailIndex < to
-                    && syllables.get(tailIndex).durationMs >= TAIL_GLOW_MIN_DURATION_MS;
-            float tailGlowAlpha = 0f;
-            for (int s = 0; s < n; s++) {
-                Syllable syl = syllables.get(from + s);
-                long sStart = syl.startMs;
-
-                // Lift progress k: a soft spring step (Apple liftSpring) when spring
-                // physics is on, else the fixed cubic ease-out over max(1s, dur).
-                float k;
-                if (spring) {
-                    k = liftSpringK((pos - sStart) / 1000.0);
-                } else {
-                    long ownEnd = sStart + Math.max(0L, syl.durationMs);
-                    long effDur = Math.max(LIFT_MIN_DURATION_MS, ownEnd - sStart);
-                    float t;
-                    if (pos <= sStart) t = 0f;
-                    else if (pos >= sStart + effDur) t = 1f;
-                    else t = (pos - sStart) / (float) effDur;
-                    k = 1f - (1f - t) * (1f - t) * (1f - t);
-                }
-                liftBuf[s] = enableLift ? -LIFT_PEAK_PX * k * activeK : 0f;
-                if (tailGlowEligible && s == tailLocal) {
-                    tailGlowAlpha = activeK * (enableLift ? k : 1f) * GLOW_ALPHA;
-                }
-            }
-
-            // Drop-shadow pass follows each syllable's lift. It lives inside the
-            // row's composite layer, so baseAlpha and the sweep mask affect shadow
-            // and foreground identically.
-            if (shadowOn) {
-                for (int s = 0; s < n; s++) {
-                    String st = syllables.get(from + s).text;
-                    drawTextShadow(st, sylLeft[s], baselineY + liftBuf[s],
-                            fontForText(st, font), 1f);
-                }
-            }
-
-            // Tail-glow pass: only the final non-whitespace timed word/syllable is
-            // blurred, and only when that token is a sustained note.
-            if (tailGlowAlpha > 0.01f) {
-                String tailText = syllables.get(tailIndex).text;
-                int visibleStart = 0;
-                while (visibleStart < tailText.length()) {
-                    int cp = tailText.codePointAt(visibleStart);
-                    if (!Character.isWhitespace(cp)) break;
-                    visibleStart += Character.charCount(cp);
-                }
-                int visibleEnd = tailText.length();
-                while (visibleEnd > 0) {
-                    int cp = tailText.codePointBefore(visibleEnd);
-                    if (!Character.isWhitespace(cp)) break;
-                    visibleEnd -= Character.charCount(cp);
-                }
-                String tailWord = tailText.substring(visibleStart, visibleEnd);
-                String prefix = tailText.substring(0, visibleStart);
-                float tailX = sylLeft[tailLocal] + perCharWidth(prefix, font);
-                canvas.saveLayer(
-                        tailX - 8f,
-                        baselineY + ascent - LIFT_PEAK_PX - 8f,
-                        tailX + perCharWidth(tailWord, font) + 8f,
-                        baselineY + descent + 8f,
-                        glowLayerPaint);
-                glowGlyphPaint.setColor(0xFFFFFFFF);
-                glowGlyphPaint.setAlphaf(tailGlowAlpha);
-                canvas.drawString(tailWord, tailX, baselineY + liftBuf[tailLocal],
-                        fontForText(tailWord, font), glowGlyphPaint);
-                canvas.restore();
-            }
-
-            Paint textPaint = LyricSkia.scratchPaint();
-            textPaint.setColor(0xFFFFFFFF);
-            textPaint.setAlphaf(1f);
-            textPaint.setAntiAlias(true);
-            for (int s = 0; s < n; s++) {
-                String st = syllables.get(from + s).text;
-                canvas.drawString(st, sylLeft[s], baselineY + liftBuf[s], fontForText(st, font), textPaint);
-            }
-
-            // Smooth horizontal sweep (DST_IN): bright on the sung side, dark on the
-            // unsung side, blending over SWEEP_FADE_PX at the head. Skipped for a
-            // "whole line together" plain-LRC line (enableLift false) — there's
-            // nothing meaningful for sweepX (parked at 0) to mask against there.
-            if (enableLift) {
-                float maskDark = 1f - (1f - DARK_MASK_ALPHA) * activeK;
-                applySweepMask(canvas, sweepX, maskDark);
+                drawWordGlows(canvas, syllables, row, startX, baselineY,
+                        ascent, descent, pos, activeK, glowOn, liftedShader);
             }
         } finally {
             canvas.restore();
         }
     }
 
-    private void drawTextShadow(String text, float x, float baselineY, Font font, float alpha) {
+    private float syllableAnimationK(Syllable syl, long pos, boolean spring) {
+        long start = syl.startMs;
+        if (spring) return liftSpringK((pos - start) / 1000.0);
+        long duration = Math.max(LIFT_MIN_DURATION_MS, Math.max(0L, syl.durationMs));
+        float t = pos <= start ? 0f : pos >= start + duration
+                ? 1f : (pos - start) / (float) duration;
+        return 1f - (1f - t) * (1f - t) * (1f - t);
+    }
+
+    /** Rasterize the immutable HarfBuzz row at 2x once, then retain only a small
+     * LRU window. Playback shaders sample this source instead of the 1x saveLayer
+     * bitmap, so fractional lift and emphasis scaling keep the stem detail. */
+    private void ensureHighResRaster(ShapedRow row, float ascent, float descent,
+                                     boolean shadowOn) {
+        if (row.highResImage != null && row.rasterWithShadow == shadowOn) {
+            highResRowLru.remove(row);
+            highResRowLru.addLast(row);
+            return;
+        }
+        highResRowLru.remove(row);
+        row.closeRaster();
+
+        row.rasterLeft = -TEXT_RASTER_PAD;
+        row.rasterTop = ascent - TEXT_RASTER_PAD;
+        row.rasterWidth = Math.max(1f, row.width + TEXT_RASTER_PAD * 2f);
+        row.rasterHeight = Math.max(1f, descent - ascent + TEXT_RASTER_PAD * 2f);
+        int pixelWidth = Math.max(1, (int) Math.ceil(row.rasterWidth * TEXT_SUPERSAMPLE));
+        int pixelHeight = Math.max(1, (int) Math.ceil(row.rasterHeight * TEXT_SUPERSAMPLE));
+        try (Surface surface = Surface.makeRasterN32Premul(pixelWidth, pixelHeight)) {
+            Canvas raster = surface.getCanvas();
+            raster.clear(0x00000000);
+            raster.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
+            float x = -row.rasterLeft;
+            float baseline = -row.rasterTop;
+            if (shadowOn) {
+                textShadowPaint.setAlphaf(TEXT_SHADOW_ALPHA);
+                raster.drawTextBlob(row.blob, x, baseline + TEXT_SHADOW_OFFSET_Y, textShadowPaint);
+            }
+            Paint glyphPaint = LyricSkia.scratchPaint();
+            glyphPaint.setColor(0xFFFFFFFF);
+            glyphPaint.setAlphaf(1f);
+            glyphPaint.setAntiAlias(true);
+            raster.drawTextBlob(row.blob, x, baseline, glyphPaint);
+            row.highResImage = surface.makeImageSnapshot();
+        }
+        row.highResImageShader = row.highResImage.makeShader(
+                FilterTileMode.DECAL, FilterTileMode.DECAL,
+                SamplingMode.LINEAR, Matrix33.IDENTITY);
+        row.rasterWithShadow = shadowOn;
+        highResRowLru.addLast(row);
+        while (highResRowLru.size() > MAX_HIGH_RES_ROWS) {
+            ShapedRow evicted = highResRowLru.removeFirst();
+            if (evicted != row) evicted.closeRaster();
+        }
+    }
+
+    /** Build a cheap per-frame shader over the cached 2x row texture. HarfBuzz
+     * geometry and source pixels are both immutable; only lift uniforms change. */
+    private Shader makeLiftShader(ShapedRow row, float startX, float baselineY,
+                                  float rowRightX, int n, List<Syllable> syllables,
+                                  long pos, float sweepX, float activeK, boolean glowOn) {
+        int count = Math.min(n, MAX_LIFT_SEGMENTS);
+        java.util.Arrays.fill(liftUniformBuf, 0f);
+        for (int i = 0; i < count; i++) {
+            int p = i * 4;
+            liftUniformBuf[p] = i == 0
+                    ? startX - 8f : startX + row.syllableX[i];
+            liftUniformBuf[p + 1] = i == count - 1
+                    ? rowRightX + 8f : startX + row.syllableX[i + 1];
+            liftUniformBuf[p + 2] = liftBuf[i];
+        }
+
+        java.util.Arrays.fill(wordLiftUniformBuf, 0f);
+        int wordLiftCount = 0;
+        if (wordGlowSupported && glowOn) {
+            for (WordSpan word : row.words) {
+                if (wordLiftCount >= MAX_WORD_LIFT_SEGMENTS) break;
+                Syllable first = syllables.get(row.from + word.firstSyllable);
+                Syllable last = syllables.get(row.from + word.lastSyllable);
+                long end = last.startMs + Math.max(0L, last.durationMs);
+                long duration = end - first.startMs;
+                if (duration < WORD_GLOW_MIN_DURATION_MS || pos < first.startMs || pos > end) continue;
+                int p = wordLiftCount * 4;
+                float wordX0 = startX + Math.min(word.x0, word.x1);
+                float wordX1 = startX + Math.max(word.x0, word.x1);
+                // Use the exact karaoke sweep head rather than a separate clock.
+                // This preserves pauses and unevenly timed split syllables: when
+                // the highlight holds at a boundary, the ribbon holds there too.
+                float lyricProgress = Math.max(0f, Math.min(1f,
+                        (sweepX - wordX0) / Math.max(0.001f, wordX1 - wordX0)));
+                float amount = -WORD_RIBBON_LIFT_PX
+                        * (float) Math.sin(Math.PI * lyricProgress) * activeK;
+                if (Math.abs(amount) <= 0.001f) continue;
+                wordLiftUniformBuf[p] = wordX0;
+                wordLiftUniformBuf[p + 1] = wordX1;
+                wordLiftUniformBuf[p + 2] = amount;
+                wordLiftUniformBuf[p + 3] = lyricProgress;
+                wordLiftCount++;
+            }
+        }
+        RuntimeEffectBuilder builder = liftBuilder();
+        builder.setUniform("segments", liftUniformBuf);
+        builder.setUniform("segmentCount", count);
+        builder.setUniform("wordLifts", wordLiftUniformBuf);
+        builder.setUniform("wordLiftCount", wordLiftCount);
+        builder.setUniform("sourceOrigin",
+                startX + row.rasterLeft, baselineY + row.rasterTop);
+        builder.setUniform("sourceScale", TEXT_SUPERSAMPLE);
+        builder.setChild("content", row.highResImageShader);
+        return builder.makeShader();
+    }
+
+    /** Every eligible display word contributes its complete shaped range to the
+     * glow layer. Word grouping never changes the independently timed base lift. */
+    private void drawWordGlows(Canvas canvas, List<Syllable> syllables, ShapedRow row,
+                               float startX, float baselineY, float ascent, float descent,
+                               long pos, float activeK, boolean glowOn, Shader liftedShader) {
+        if (!wordGlowSupported || !glowOn || row.words.length == 0) return;
+        boolean glowLayerSaved = false;
+        try {
+            for (WordSpan word : row.words) {
+                Syllable first = syllables.get(row.from + word.firstSyllable);
+                Syllable last = syllables.get(row.from + word.lastSyllable);
+                long wordEnd = last.startMs + Math.max(0L, last.durationMs);
+                long wordDuration = wordEnd - first.startMs;
+                if (wordDuration < WORD_GLOW_MIN_DURATION_MS
+                        || pos < first.startMs || pos > wordEnd) continue;
+                float wordProgress = (pos - first.startMs)
+                        / (float) Math.max(1L, wordDuration);
+                // The old glow was fill-forwards, which made every completed word
+                // accumulate until the complete line looked illuminated. Fade only
+                // in the very last 10% so the active word stays bright through its
+                // sustained note, then hands the glow to the next word smoothly.
+                float attack = smoothstep(0f, 0.18f, wordProgress);
+                float release = 1f - smoothstep(0.90f, 1f, wordProgress);
+                float alpha = activeK * attack * release * GLOW_ALPHA;
+                if (alpha <= 0.01f) continue;
+
+                if (!glowLayerSaved) {
+                    canvas.saveLayer(startX - 8f,
+                            baselineY + ascent - MAX_SHADER_LIFT_PX - 8f,
+                            startX + row.width + 8f, baselineY + descent + 8f, glowLayerPaint);
+                    glowLayerSaved = true;
+                }
+
+                // Clip the INPUT glyphs to the complete display word before the blur
+                // layer is restored. For en+dure this is one continuous HarfBuzz range.
+                float x0 = startX + Math.min(word.x0, word.x1) - 1f;
+                float x1 = startX + Math.max(word.x0, word.x1) + 1f;
+                canvas.save();
+                try {
+                    canvas.clipRect(Rect.makeLTRB(x0,
+                            baselineY + ascent - MAX_SHADER_LIFT_PX,
+                            x1, baselineY + descent + 2f));
+                    glowGlyphPaint.setShader(liftedShader);
+                    glowGlyphPaint.setAlphaf(alpha);
+                    canvas.drawRect(Rect.makeLTRB(
+                            startX + row.rasterLeft,
+                            baselineY + row.rasterTop - MAX_SHADER_LIFT_PX,
+                            startX + row.rasterLeft + row.rasterWidth,
+                            baselineY + row.rasterTop + row.rasterHeight), glowGlyphPaint);
+                } finally {
+                    glowGlyphPaint.setShader(null);
+                    canvas.restore();
+                }
+            }
+        } finally {
+            if (glowLayerSaved) canvas.restore();
+        }
+    }
+
+    private RuntimeEffect liftEffect() {
+        if (liftEffect == null) liftEffect = compileShaderResource(LIFT_SHADER_RESOURCE, "lyric lift");
+        return liftEffect;
+    }
+
+    private RuntimeEffectBuilder liftBuilder() {
+        if (liftBuilder == null) liftBuilder = new RuntimeEffectBuilder(liftEffect());
+        return liftBuilder;
+    }
+
+    private static RuntimeEffect compileShaderResource(String path, String label) {
+        try (InputStream in = LyricRenderer.class.getResourceAsStream(path)) {
+            if (in == null) throw new IOException("resource not found: " + path);
+            InputStreamReader reader = new InputStreamReader(in, StandardCharsets.UTF_8);
+            StringBuilder source = new StringBuilder(4096);
+            char[] buffer = new char[2048];
+            int read;
+            while ((read = reader.read(buffer)) >= 0) source.append(buffer, 0, read);
+            return RuntimeEffect.makeForShader(source.toString());
+        } catch (Throwable t) {
+            dev.t1m3.qplayer.util.Logger.warn("{} shader compile failed: {}", label, t.getMessage());
+            if (t instanceof RuntimeException) throw (RuntimeException) t;
+            throw new IllegalStateException("Failed to load " + label + " shader", t);
+        }
+    }
+
+    private void drawTextShadow(TextBlob blob, float x, float baselineY, float alpha) {
         textShadowPaint.setAlphaf(alpha * TEXT_SHADOW_ALPHA);
-        LyricSkia.getCanvas().drawString(text, x, baselineY + TEXT_SHADOW_OFFSET_Y,
-                font, textShadowPaint);
+        LyricSkia.getCanvas().drawTextBlob(blob, x, baselineY + TEXT_SHADOW_OFFSET_Y,
+                textShadowPaint);
     }
 
     /**

@@ -31,8 +31,8 @@ public final class LyricConfig {
     /** Active-line depth scaling (1.14× emphasis / 0.98× deselected). Off = no
      *  scaling, full-width wrap, no layout reflow. */
     public final Val<Boolean> scaleEmphasis = new Val<>(Boolean.TRUE);
-    /** White glow behind a sustained final timed word/syllable. Real per-syllable
-     * sources only; synthetic plain-LRC timing never enables it. */
+    /** White glow behind every sustained display word. Real
+     * per-syllable sources only; synthetic plain-LRC timing never enables it. */
     public final Val<Boolean> glow = new Val<>(Boolean.TRUE);
     /** Soft drop shadow behind lyric, background-vocal and sub-line glyphs. */
     public final Val<Boolean> dropShadow = new Val<>(Boolean.TRUE);
@@ -46,9 +46,9 @@ public final class LyricConfig {
     public final Val<Integer> offsetMs = new Val<>(0);
     /** Plain LRC (no real per-syllable timing) lines: true synthesizes an evenly-
      *  spaced per-character timing (spread across the line's real start/duration)
-     *  so the same sweep/lift/glow a real per-syllable source gets runs on it too,
+     *  so the same sweep/lift a real per-syllable source gets runs on it too,
      *  giving a linear front-to-back reveal. False (default) lights the whole
-     *  line up together as one block instead (still gets scaleEmphasis/glow,
+     *  line up together as one block instead (still gets scaleEmphasis,
      *  just no per-character sweep motion) — the synthetic timing is only an
      *  even split of the line's duration, so it never matches how the line is
      *  actually sung. No effect on lines that already have real per-syllable
