@@ -113,62 +113,76 @@ Rectangle {
                 }
             }
 
-            Flickable {
-                id: listView
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                clip: true
-                contentWidth: width
-                contentHeight: dialog.filtered.length * rowH
 
-                property int rowH: 44
-                property int buffer: 8
-                property int count: dialog.filtered.length
-                property int window: Math.min(count, Math.ceil(height / rowH) + 2 * buffer + 1)
-                property int first: {
-                    var f = Math.floor(contentY / rowH) - buffer;
-                    var maxFirst = count - window;
-                    if (f > maxFirst) f = maxFirst;
-                    if (f < 0) f = 0;
-                    return f;
-                }
+                Flickable {
+                    id: listView
+                    anchors.fill: parent
+                    anchors.rightMargin: fontScroll.visible ? 10 : 0
+                    clip: true
+                    contentWidth: width
+                    contentHeight: dialog.filtered.length * rowH
 
-                Item {
-                    width: listView.width
-                    height: listView.contentHeight
+                    property int rowH: 44
+                    property int buffer: 8
+                    property int count: dialog.filtered.length
+                    property int window: Math.min(count, Math.ceil(height / rowH) + 2 * buffer + 1)
+                    property int first: {
+                        var f = Math.floor(contentY / rowH) - buffer;
+                        var maxFirst = count - window;
+                        if (f > maxFirst) f = maxFirst;
+                        if (f < 0) f = 0;
+                        return f;
+                    }
 
-                    Repeater {
-                        model: dialog.filtered
-                        windowStart: listView.first
-                        windowCount: listView.window
+                    Item {
+                        width: listView.width
+                        height: listView.contentHeight
 
-                        Rectangle {
-                            width: listView.width
-                            height: listView.rowH
-                            y: index * listView.rowH
-                            radius: 8
-                            color: rowMa.pressed ? Theme.color.surfaceContainerHighest : "transparent"
+                        Repeater {
+                            model: dialog.filtered
+                            windowStart: listView.first
+                            windowCount: listView.window
 
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData || ""
-                                elide: Text.ElideRight
-                                color: settings.fontFamily() === modelData
-                                       ? Theme.color.primary : Theme.color.onSurfaceColor
-                                fontSize: 14
-                            }
+                            Rectangle {
+                                width: listView.width
+                                height: listView.rowH
+                                y: index * listView.rowH
+                                radius: 8
+                                color: rowMa.pressed ? Theme.color.surfaceContainerHighest : "transparent"
 
-                            MouseArea {
-                                id: rowMa
-                                anchors.fill: parent
-                                onClicked: { settings.setFontSelection(modelData); dialog.closed() }
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 12
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData || ""
+                                    elide: Text.ElideRight
+                                    color: settings.fontFamily() === modelData
+                                           ? Theme.color.primary : Theme.color.onSurfaceColor
+                                    fontSize: 14
+                                }
+
+                                MouseArea {
+                                    id: rowMa
+                                    anchors.fill: parent
+                                    onClicked: { settings.setFontSelection(modelData); dialog.closed() }
+                                }
                             }
                         }
                     }
+                }
+
+                ScrollBar {
+                    id: fontScroll
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    width: implicitWidth
+                    target: listView
                 }
             }
 

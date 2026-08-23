@@ -66,6 +66,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     private SettingsStore store;
     private String platform = SettingSpec.ANY;
     private PlayerController controller;
+    private volatile DirectoryPicker directoryPicker;
     private boolean systemDark;
     private boolean loaded;
 
@@ -98,6 +99,18 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
      *  after the new value is stored and persisted. */
     public void onChange(String key, Consumer<Object> handler) {
         hooks.computeIfAbsent(key, k -> new ArrayList<>()).add(handler);
+    }
+
+    /** Host hook for a platform directory chooser. The host must invoke the
+     *  supplied callback on the QML/render thread. Desktop installs this after
+     *  its window has been initialized; Android currently has no directory rows. */
+    @FunctionalInterface
+    public interface DirectoryPicker {
+        void pick(String initialPath, Consumer<String> onPicked);
+    }
+
+    public void setDirectoryPicker(DirectoryPicker picker) {
+        this.directoryPicker = picker;
     }
 
     /**
@@ -203,6 +216,18 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         if (r != null) r.run();
     }
 
+    /** Open the host directory chooser for a PATH setting. Cancelling leaves the
+     *  current value untouched. */
+    public void pickDirectory(String key) {
+        SettingSpec spec = specsByKey.get(key);
+        DirectoryPicker picker = directoryPicker;
+        if (picker == null || spec == null || !SettingSpec.PATH.equals(spec.type)) return;
+        picker.pick(str(key), selected -> {
+            if (selected == null || selected.trim().isEmpty()) return;
+            setValue(key, selected);
+        });
+    }
+
     // ---- Java API -----------------------------------------------------------
 
     public boolean bool(String key) {
@@ -294,6 +319,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
             case SettingSpec.DROPDOWN:
                 return store.getInt(spec.key, def instanceof Number ? ((Number) def).intValue() : 0);
             case SettingSpec.TEXT:
+            case SettingSpec.PATH:
                 return store.getString(spec.key, def instanceof String ? (String) def : "");
             default:
                 return null;
@@ -312,6 +338,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 store.putInt(spec.key, v instanceof Number ? ((Number) v).intValue() : 0);
                 break;
             case SettingSpec.TEXT:
+            case SettingSpec.PATH:
                 store.putString(spec.key, v instanceof String ? (String) v : "");
                 break;
             default:
@@ -339,6 +366,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 return Math.max(0, Math.min(last, v));
             }
             case SettingSpec.TEXT:
+            case SettingSpec.PATH:
                 return raw != null ? raw.toString() : "";
             default:
                 return null;

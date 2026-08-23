@@ -28,6 +28,7 @@
         <qplayer.skija.platform>linux-x64</qplayer.skija.platform>
         <log4j.version>2.25.4</log4j.version>
         <jna.version>5.14.0</jna.version>
+        <flatlaf.version>3.7.2</flatlaf.version>
         <!-- App version baked into version.properties (read by Main → the update
              check). Local dev default; the release workflow overrides it with the
              git tag (-Dqplayer.app.version=…) so release binaries match the tag
@@ -223,6 +224,16 @@
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna-platform</artifactId>
             <version>${jna.version}</version>
+        </dependency>
+
+        <!-- Cross-platform Swing file/directory dialogs with FlatMac themes.
+             Deliberately use no-natives: FlatLaf's Linux SystemFileChooser loads
+             GTK alongside GLFW and can crash the process inside libgtk-3. -->
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>${flatlaf.version}</version>
+            <classifier>no-natives</classifier>
         </dependency>
 
         <!-- Desktop audio decoders. We drive these libraries directly (no

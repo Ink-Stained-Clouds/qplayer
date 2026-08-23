@@ -28,9 +28,40 @@ Rectangle {
     property bool isPressed: scrollMouseArea.pressed
     property bool isMoving: target && target.moving
     property bool isHovered: scrollMouseArea.containsMouse
-    
+    property bool recentlyScrolled: false
+    property real observedPosition: !target ? 0
+                                    : (orientation === Qt.Vertical
+                                       ? target.contentY : target.contentX)
+
+    onObservedPositionChanged: {
+        recentlyScrolled = true
+        scrollIdleTimer.restart()
+    }
+
+    Timer {
+        id: scrollIdleTimer
+        // contentX/contentY changes arrive as separate wheel/touchpad ticks.
+        // Bridge the tiny gap between them, then hand visibility straight back
+        // to the component's original 200ms opacity transition.
+        interval: 120
+        repeat: false
+        onTriggered: scrollBarTrack.recentlyScrolled = false
+    }
+
     Behavior on implicitWidth { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
     Behavior on implicitHeight { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
+
+    // qml4j currently does not honor preventStealing when deciding whether an
+    // underlying Flickable may take over a MouseArea drag. Giving the MouseArea
+    // an inert Drag.target selects the engine's captured drag path (the same
+    // workaround used by Slider.qml), so pointer tracking continues outside the
+    // narrow visual thumb.
+    Item {
+        id: dragProxy
+        visible: false
+        x: 0
+        y: 0
+    }
 
     // Thumb Component
     Rectangle {
@@ -46,7 +77,7 @@ Rectangle {
         color: isPressed ? thumbPressedColor : thumbColor
         radius: (orientation === Qt.Vertical ? width : height) / 2
         
-        opacity: (isHovered || isPressed || isMoving) ? thumbOpacity : 0.0
+        opacity: (isHovered || isPressed || isMoving || recentlyScrolled) ? thumbOpacity : 0.0
         
         Behavior on opacity { NumberAnimation { duration: fadeDuration } }
         Behavior on color { ColorAnimation { duration: 150 } }
@@ -98,12 +129,23 @@ Rectangle {
         id: scrollMouseArea
         anchors.fill: parent
         hoverEnabled: true
+        // qml4j otherwise lets the underlying Flickable steal the pointer after
+        // a short drag, which feels as if the thumb suddenly disconnected.
+        preventStealing: true
+        drag.target: dragProxy
+        drag.axis: orientation === Qt.Vertical ? "YAxis" : "XAxis"
+        drag.minimumX: -100000
+        drag.maximumX: 100000
+        drag.minimumY: -100000
+        drag.maximumY: 100000
         
         property real pressedPos: 0
         property real initialContentPos: 0
         
         onPressed: (mouse) => {
             if (!target) return
+            dragProxy.x = 0
+            dragProxy.y = 0
             
             var mousePos = (orientation === Qt.Vertical) ? mouse.y : mouse.x
             var thumbPos = (orientation === Qt.Vertical) ? scrollBarThumb.y : scrollBarThumb.x
@@ -122,11 +164,15 @@ Rectangle {
                 if (orientation === Qt.Vertical) {
                     var newContentY = clickRatio * (target.contentHeight - target.height)
                     target.contentY = Math.max(0, Math.min(newContentY, target.contentHeight - target.height))
-                    // For simplicity, we don't start dragging immediately after jump here
+                    initialContentPos = target.contentY
                 } else {
                     var newContentX = clickRatio * (target.contentWidth - target.width)
                     target.contentX = Math.max(0, Math.min(newContentX, target.contentWidth - target.width))
+                    initialContentPos = target.contentX
                 }
+                // Continue dragging from the jumped position instead of using
+                // the default 0/0 origin on the next pointer move.
+                pressedPos = mousePos
             }
         }
         

@@ -134,6 +134,9 @@ public final class Main {
         settings.registerInfo("version", () -> "v" + controller.appVersion.peek());
         settings.registerInfo("cacheUsage", () -> controller.cacheSizeMB.peek() + " MB");
         settings.load(new JsonSettingsStore(), SettingsCatalog.DESKTOP);
+        DesktopFilePicker.initializeLookAndFeel(settings.resolvedDarkValue());
+        settings.onChange("darkMode", ignored ->
+                DesktopFilePicker.setDarkTheme(settings.resolvedDarkValue()));
 
         // Fonts for the host-drawn lyric renderer (the QML scene fonts are set on the
         // view in DesktopWindow.ensureView).
@@ -188,6 +191,18 @@ public final class Main {
         });
 
         window.init();
+
+        // Platform pickers. Android keeps its existing ACTION_GET_CONTENT cover
+        // flow; desktop uses a FlatMac-themed Swing chooser on Windows/Linux/macOS.
+        // Marshal accepted paths back to the render thread before touching QML-
+        // observable settings/controller state.
+        settings.setDirectoryPicker((initialPath, onPicked) ->
+                DesktopFilePicker.pickDirectory(initialPath,
+                        selected -> window.postRenderTask(() -> onPicked.accept(selected))));
+        controller.setCoverPicker(playlistId ->
+                DesktopFilePicker.pickImage(selected -> window.postRenderTask(() ->
+                        controller.setPlaylistCover(playlistId, selected))));
+
         // Start rendering immediately — the render thread is the core; the tray is
         // best-effort and may block on GTK init in some environments, so it must
         // never gate the window coming up.

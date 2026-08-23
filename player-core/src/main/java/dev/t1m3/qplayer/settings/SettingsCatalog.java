@@ -130,7 +130,7 @@ public final class SettingsCatalog {
         out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "边缘模糊", false)
                 .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)")
                 .build());
-        out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC, "进度条样式", 0,
+        out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC, "进度条样式", 1,
                         "波浪", "直线")
                 .build());
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
@@ -148,13 +148,13 @@ public final class SettingsCatalog {
                 .provider("cacheUsage").inlineProvider().buttonType("outlined")
                 .group("cache")
                 .build());
-        out.add(SettingSpec.text("cacheFolder", LOCAL, "缓存目录", "")
+        out.add(SettingSpec.path("cacheFolder", LOCAL, "缓存目录", "")
                 .desc("本地音乐库封面/歌词缓存与网易云缓存都存在这里；修改后不会自动搬运旧文件，会重新扫描并在新目录下重建缓存")
                 .hint("目录路径")
                 .group("cache")
                 .onlyOn(DESKTOP)
                 .build());
-        out.add(SettingSpec.text("musicFolder", LOCAL, "本地音乐目录", "")
+        out.add(SettingSpec.path("musicFolder", LOCAL, "本地音乐目录", "")
                 .desc("修改后将自动重新扫描该目录中的音乐文件")
                 .hint("目录路径")
                 .onlyOn(DESKTOP)

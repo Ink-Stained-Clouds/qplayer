@@ -4,8 +4,8 @@ import md3.Core
 import "."
 
 // SettingSpec.TEXT — a string, committed on Enter or via 应用 (never per
-// keystroke: these are URLs, JSON paths and directory paths, and every write
-// rebuilds the custom-API config / rescans a folder).
+// keystroke: these are URLs and JSON paths, and every write rebuilds the
+// custom-API config).
 ColumnLayout {
     id: row
     property var spec: null

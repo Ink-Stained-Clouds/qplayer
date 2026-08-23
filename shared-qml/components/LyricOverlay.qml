@@ -54,7 +54,7 @@ Item {
     // --- portrait: big centred cover for no-lyric / instrumental tracks. It zooms +
     // fades in/out on the lyrics↔cover switch (SPlayer's zoom transition) — no big/small
     // morph, title/artist stay put. Landscape has its own cover in the left chrome.
-    CoverImage {
+    PlaybackCoverImage {
         id: pCover
         // Big centred art for no-lyric / instrumental tracks. On the lyrics↔cover switch
         // it ZOOMS + FADES (SPlayer's zoom transition) — no big/small morph. Kept
@@ -68,6 +68,7 @@ Item {
         radius: Math.min(width, height) * 0.06
         iconSize: 72
         fadeIn: true
+        playing: player.playing
         layer.enabled: visible
         layer.effect: MultiEffect {
             shadowEnabled: true
@@ -85,9 +86,9 @@ Item {
         // content zoom): cover grows in as the lyrics shrink out, and vice versa.
         property bool shown: overlay.coverOnly && player.lyricSlide > 0.25
         opacity: shown ? 1 : 0
-        scale: shown ? 1 : 0.95
+        baseScale: shown ? 1 : 0.95
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+        Behavior on baseScale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
 
         // Tap the cover to switch back to lyrics. A no-op when lyricsCoverOnly (no
         // lyrics for this track) is what's actually forcing cover view — there's
@@ -451,7 +452,7 @@ Item {
             anchors.horizontalCenter: parent.left
             anchors.horizontalCenterOffset: landscapeChrome.centerX
 
-            CoverImage {
+            PlaybackCoverImage {
                 id: lCover
                 anchors.top: parent.top
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -460,6 +461,7 @@ Item {
                 radius: Math.min(width, height) * 0.06
                 iconSize: 64
                 fadeIn: true
+                playing: player.playing
                 source: player.coverPath
                 layer.enabled: visible
                 layer.effect: MultiEffect {

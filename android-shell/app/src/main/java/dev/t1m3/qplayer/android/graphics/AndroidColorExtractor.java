@@ -20,23 +20,39 @@ public final class AndroidColorExtractor implements ColorExtractor {
     @Override
     public String dominantHex(byte[] imageBytes) {
         if (imageBytes == null || imageBytes.length == 0) return null;
+
+        // Decode close to the 32px analysis size instead of materializing the
+        // complete 512/1024px cover first. On Android the old full decode was the
+        // dominant cost (and briefly allocated several MB) even though all but
+        // 1024 output pixels were immediately discarded.
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, bounds);
+        int sampleSize = 1;
+        while (bounds.outWidth / (sampleSize * 2) >= SAMPLE
+                && bounds.outHeight / (sampleSize * 2) >= SAMPLE) {
+            sampleSize *= 2;
+        }
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        opts.inSampleSize = sampleSize;
         Bitmap src = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, opts);
         if (src == null) return null;
-        Bitmap small = Bitmap.createScaledBitmap(src, SAMPLE, SAMPLE, true);
+        Bitmap small = src.getWidth() == SAMPLE && src.getHeight() == SAMPLE
+                ? src : Bitmap.createScaledBitmap(src, SAMPLE, SAMPLE, true);
 
-        double[] binWeight = new double[HUE_BINS];
-        double[] binR = new double[HUE_BINS];
-        double[] binG = new double[HUE_BINS];
-        double[] binB = new double[HUE_BINS];
-        double avgR = 0, avgG = 0, avgB = 0;
-        int avgN = 0;
+        try {
+            double[] binWeight = new double[HUE_BINS];
+            double[] binR = new double[HUE_BINS];
+            double[] binG = new double[HUE_BINS];
+            double[] binB = new double[HUE_BINS];
+            double avgR = 0, avgG = 0, avgB = 0;
+            int avgN = 0;
 
-        float[] hsv = new float[3];
-        for (int y = 0; y < SAMPLE; y++) {
-            for (int x = 0; x < SAMPLE; x++) {
-                int p = small.getPixel(x, y);
+            int[] pixels = new int[SAMPLE * SAMPLE];
+            small.getPixels(pixels, 0, SAMPLE, 0, 0, SAMPLE, SAMPLE);
+            float[] hsv = new float[3];
+            for (int p : pixels) {
                 int r = Color.red(p), g = Color.green(p), b = Color.blue(p);
                 avgR += r; avgG += g; avgB += b; avgN++;
                 Color.colorToHSV(p, hsv);
@@ -47,18 +63,21 @@ public final class AndroidColorExtractor implements ColorExtractor {
                 binWeight[bin] += w;
                 binR[bin] += r * w; binG[bin] += g * w; binB[bin] += b * w;
             }
-        }
 
-        int best = -1;
-        for (int i = 0; i < HUE_BINS; i++) {
-            if (best < 0 || binWeight[i] > binWeight[best]) best = i;
+            int best = -1;
+            for (int i = 0; i < HUE_BINS; i++) {
+                if (best < 0 || binWeight[i] > binWeight[best]) best = i;
+            }
+            if (best >= 0 && binWeight[best] > 0) {
+                double w = binWeight[best];
+                return hex((int) (binR[best] / w), (int) (binG[best] / w), (int) (binB[best] / w));
+            }
+            if (avgN == 0) return null;
+            return hex((int) (avgR / avgN), (int) (avgG / avgN), (int) (avgB / avgN));
+        } finally {
+            if (small != src) small.recycle();
+            src.recycle();
         }
-        if (best >= 0 && binWeight[best] > 0) {
-            double w = binWeight[best];
-            return hex((int) (binR[best] / w), (int) (binG[best] / w), (int) (binB[best] / w));
-        }
-        if (avgN == 0) return null;
-        return hex((int) (avgR / avgN), (int) (avgG / avgN), (int) (avgB / avgN));
     }
 
     private static String hex(int r, int g, int b) {

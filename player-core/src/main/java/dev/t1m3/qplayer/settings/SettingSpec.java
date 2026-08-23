@@ -22,6 +22,7 @@ public final class SettingSpec {
     public static final String STEPPER = "stepper";      // int with -/+ buttons
     public static final String SEGMENTED = "segmented";  // int index over `options`
     public static final String TEXT = "text";            // string + 应用 button
+    public static final String PATH = "path";            // string chosen by the host directory picker
     public static final String RADIO = "radio";          // int index as radio buttons
     public static final String DROPDOWN = "dropdown";    // int index in a combo box
     public static final String ACTION = "action";        // button/icon, no stored value
@@ -42,7 +43,7 @@ public final class SettingSpec {
     public final String desc;
     /** Initial value for {@link #SWITCH} (Boolean), {@link #STEPPER}/
      *  {@link #SEGMENTED}/{@link #RADIO}/{@link #DROPDOWN} (Integer) and
-     *  {@link #TEXT} (String); null for the
+     *  {@link #TEXT}/{@link #PATH} (String); null for the
      *  valueless row types. A null default here means "ask the host at load
      *  time" — see {@link SettingsCore#defaultOverride}. */
     public final Object def;
@@ -123,7 +124,8 @@ public final class SettingSpec {
      *  a read-only line). */
     public boolean hasValue() {
         return SWITCH.equals(type) || STEPPER.equals(type)
-                || SEGMENTED.equals(type) || TEXT.equals(type) || RADIO.equals(type)
+                || SEGMENTED.equals(type) || TEXT.equals(type) || PATH.equals(type)
+                || RADIO.equals(type)
                 || DROPDOWN.equals(type);
     }
 
@@ -158,6 +160,10 @@ public final class SettingSpec {
 
     public static Builder text(String key, String category, String title, String def) {
         return new Builder(key, TEXT, category, title).def(def);
+    }
+
+    public static Builder path(String key, String category, String title, String def) {
+        return new Builder(key, PATH, category, title).def(def);
     }
 
     public static Builder action(String action, String category, String title, String button) {

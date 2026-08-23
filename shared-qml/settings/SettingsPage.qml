@@ -183,6 +183,7 @@ Rectangle {
                                                    : modelData.type === "radio" ? radioRow
                                                    : modelData.type === "dropdown" ? dropdownRow
                                                    : modelData.type === "text" ? textRow
+                                                   : modelData.type === "path" ? pathRow
                                                    : actionRow
                                 }
                             }
@@ -214,6 +215,7 @@ Rectangle {
                                                    : modelData.type === "radio" ? radioRow
                                                    : modelData.type === "dropdown" ? dropdownRow
                                                    : modelData.type === "text" ? textRow
+                                                   : modelData.type === "path" ? pathRow
                                                    : actionRow
                                 }
                             }
@@ -231,6 +233,7 @@ Rectangle {
                 Component { id: radioRow; SettingRadioRow { spec: rowSpec } }
                 Component { id: dropdownRow; SettingDropdownRow { spec: rowSpec } }
                 Component { id: textRow; SettingTextRow { spec: rowSpec } }
+                Component { id: pathRow; SettingPathRow { spec: rowSpec } }
                 Component { id: actionRow; SettingActionRow { spec: rowSpec } }
             }
         }

@@ -151,6 +151,23 @@ public final class PlayerController {
         t.setDaemon(true);
         return t;
     });
+    // Monet must never wait behind the general network queue: on Android in
+    // particular, the QML Image can already be showing its 512px cover while a
+    // seed extraction submitted to `worker` is still behind unrelated requests.
+    // Keep thumbnail I/O and bitmap decoding separate so even a slow 128px CDN
+    // request cannot delay extraction from cover bytes that become available.
+    private final ExecutorService monetFetchWorker = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
+                Thread t = new Thread(r, "qplayer-monet-fetch");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ExecutorService monetWorker = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
+                Thread t = new Thread(r, "qplayer-monet");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.DiscardOldestPolicy());
 
     /** Unified disk cache (audio / lyrics / images) with LRU eviction. */
     public final DiskCache diskCache = new DiskCache(200); // default 200 MB
@@ -342,6 +359,12 @@ public final class PlayerController {
     private long lastPositionPush;
     /** Monotonic marker used by the host lyric renderer to identify explicit seeks. */
     private final AtomicLong seekRevision = new AtomicLong();
+    /** Invalidates asynchronous cover/Monet work after every track change. */
+    private final AtomicLong coverRevision = new AtomicLong();
+    /** Render-thread-only ordering: the full cover may refine a thumbnail seed,
+     *  but a late thumbnail must never overwrite the full-cover result. */
+    private long appliedSeedRevision = -1L;
+    private int appliedSeedQuality = -1;
     private long lastLogVersion = -1;
     private volatile boolean logVisible = false;
 
@@ -591,6 +614,18 @@ public final class PlayerController {
     /** Platform color extractor for Monet seeds; set once at startup. */
     public void setColorExtractor(ColorExtractor extractor) {
         this.colorExtractor = extractor;
+        if (extractor == null) return;
+
+        // Hosts install the platform extractor immediately after constructing the
+        // controller, while loadQueue() runs from the constructor. Do not miss a
+        // restored cover merely because it was read before this hook was installed.
+        long revision = coverRevision.get();
+        byte[] currentBytes = coverBytes.peek();
+        if (currentBytes != null && currentBytes.length > 0) {
+            scheduleSeedExtraction(currentBytes, revision, 1);
+        } else {
+            scheduleFastMonet(currentTrack(), revision);
+        }
     }
 
     /** Platform clipboard sink (copies text to the system clipboard), set at startup.
@@ -1695,6 +1730,7 @@ public final class PlayerController {
         scrobbleOutgoingTrack(pendingNaturalEnd);
         pendingNaturalEnd = false;
         playIndex = i;
+        final long currentCoverRevision = coverRevision.incrementAndGet();
         // Consumed unconditionally on every call (see field comment), so a saved
         // session position only ever gets one shot at applying, and only to the
         // exact slot it was saved for.
@@ -1720,7 +1756,7 @@ public final class PlayerController {
         post(() -> {
             loading.set(true);
             applyLyrics(Collections.<LyricLine>emptyList());
-            applyCover(null);
+            applyCover(null, currentCoverRevision);
             coverPath.set("");
         });
         worker.submit(this::saveQueue);
@@ -1739,7 +1775,7 @@ public final class PlayerController {
             currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
             currentLikeable.set(t.neteaseId != 0);
         });
-        updateCover(t, i);
+        updateCover(t, i, currentCoverRevision);
 
         if (t.source == Track.Source.LOCAL) {
             String src = t.playable();
@@ -1779,7 +1815,7 @@ public final class PlayerController {
                 // Populate the disk cache so the next play is local (skip trial clips).
                 cacheAudioAsync(t);
             } else {
-                resolveAndPlayNetease(t, i, resumeMs);
+                resolveAndPlayNetease(t, i, resumeMs, currentCoverRevision);
             }
         } else if (t.source == Track.Source.CUSTOM_API) {
             if (t.streamUrl != null) {
@@ -1792,7 +1828,7 @@ public final class PlayerController {
                 // here too — mirrors loadNeteaseLyrics's cached-audio fast path above.
                 loadCustomLyrics(t, i);
             } else {
-                resolveAndPlayCustom(t, i, resumeMs);
+                resolveAndPlayCustom(t, i, resumeMs, currentCoverRevision);
             }
         }
         // Current track's fetches are now queued; warm next/prev behind them.
@@ -1802,11 +1838,11 @@ public final class PlayerController {
     /** Feed coverBytes for the fluid backdrop: local tracks carry embedded
      *  bytes; NETEASE tracks download lazily off-thread, keyed by queue index
      *  so a stale fetch for a skipped-past track is dropped. */
-    private void updateCover(Track t, int expectedIndex) {
+    private void updateCover(Track t, int expectedIndex, long revision) {
         if (t.coverBytes != null) {   // present (embedded, or preloaded by preloadTrack)
             final byte[] cb = t.coverBytes;
             final String path = coverDiskPath(t);   // local file for the QML cover image
-            post(() -> { if (playIndex == expectedIndex) { applyCover(cb); coverPath.set(path); } });
+            post(() -> { if (playIndex == expectedIndex) { applyCover(cb, revision); coverPath.set(path); } });
             notifyPlayback();
             return;
         }
@@ -1831,12 +1867,26 @@ public final class PlayerController {
                 // backgrounded, so a background track-switch would otherwise show stale art.
                 t.coverBytes = data;
                 final String path = localCover;
-                post(() -> { applyCover(data); coverPath.set(path); });
+                post(() -> {
+                    if (playIndex == expectedIndex) {
+                        applyCover(data, revision);
+                        coverPath.set(path);
+                    }
+                });
                 notifyPlayback();
                 return;
             }
         }
-        post(() -> { applyCover(null); coverPath.set(""); });
+        // A 128px netease thumbnail is enough for the 32px color histogram and
+        // usually arrives well before the 1024px lyric/background copy below.
+        // Its lower-quality seed is replaced (never overwritten) by the full one.
+        scheduleFastMonet(t, revision);
+        post(() -> {
+            if (playIndex == expectedIndex) {
+                applyCover(null, revision);
+                coverPath.set("");
+            }
+        });
         if (t.coverUrl == null || t.coverUrl.isEmpty()) return;
         // The original (netease covers are commonly 1000-3000px+) was being fetched
         // uncapped for the fluid lyric backdrop -- on a slow connection that routinely
@@ -1854,7 +1904,7 @@ public final class PlayerController {
             if (data != null && data.length > 0) {
                 t.coverBytes = data;
                 final String path = cachedImg;
-                post(() -> { if (playIndex == expectedIndex) { applyCover(data); coverPath.set(path); } });
+                post(() -> { if (playIndex == expectedIndex) { applyCover(data, revision); coverPath.set(path); } });
                 notifyPlayback();
                 return;
             }
@@ -1870,7 +1920,7 @@ public final class PlayerController {
             final String path = imgPath;
             post(() -> {
                 if (playIndex == expectedIndex) {
-                    applyCover(data);
+                    applyCover(data, revision);
                     if (path != null) coverPath.set(path);
                 }
             });
@@ -1878,24 +1928,75 @@ public final class PlayerController {
         });
     }
 
-    /** Push cover bytes (render thread) and kick off Monet seed extraction off it. */
-    private void applyCover(byte[] data) {
+    /** Push cover bytes (render thread) and kick off Monet seed extraction on its
+     *  own bounded executor, never the general network queue. */
+    private void applyCover(byte[] data, long revision) {
+        if (coverRevision.get() != revision) return;
         coverBytes.set(data);
-        final ColorExtractor ex = colorExtractor;
-        if (ex == null) return;
         // No cover yet (a netease track's art is still downloading): keep the previous
         // seed so the theme doesn't flash back to the default purple between songs. The
         // new cover's seed replaces it directly once extracted.
         if (data == null) return;
-        worker.submit(() -> {
-            // Cover bytes are untrusted (downloaded); a bad image must not kill the worker.
+        scheduleSeedExtraction(data, revision, 1);
+    }
+
+    /** Fetch a tiny current-track cover independently of the 1024px backdrop.
+     *  Netease supports CDN resize parameters; other sources keep using their full
+     *  cover path to avoid assuming an unsupported URL format. */
+    private void scheduleFastMonet(Track t, long revision) {
+        final ColorExtractor ex = colorExtractor;
+        if (ex == null || t == null) return;
+        String localThumb = t.coverThumbPath;
+        if (localThumb != null && !localThumb.isEmpty()
+                && !localThumb.startsWith("http://") && !localThumb.startsWith("https://")) {
+            final String path = localThumb;
+            monetFetchWorker.execute(() -> {
+                if (coverRevision.get() != revision) return;
+                byte[] data = readBytesFromFile(path);
+                if (data != null && data.length > 0) scheduleSeedExtraction(data, revision, 0);
+            });
+            return;
+        }
+        if (t.source != Track.Source.NETEASE || t.coverUrl == null || t.coverUrl.isEmpty()) return;
+        final String url = thumbUrl(t.coverUrl, "128");
+        monetFetchWorker.execute(() -> {
+            if (coverRevision.get() != revision) return;
+            byte[] data = null;
+            String cached = diskCache.getImage(url);
+            if (cached != null) data = readBytesFromFile(cached);
+            if (data == null || data.length == 0) {
+                data = downloadBytes(url, 3000);
+                if (data != null) {
+                    String path = diskCache.imagePath(url);
+                    if (path != null) writeBytesToFile(data, path);
+                }
+            }
+            if (data != null && data.length > 0 && coverRevision.get() == revision) {
+                scheduleSeedExtraction(data, revision, 0);
+            }
+        });
+    }
+
+    private void scheduleSeedExtraction(byte[] data, long revision, int quality) {
+        final ColorExtractor ex = colorExtractor;
+        if (ex == null || data == null || data.length == 0) return;
+        monetWorker.execute(() -> {
+            if (coverRevision.get() != revision) return;
             String hex;
             try {
                 hex = ex.dominantHex(data);
-            } catch (Throwable e) {
+            } catch (Throwable ignored) {
                 return;
             }
-            if (hex != null) post(() -> { coverSeed.set(hex); reapplySeed(); });
+            if (hex == null || coverRevision.get() != revision) return;
+            post(() -> {
+                if (coverRevision.get() != revision) return;
+                if (appliedSeedRevision == revision && quality < appliedSeedQuality) return;
+                appliedSeedRevision = revision;
+                appliedSeedQuality = quality;
+                coverSeed.set(hex);
+                reapplySeed();
+            });
         });
     }
 
@@ -2031,11 +2132,15 @@ public final class PlayerController {
     }
 
     private static byte[] downloadBytes(String url) {
+        return downloadBytes(url, 8000);
+    }
+
+    private static byte[] downloadBytes(String url, int timeoutMs) {
         java.net.HttpURLConnection c = null;
         try {
             c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-            c.setConnectTimeout(8000);
-            c.setReadTimeout(8000);
+            c.setConnectTimeout(timeoutMs);
+            c.setReadTimeout(timeoutMs);
             c.setRequestProperty("User-Agent", "qplayer/1.0");
             try (java.io.InputStream in = c.getInputStream();
                  java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
@@ -2505,7 +2610,8 @@ public final class PlayerController {
         cacheWorker.submit(() -> diskCache.cacheThumb64(thumb));
     }
 
-    private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs) {
+    private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs,
+                                       long expectedCoverRevision) {
         long songId = t.neteaseId;
         // Per-stage timing, surfaced via the in-app debug log panel: measured resolve
         // itself at well under a second per switch (queue wait, songDetail,
@@ -2581,7 +2687,7 @@ public final class PlayerController {
                         coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
                         durationMs.set(t.durationMs);
                     });
-                    updateCover(t, expectedIndex);
+                    updateCover(t, expectedIndex, expectedCoverRevision);
                     loadNeteaseLyrics(t, expectedIndex);
                     Logger.info("play netease: {} — {}", t.title, playUrl);
                     backend.play(playUrl, resumeMs);
@@ -2603,7 +2709,8 @@ public final class PlayerController {
      *  custom-API track doesn't have) — deliberate MVP scope, not an oversight.
      *  Lyrics ARE fetched (see {@link #loadCustomLyrics}), but only when the user
      *  configured a lyric endpoint. */
-    private void resolveAndPlayCustom(Track t, int expectedIndex, long resumeMs) {
+    private void resolveAndPlayCustom(Track t, int expectedIndex, long resumeMs,
+                                      long expectedCoverRevision) {
         String id = t.customId;
         CustomApiConfig cfg = customApiConfig;
         customWorker.submit(() -> {
@@ -2624,7 +2731,7 @@ public final class PlayerController {
                         coverUrl.set(orEmpty(t.coverUrl));
                         durationMs.set(t.durationMs);
                     });
-                    updateCover(t, expectedIndex);
+                    updateCover(t, expectedIndex, expectedCoverRevision);
                     loadCustomLyrics(t, expectedIndex);
                     Logger.info("play custom-api: {} — {}", t.title, url);
                     backend.play(url, resumeMs);
@@ -2877,6 +2984,7 @@ public final class PlayerController {
                 final List<Track> snap = new ArrayList<>(loaded);
                 int idx = Math.max(0, Math.min(savedIdx, loaded.size() - 1));
                 playIndex = idx;
+                long restoredCoverRevision = coverRevision.incrementAndGet();
                 needsReplay = true;
                 long clampedPos = Math.max(0L, savedPos);
                 stoppedLyricPositionMs = clampedPos;
@@ -2902,7 +3010,7 @@ public final class PlayerController {
                 // Load the full cover art + lyrics now (both cache-first internally)
                 // instead of waiting for the user to press play — playAt() normally
                 // does this, but playAt() itself isn't called until then.
-                updateCover(cur, idx);
+                updateCover(cur, idx, restoredCoverRevision);
                 if (cur.source == Track.Source.LOCAL) {
                     loadLocalLyrics(cur);
                 } else if (cur.source == Track.Source.NETEASE) {
@@ -3267,7 +3375,7 @@ public final class PlayerController {
             Logger.warn("playback error on netease track {}, clearing stale url and retrying at {}ms",
                     t.neteaseId, resumeMs);
             t.streamUrl = null;
-            resolveAndPlayNetease(t, idx, resumeMs);
+            resolveAndPlayNetease(t, idx, resumeMs, coverRevision.get());
             return;
         }
         skipUnplayable(playIndex, "音频加载失败");
@@ -3696,8 +3804,7 @@ public final class PlayerController {
         }
     }
 
-    /** Host hook to launch a native image picker for a playlist cover (Android only —
-     *  desktop instead types a local path into the QML dialog). */
+    /** Host hook to launch the platform image picker for a playlist cover. */
     public interface CoverPicker {
         void pick(long playlistId);
     }
@@ -3708,9 +3815,9 @@ public final class PlayerController {
         this.coverPicker = p;
     }
 
-    /** QML calls this on Android to launch the native gallery picker; the host reads
-     *  the picked image's bytes and calls {@link #setPlaylistCoverBytes}. No-op when
-     *  no picker is registered (desktop). */
+    /** QML calls this to launch the platform picker. Android reads the picked image's
+     *  bytes and calls {@link #setPlaylistCoverBytes}; desktop passes the selected
+     *  local path to {@link #setPlaylistCover}. */
     public void pickPlaylistCover(long playlistId) {
         CoverPicker p = coverPicker;
         if (p != null) onMain(() -> p.pick(playlistId));
@@ -4050,6 +4157,8 @@ public final class PlayerController {
         cacheWorker.shutdownNow();
         lyricWorker.shutdownNow();
         retryWorker.shutdownNow();
+        monetFetchWorker.shutdownNow();
+        monetWorker.shutdownNow();
     }
 
     // --- Disk cache management (called from QML settings page) -------------

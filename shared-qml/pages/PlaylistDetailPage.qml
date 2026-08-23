@@ -55,23 +55,15 @@ Rectangle {
                 contentColor: player.playlistSubscribed ? Theme.color.primary : Theme.color.onSurfaceColor
                 onClicked: player.togglePlaylistSubscribe()
             }
-            // Change cover — own playlists only, its own top-right button (the header
-            // no longer shows a cover thumbnail). Android opens a native gallery
-            // picker; desktop has none, so it opens the path-entry dialog instead
-            // (same musicFolder platform check used elsewhere).
+            // Change cover — own playlists only. Both hosts install the same picker
+            // callback: Android keeps its system gallery picker, while desktop opens
+            // a cross-platform image file chooser.
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
                 visible: player.loggedIn && !player.playlistLoading && player.playlistOwned
                 icon: "image"
-                onClicked: {
-                    if (!settings.has("musicFolder")) {
-                        player.pickPlaylistCover(player.openPlaylistId)
-                    } else {
-                        coverPathField.text = ""
-                        coverDialog.open()
-                    }
-                }
+                onClicked: player.pickPlaylistCover(player.openPlaylistId)
             }
             // Delete — only your own playlists, and never the "我喜欢的音乐" default
             // (the first playlist, which can't be removed). Confirms first.
@@ -130,64 +122,4 @@ Rectangle {
         }
     }
 
-    // Custom cover, desktop path: paste/type a local image path (same convention
-    // as the "本地音乐目录"/"缓存目录" settings — no native file picker on desktop)
-    // and preview it before applying. Android instead uses a native gallery picker
-    // (see the cover thumbnail's MouseArea above) and skips this dialog entirely.
-    // Netease re-encodes/resizes on its end, so no local validation beyond "does
-    // something decode".
-    Dialog {
-        id: coverDialog
-        icon: "image"
-        title: "更换歌单封面"
-        acceptText: "应用"
-        rejectText: "取消"
-        showAcceptButton: coverPathField.text.trim() !== ""
-        onAccepted: player.setPlaylistCover(player.openPlaylistId, coverPathField.text)
-
-        ColumnLayout {
-            width: parent.width
-            spacing: 12
-
-            // Plain letterboxed Image, not CoverImage's PreserveAspectCrop: qml4j
-            // mis-scales/crops non-square local sources (confirmed — a wide photo
-            // stretched past the box on the right instead of being cropped square).
-            // PreserveAspectFit only needs a uniform scale-to-fit, no source-rect
-            // crop math, so it doesn't hit that bug; clip guards any overflow anyway.
-            Rectangle {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: 160
-                Layout.preferredHeight: 160
-                radius: 12
-                color: Theme.color.surfaceContainerHighest
-                clip: true
-
-                Image {
-                    anchors.fill: parent
-                    source: coverPathField.text.trim()
-                    fillMode: "PreserveAspectFit"
-                }
-            }
-            TextField {
-                id: coverPathField
-                Layout.fillWidth: true
-                type: "outlined"
-                label: "图片文件路径"
-                onAccepted: { coverDialog.accepted(); coverDialog.close() }
-            }
-            // The TextField's own TextInput doesn't scroll to keep the caret visible
-            // past its width (qml4j gap, same family as the missing Delete-key
-            // support), so a long path silently hides whatever you just typed at the
-            // end. Mirror the live value here, wrapped, so it's always fully visible.
-            Text {
-                Layout.fillWidth: true
-                visible: coverPathField.text.length > 0
-                text: coverPathField.text
-                wrapMode: Text.WrapAnywhere
-                color: Theme.color.onSurfaceVariantColor
-                font.family: Theme.typography.bodySmall.family
-                font.pixelSize: Theme.typography.bodySmall.size
-            }
-        }
-    }
 }
