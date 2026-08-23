@@ -1,8 +1,17 @@
 /*
- * Direct Java/Skia port of @applemusic-like-lyrics/core 0.5.1's
- * mesh-renderer control-point and Bicubic Hermite Patch Mesh algorithms.
- * Upstream copyright belongs to the AMLL contributors.
  * SPDX-License-Identifier: AGPL-3.0-only
+ * Copyright (c) 2022-2024 AMLL Contributors
+ *
+ * Java/Skia port of AMLL Core's Mesh Gradient renderer, control-point
+ * presets/generator and Bicubic Hermite Patch Mesh implementation.
+ *
+ * QPlayer modifications (2026):
+ * - C++/Qt Quick Scene Graph -> Java 21 + Skija drawVertices
+ * - Qt shader resources -> SkSL RuntimeEffect resources
+ * - Uses 24 subdivisions and retains AMLL's preset/random selection behavior
+ *
+ * Source: https://github.com/amll-dev/applemusic-like-lyrics
+ * License: GNU Affero General Public License v3.0 only.
  */
 package dev.t1m3.qplayer.lyric.skia;
 
@@ -16,12 +25,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
-final class SPlayerMesh {
-    private static final int SUBDIVISIONS = 50;
-    private static final String PRESETS_RESOURCE = "/shaders/fluid/splayer_mesh_presets.txt";
+final class AMLLMeshGradient {
+    private static final int SUBDIVISIONS = 24;
+    private static final String PRESETS_RESOURCE =
+            "/shaders/fluid/meshgradient_presets.txt";
     private static volatile List<Preset> presets;
 
-    private SPlayerMesh() {}
+    private AMLLMeshGradient() {}
 
     static final class Data {
         final float[] normalizedPoints;
@@ -224,7 +234,7 @@ final class SPlayerMesh {
     private static List<Preset> presets() {
         List<Preset> result = presets;
         if (result != null) return result;
-        synchronized (SPlayerMesh.class) {
+        synchronized (AMLLMeshGradient.class) {
             if (presets == null) presets = Collections.unmodifiableList(loadPresets());
             return presets;
         }
@@ -232,7 +242,7 @@ final class SPlayerMesh {
 
     private static List<Preset> loadPresets() {
         List<Preset> result = new ArrayList<>();
-        try (InputStream in = SPlayerMesh.class.getResourceAsStream(PRESETS_RESOURCE)) {
+        try (InputStream in = AMLLMeshGradient.class.getResourceAsStream(PRESETS_RESOURCE)) {
             if (in == null) throw new IOException("resource not found: " + PRESETS_RESOURCE);
             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
             String line;
@@ -259,9 +269,11 @@ final class SPlayerMesh {
             }
             if (points != null) result.add(new Preset(width, height, points));
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to load SPlayer mesh presets", e);
+            throw new IllegalStateException("Failed to load AMLL mesh gradient presets", e);
         }
-        if (result.isEmpty()) throw new IllegalStateException("No SPlayer mesh presets loaded");
+        if (result.isEmpty()) {
+            throw new IllegalStateException("No AMLL mesh gradient presets loaded");
+        }
         return result;
     }
 

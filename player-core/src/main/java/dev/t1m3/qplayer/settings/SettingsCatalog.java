@@ -44,7 +44,7 @@ public final class SettingsCatalog {
      *  can still use the existing battery-saving static cache. */
     public static final String BG_STYLE_KEY = "lyricBgStyle";
     public static final int BG_STYLE_AMLL_S = 0;
-    public static final int BG_STYLE_SPLAYER = 1;
+    public static final int BG_STYLE_FLUID = 1;
     public static final int BG_STYLE_CLASSIC = 2;
 
     // Dark-mode row values (the segmented control's indices).
@@ -137,7 +137,7 @@ public final class SettingsCatalog {
                 .desc("动态流动 / 静态(渲染一次,更省电)")
                 .build());
         out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_AMLL_S,
-                        "Slik", "Fluid", "Classic")
+                        "Slik", "Mesh Gradient", "Classic")
                 .desc("切换歌词页的流体背景算法")
                 .build());
         // ---- 本地 -----------------------------------------------------------
