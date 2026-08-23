@@ -471,9 +471,16 @@ public class PlayerControllerPlaybackTest {
     }
 
     private static final class FakeAudioBackend implements AudioBackend {
-        int playCalls;
-        int pauseCalls;
-        int resumeCalls;
+        // volatile: written on the fade-tick worker thread, read from the test
+        // thread. playCalls/pauseCalls/resumeCalls used to be plain ints -- a
+        // volatile write to `volume` earlier in the same tick (see
+        // applyEffectiveVolume) gives no JMM guarantee that a later plain write on
+        // that same thread (this pauseCalls++) is visible yet, so a test polling
+        // only `volume` via waitForVolume could observe silence before the
+        // deferred pause() had actually landed.
+        volatile int playCalls;
+        volatile int pauseCalls;
+        volatile int resumeCalls;
         volatile boolean playing;
         long position;
         Runnable onStarted;
