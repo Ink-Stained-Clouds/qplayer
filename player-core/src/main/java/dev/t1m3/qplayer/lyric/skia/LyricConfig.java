@@ -31,10 +31,13 @@ public final class LyricConfig {
     /** Active-line depth scaling (1.14× emphasis / 0.98× deselected). Off = no
      *  scaling, full-width wrap, no layout reflow. */
     public final Val<Boolean> scaleEmphasis = new Val<>(Boolean.TRUE);
-    /** White glow behind every sustained display word. Real
-     * per-syllable sources only; synthetic plain-LRC timing never enables it. */
+    /** White glow behind every display word. Real per-syllable sources only;
+     * synthetic plain-LRC timing never enables it. While {@link #dropShadow} is
+     * on, only words held at least 1.5s glow; with it off, every word does,
+     * regardless of duration. */
     public final Val<Boolean> glow = new Val<>(Boolean.TRUE);
-    /** Soft drop shadow behind lyric, background-vocal and sub-line glyphs. */
+    /** Soft drop shadow behind lyric, background-vocal and sub-line glyphs. Also
+     * gates {@link #glow}'s 1.5s minimum sustain duration -- see its doc. */
     public final Val<Boolean> dropShadow = new Val<>(Boolean.TRUE);
     /** Apple-Music depth of field: blur lyric lines progressively toward the edges
      *  (the focused line stays sharp). Off by default — it adds a per-line blur layer. */

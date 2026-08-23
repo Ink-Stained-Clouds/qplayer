@@ -119,7 +119,8 @@ public final class SettingsCatalog {
                 .desc("当前行放大、其余行略缩")
                 .build());
         out.add(SettingSpec.toggle("lyricGlow", LYRIC, "单词发光", true)
-                .desc("仅逐字歌词：单词持续至少1.5秒时显示白色辉光和飘带上浮(较耗电)")
+                .desc("仅逐字歌词：唱到的单词显示白色辉光和飘带上浮(较耗电)。"
+                        + "歌词阴影开启时仅持续1.5秒以上的单词发光，关闭时所有单词都发光")
                 .build());
         out.add(SettingSpec.toggle("lyricShadow", LYRIC, "歌词阴影", true)
                 .desc("为歌词、背景声部和翻译添加柔和投影")

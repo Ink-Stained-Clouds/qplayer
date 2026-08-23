@@ -248,6 +248,9 @@ public class LyricRenderer {
     private static final double LIFT_ZETA = 0.935414;    // 7 / (2·√14)
     // Peak opacity of the white glow behind a sustained timed display word.
     private static final float GLOW_ALPHA = 0.55f;
+    // Only gates the glow/ribbon-lift when dropShadow is on (see shadowOn plumbing
+    // below) -- with the shadow off, every display word glows regardless of how
+    // long it's held.
     private static final long WORD_GLOW_MIN_DURATION_MS = 1500L;
     private static final float WORD_RIBBON_LIFT_PX = 2f;
     private static final float MAX_SHADER_LIFT_PX = LIFT_PEAK_PX + WORD_RIBBON_LIFT_PX;
@@ -2834,7 +2837,7 @@ public class LyricRenderer {
         try {
             ensureHighResRaster(row, ascent, descent, shadowOn);
             long liftedShader = makeLiftShader(row, startX, baselineY, rowRightX, n,
-                    syllables, pos, sweepX, activeK, glowOn);
+                    syllables, pos, sweepX, activeK, glowOn, shadowOn);
             try {
                 Paint textPaint = LyricSkia.scratchPaint();
                 setShader(textPaint, liftedShader);
@@ -2858,7 +2861,7 @@ public class LyricRenderer {
                     applySweepMask(canvas, sweepX, maskDark);
                 }
                 drawWordGlows(canvas, syllables, row, startX, baselineY,
-                        ascent, descent, pos, activeK, glowOn, liftedShader);
+                        ascent, descent, pos, activeK, glowOn, shadowOn, liftedShader);
             } finally {
                 // RuntimeEffectBuilder returns one owned sk_sp. Paint temporarily
                 // refs it while drawing; after all paints are cleared, release the
@@ -2930,7 +2933,8 @@ public class LyricRenderer {
      * geometry and source pixels are both immutable; only lift uniforms change. */
     private long makeLiftShader(ShapedRow row, float startX, float baselineY,
                                 float rowRightX, int n, List<Syllable> syllables,
-                                long pos, float sweepX, float activeK, boolean glowOn) {
+                                long pos, float sweepX, float activeK, boolean glowOn,
+                                boolean shadowOn) {
         int count = Math.min(n, MAX_LIFT_SEGMENTS);
         java.util.Arrays.fill(liftUniformBuf, 0f);
         for (int i = 0; i < count; i++) {
@@ -2950,8 +2954,8 @@ public class LyricRenderer {
                 Syllable first = syllables.get(row.from + word.firstSyllable);
                 Syllable last = syllables.get(row.from + word.lastSyllable);
                 long end = last.startMs + Math.max(0L, last.durationMs);
-                long duration = end - first.startMs;
-                if (duration < WORD_GLOW_MIN_DURATION_MS || pos < first.startMs || pos > end) continue;
+                if (shadowOn && end - first.startMs < WORD_GLOW_MIN_DURATION_MS) continue;
+                if (pos < first.startMs || pos > end) continue;
                 int p = wordLiftCount * 4;
                 float wordX0 = startX + Math.min(word.x0, word.x1);
                 float wordX1 = startX + Math.max(word.x0, word.x1);
@@ -2986,7 +2990,8 @@ public class LyricRenderer {
      * glow layer. Word grouping never changes the independently timed base lift. */
     private void drawWordGlows(Canvas canvas, List<Syllable> syllables, ShapedRow row,
                                float startX, float baselineY, float ascent, float descent,
-                               long pos, float activeK, boolean glowOn, long liftedShader) {
+                               long pos, float activeK, boolean glowOn, boolean shadowOn,
+                               long liftedShader) {
         if (!wordGlowSupported || !glowOn || row.words.length == 0) return;
         boolean glowLayerSaved = false;
         try {
@@ -2995,8 +3000,8 @@ public class LyricRenderer {
                 Syllable last = syllables.get(row.from + word.lastSyllable);
                 long wordEnd = last.startMs + Math.max(0L, last.durationMs);
                 long wordDuration = wordEnd - first.startMs;
-                if (wordDuration < WORD_GLOW_MIN_DURATION_MS
-                        || pos < first.startMs || pos > wordEnd) continue;
+                if (shadowOn && wordDuration < WORD_GLOW_MIN_DURATION_MS) continue;
+                if (pos < first.startMs || pos > wordEnd) continue;
                 float wordProgress = (pos - first.startMs)
                         / (float) Math.max(1L, wordDuration);
                 // The old glow was fill-forwards, which made every completed word
