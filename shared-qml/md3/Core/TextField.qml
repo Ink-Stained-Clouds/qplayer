@@ -282,7 +282,14 @@ Item {
                     anchors.centerIn: parent
                     type: "standard"
                     onClicked: {
-                        textInput.text = ""
+                        // Update the component's public value first. Assigning only
+                        // TextInput.text relied on its reverse onTextChanged bridge;
+                        // after interactive editing qml4j can have replaced the
+                        // original text binding, so callers (notably SearchPage) did
+                        // not always observe the clear until another key was pressed.
+                        control.text = ""
+                        if (textInput.text !== "")
+                            textInput.text = ""
                         textInput.forceActiveFocus()
                     }
                 }

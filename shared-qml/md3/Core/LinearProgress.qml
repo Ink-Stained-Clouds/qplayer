@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import md3.Core
 Item {
     id: control
@@ -25,36 +26,52 @@ Item {
         catchUpAnim.restart()
     }
 
-    // Enter indeterminate immediately; the wavy canvas defers the exit to a cycle
-    // boundary. A standard bar has no deferred latch, so its catch-up starts here.
+    // Enter indeterminate immediately. Both renderers keep their visual latch on exit
+    // until their active sweep animation has naturally completed.
     onIndeterminateChanged: {
         if (indeterminate) {
             catchUpAnim.stop()
             control._catchingUp = false
-            wavyCanvas._indet = true
-        } else if (!control.wavy) {
-            // The wave defers this latch to its next cycle boundary. A straight
-            // bar has no running phase animation to clear it, so release it now;
-            // otherwise every later value update remains blocked after loading.
-            wavyCanvas._indet = false
-            control.beginDeterminateTransition()
-        }
+            if (control.wavy)
+                wavyCanvas._indet = true
+            else {
+                straightIndicator.beginSweep()
+            }
+        } else if (!control.wavy)
+            straightIndicator.requestFinish()
     }
     onValueChanged: {
-        if (!control.indeterminate && (!control.wavy || !wavyCanvas._indet)
-                && !control._catchingUp)
+        var visualIndeterminate = control.wavy
+                ? wavyCanvas._indet : straightIndicator._indet
+        if (!control.indeterminate && !visualIndeterminate && !control._catchingUp)
             control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
     }
     onWavyChanged: {
         // Switching styles must not leave the hidden Canvas's deferred state in
         // charge of the straight bar. Synchronize both representations immediately.
         if (!control.wavy) {
-            wavyCanvas._indet = control.indeterminate
+            wavyCanvas._indet = false
+            if (control.indeterminate)
+                straightIndicator.beginSweep()
+            else
+                straightIndicator.cancelSweep()
             if (!control.indeterminate && !control._catchingUp)
                 control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
         } else {
+            straightIndicator.cancelSweep()
             wavyCanvas._indet = control.indeterminate
+            if (!control.indeterminate && !control._catchingUp)
+                control._displayValue = Math.max(0.0, Math.min(1.0, control.value))
         }
+    }
+    onVisibleChanged: {
+        // A hidden straight bar does not keep restarting cycles. If it becomes
+        // visible while loading is still active, resume with a fresh pair only
+        // after both previously-running cycles have naturally stopped.
+        if (control.visible && !control.wavy && control.indeterminate
+                && straightIndicator._indet
+                && (straightIndicator._bar1Done || straightIndicator._bar2Done))
+            straightIndicator.beginSweep()
     }
 
     NumberAnimation {
@@ -87,7 +104,7 @@ Item {
         
         // Determinate Indicator
         Rectangle {
-            visible: !control.indeterminate
+            visible: !straightIndicator._indet
             height: parent.height
             // The player publishes progress about every 200ms. A 200ms Behavior
             // here gets restarted by every update and can indefinitely trail/freeze
@@ -96,11 +113,95 @@ Item {
             color: _colors.primary
             radius: height / 2
         }
+
+        // Item.clip is rectangular in qml4j, so it cannot preserve the track's
+        // rounded outline when an animated bar crosses an edge. Mask the unchanged
+        // MD3 animation output with the actual rounded-track shape instead.
+        Rectangle {
+            id: straightMask
+            anchors.fill: parent
+            radius: track.radius
+            color: "black"
+            visible: false
+        }
         
         // Indeterminate Indicator
         Item {
+            id: straightIndicator
             anchors.fill: parent
-            visible: control.indeterminate
+            visible: false
+
+            // Like the wave, keep a visual indeterminate latch after loading ends.
+            // Each of the two original animations completes its current independent
+            // cycle; only after both finish do we grow the real progress from zero.
+            property bool _indet: false
+            property bool _bar1Done: true
+            property bool _bar2Done: true
+
+            function beginSweep() {
+                bar1Anim.stop()
+                bar2Anim.stop()
+                bar1.x = -width
+                bar1.width = 0.0
+                bar2.x = -width
+                bar2.width = 0.0
+                _indet = true
+                if (control.visible && !control.wavy) {
+                    _bar1Done = false
+                    _bar2Done = false
+                    bar1Anim.restart()
+                    bar2Anim.restart()
+                } else {
+                    _bar1Done = true
+                    _bar2Done = true
+                }
+            }
+
+            Component.onCompleted: {
+                if (control.indeterminate && !control.wavy)
+                    beginSweep()
+            }
+
+            function cancelSweep() {
+                bar1Anim.stop()
+                bar2Anim.stop()
+                _bar1Done = true
+                _bar2Done = true
+                _indet = false
+            }
+
+            function barFinished(firstBar) {
+                if (control.indeterminate && _indet && !control.wavy
+                        && control.visible) {
+                    if (firstBar)
+                        bar1Anim.restart()
+                    else
+                        bar2Anim.restart()
+                    return
+                }
+                if (firstBar)
+                    _bar1Done = true
+                else
+                    _bar2Done = true
+                finishIfReady()
+            }
+
+            function finishIfReady() {
+                if (!_indet || control.indeterminate || !_bar1Done || !_bar2Done)
+                    return
+                _indet = false
+                control.beginDeterminateTransition()
+            }
+
+            function requestFinish() {
+                if (!_indet)
+                    return
+                if (!bar1Anim.running)
+                    _bar1Done = true
+                if (!bar2Anim.running)
+                    _bar2Done = true
+                finishIfReady()
+            }
             
             // First bar
             Rectangle {
@@ -108,11 +209,11 @@ Item {
                 height: parent.height
                 color: _colors.primary
                 radius: height / 2
-                
+
                 SequentialAnimation {
-                    running: control.indeterminate && control.visible && !control.wavy
-                    loops: Animation.Infinite
-                    
+                    id: bar1Anim
+                    onFinished: straightIndicator.barFinished(true)
+
                     ParallelAnimation {
                         NumberAnimation { target: bar1; property: "x"; from: -parent.width; to: parent.width; duration: 2000; easing.type: Easing.InOutCubic }
                         SequentialAnimation {
@@ -129,13 +230,13 @@ Item {
                 height: parent.height
                 color: _colors.primary
                 radius: height / 2
-                
+
                 SequentialAnimation {
-                    running: control.indeterminate && control.visible && !control.wavy
-                    loops: Animation.Infinite
-                    
+                    id: bar2Anim
+                    onFinished: straightIndicator.barFinished(false)
+
                     PauseAnimation { duration: 1000 }
-                    
+
                     ParallelAnimation {
                         NumberAnimation { target: bar2; property: "x"; from: -parent.width; to: parent.width; duration: 2000; easing.type: Easing.InOutCubic }
                         SequentialAnimation {
@@ -145,6 +246,14 @@ Item {
                     }
                 }
             }
+        }
+
+        MultiEffect {
+            anchors.fill: parent
+            source: straightIndicator
+            visible: straightIndicator._indet
+            maskEnabled: true
+            maskSource: straightMask
         }
     }
 
