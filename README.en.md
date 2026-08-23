@@ -50,6 +50,8 @@ The UI uses no native Views. Every control is described in QML and rendered by q
 
 - End-to-end playback over the NetEase Cloud Music API: recommendations, search, user playlists, recent, and local files.
 - QR login, like and unlike, a play queue, three play modes (list-loop, shuffle, repeat-one).
+- NetEase Listen Together: create a room, join through an invitation link, or restore an active room; synchronizes both listeners' queue, track, play/pause state, and position, with notifications for remote track, seek, and playback changes.
+- Heart Mode recommendations: build a recommendation queue from the user's Liked Songs and the current seed track, directly from a playlist page.
 - Source switching: greyed-out, VIP, and trial-only tracks are matched by title and artist against an alternate source and replaced before playback (toggleable).
 - Lyric page: drawn directly through Skija by the host. Per-syllable scrolling (AMLL TTML first, NetEase as a fallback), a cover-tinted fluid backdrop, romaji and translation, and a Material wavy progress bar; it can be dragged to scroll, flung with inertia, and tapped on a line to seek there.
 - Material 3 UI: the whole interface is QML (`md3.Core`) running on the qml4j engine.
