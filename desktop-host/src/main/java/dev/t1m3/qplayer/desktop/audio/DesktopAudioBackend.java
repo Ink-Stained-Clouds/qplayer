@@ -41,6 +41,8 @@ public final class DesktopAudioBackend implements AudioBackend {
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     /** -1 = no seek pending; ≥0 = jump to that ms on the next loop pass. */
     private final AtomicLong seekTargetMs = new AtomicLong(-1L);
+    /** Distinguishes rapid replacements even when the same path/URL is replayed. */
+    private final AtomicLong sourceRevision = new AtomicLong();
 
     private volatile String source;
     private volatile float volume = 0.8f;
@@ -70,6 +72,7 @@ public final class DesktopAudioBackend implements AudioBackend {
         if (src == null || src.isEmpty()) return;
         long target = Math.max(0L, startMs);
         this.source = src;
+        sourceRevision.incrementAndGet();
         // Publish the new track's baseline synchronously. Until the audio thread
         // opens/decodes/primes the source it would otherwise keep exposing the old
         // track's final position, which makes MPRIS clients start the new progress
@@ -197,8 +200,9 @@ public final class DesktopAudioBackend implements AudioBackend {
     /** Play {@link #source} until it ends, the source changes, or shutdown.
      *  @return true only on a natural end-of-track (so the loop fires onComplete). */
     private boolean playCurrentSource() throws Exception {
+        long openRevision = sourceRevision.get();
         String openSrc = source;
-        if (openSrc == null) {
+        if (openSrc == null || openRevision != sourceRevision.get()) {
             playing.set(false);
             return false;
         }
@@ -222,6 +226,10 @@ public final class DesktopAudioBackend implements AudioBackend {
             Logger.info("audio: timing primeFromCurrent {}ms, total open-to-play {}ms",
                     System.currentTimeMillis() - tPrime0, System.currentTimeMillis() - tOpen0);
             boolean draining = !primed;
+            // Opening/priming can take long enough for play() to replace the request.
+            // Do not announce or start the stale decoder; in particular, its
+            // onStarted must not cancel the new track's volume transition.
+            if (openRevision != sourceRevision.get()) return false;
             if (playing.get()) {
                 alSourcePlay(sourceId);
                 // Playback has actually begun now (open/decode/prime done). Fire onStarted
@@ -234,7 +242,7 @@ public final class DesktopAudioBackend implements AudioBackend {
 
             while (!shuttingDown.get()) {
                 // A different track requested → bail so the loop reopens it.
-                if (!openSrc.equals(source)) return false;
+                if (openRevision != sourceRevision.get()) return false;
 
                 long seek = seekTargetMs.getAndSet(-1L);
                 if (seek >= 0L) {
@@ -247,7 +255,7 @@ public final class DesktopAudioBackend implements AudioBackend {
 
                 if (!playing.get()) {
                     if (alGetSourcei(sourceId, AL_SOURCE_STATE) == AL_PLAYING) alSourcePause(sourceId);
-                    publishPosition(openSrc);
+                    publishPosition(openRevision);
                     Thread.sleep(20L);
                     continue;
                 }
@@ -273,14 +281,14 @@ public final class DesktopAudioBackend implements AudioBackend {
                 int queued = alGetSourcei(sourceId, AL_BUFFERS_QUEUED);
                 int state = alGetSourcei(sourceId, AL_SOURCE_STATE);
                 if (draining && queued == 0) {
-                    publishPosition(openSrc);
+                    publishPosition(openRevision);
                     return true; // natural end of track
                 }
                 if (state == AL_STOPPED && queued > 0) {
                     alSourcePlay(sourceId); // underran — kick it back to life
                 }
 
-                publishPosition(openSrc);
+                publishPosition(openRevision);
                 Thread.sleep(8L);
             }
             return false;
@@ -328,11 +336,11 @@ public final class DesktopAudioBackend implements AudioBackend {
         return got / frameBytes;
     }
 
-    private void publishPosition(String expectedSource) {
+    private void publishPosition(long expectedRevision) {
         // A play/seek request can arrive between this loop's source check and its
         // position publication. Do not overwrite the synchronous new baseline
         // with samples belonging to the previous source/seek epoch.
-        if (!expectedSource.equals(source) || seekTargetMs.get() >= 0L) return;
+        if (expectedRevision != sourceRevision.get() || seekTargetMs.get() >= 0L) return;
         int offset = alGetSourcei(sourceId, AL_SAMPLE_OFFSET); // frames into the head buffer
         long frames = framesSinceBase + Math.max(0, offset);
         positionMs = seekBaseMs + frames * 1000L / sampleRate;

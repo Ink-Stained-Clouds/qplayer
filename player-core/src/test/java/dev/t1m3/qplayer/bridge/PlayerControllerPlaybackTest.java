@@ -143,6 +143,109 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void fadeFinishesWithoutRenderPumpAndPreservesUserVolume() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("fade-clock").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"track\",\"durationMs\":120000,\"filePath\":\"track.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setVolume(0.6f);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+            backend.fireStarted();
+
+            // Deliberately never call controller.pump(): a hidden/destroyed window
+            // must not strand playback at the first quiet fade sample.
+            waitForVolume(backend, 0.6f, 1600L);
+            assertEquals(0.6f, backend.volume, 0.02f);
+            assertTrue(backend.volumeWrites > 2);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void replacingTrackCancelsOutgoingFadeCompletion() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("fade-switch").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"one\",\"durationMs\":120000,\"filePath\":\"one.mp3\"},"
+                    + "{\"source\":\"LOCAL\",\"title\":\"two\",\"durationMs\":120000,\"filePath\":\"two.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+            backend.fireStarted();
+
+            controller.next();
+            int pausesAfterReplacement = backend.pauseCalls;
+            // The second source is intentionally left in its loading window. The old
+            // track's delayed fade completion must not pause this new request later.
+            Thread.sleep(1050L);
+            assertEquals(pausesAfterReplacement, backend.pauseCalls);
+            assertTrue(backend.playing);
+            assertEquals(0.8f, backend.volume, 0.001f);
+
+            backend.fireStarted();
+            assertEquals(0.8f, backend.volume, 0.001f);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void seekingAwayFromNaturalEndFadeRestoresFullGain() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("fade-end-seek").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"track\",\"durationMs\":120000,\"filePath\":\"track.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+            backend.fireStarted();
+            waitForVolume(backend, 0.8f, 1600L);
+
+            backend.position = 119500L;
+            controller.pump();
+            Thread.sleep(120L);
+            assertTrue(backend.volume < 0.8f);
+
+            controller.seek(1000L);
+            assertEquals(0.8f, backend.volume, 0.001f);
+            Thread.sleep(550L); // the cancelled old end fade would have reached zero
+            assertEquals(0.8f, backend.volume, 0.001f);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
     public void convertsLegacyTextSearchHistoryToVersionedJson() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
@@ -180,9 +283,11 @@ public class PlayerControllerPlaybackTest {
         int playCalls;
         int pauseCalls;
         int resumeCalls;
-        boolean playing;
+        volatile boolean playing;
         long position;
         Runnable onStarted;
+        volatile float volume = 0.8f;
+        volatile int volumeWrites;
 
         @Override public void play(String source, long startMs) {
             playCalls++;
@@ -201,13 +306,25 @@ public class PlayerControllerPlaybackTest {
         @Override public void seek(long ms) { position = ms; }
         @Override public long position() { return position; }
         @Override public long duration() { return 120000L; }
-        @Override public void setVolume(float volume) { }
+        @Override public void setVolume(float volume) {
+            this.volume = volume;
+            volumeWrites++;
+        }
         @Override public void setOnComplete(Runnable callback) { }
         @Override public void setOnStarted(Runnable callback) { onStarted = callback; }
         @Override public void release() { playing = false; }
 
         void fireStarted() {
             if (onStarted != null) onStarted.run();
+        }
+    }
+
+    private static void waitForVolume(FakeAudioBackend backend, float target,
+                                      long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (Math.abs(backend.volume - target) > 0.001f
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
         }
     }
 }

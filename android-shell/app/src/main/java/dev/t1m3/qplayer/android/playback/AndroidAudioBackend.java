@@ -70,20 +70,9 @@ public final class AndroidAudioBackend implements AudioBackend {
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
-        mp.setOnPreparedListener(p -> onPrepared());
-        mp.setOnCompletionListener(p -> {
-            Logger.info("MediaPlayer: completed");
-            Runnable cb = onComplete;
-            if (cb != null) cb.run();
-        });
-        mp.setOnErrorListener((p, what, extra) -> {
-            Logger.error("MediaPlayer error: what={} extra={}", what, extra);
-            fire(onError);
-            // PlayerController's error path retries stale URLs once and advances
-            // when that fails. Firing completion too races a second auto-advance
-            // against that recovery and can replace the retried track.
-            return true;
-        });
+        mp.setOnPreparedListener(this::onPrepared);
+        mp.setOnCompletionListener(p -> onCompleted(p));
+        mp.setOnErrorListener(this::onPlayerError);
         player = mp;
         try {
             Logger.info("MediaPlayer: setDataSource + prepareAsync");
@@ -107,18 +96,38 @@ public final class AndroidAudioBackend implements AudioBackend {
         }
     }
 
-    private synchronized void onPrepared() {
+    private synchronized void onPrepared(MediaPlayer preparedPlayer) {
+        // releasePlayer() cannot prevent a callback that was already queued on the
+        // media thread. Never let an old source start, publish onStarted, or apply its
+        // state to the replacement MediaPlayer after a rapid track switch.
+        if (player != preparedPlayer) return;
         prepared = true;
-        Logger.info("MediaPlayer: prepared, duration={}ms", player.getDuration());
+        Logger.info("MediaPlayer: prepared, duration={}ms", preparedPlayer.getDuration());
         applyVolume();
         if (pendingSeekMs > 0L) {
-            player.seekTo(pendingSeekMs, MediaPlayer.SEEK_CLOSEST);
+            preparedPlayer.seekTo(pendingSeekMs, MediaPlayer.SEEK_CLOSEST);
         }
         if (wantPlay) {
-            player.start();
+            preparedPlayer.start();
             Runnable cb = onStarted;
             if (cb != null) cb.run();
         }
+    }
+
+    private synchronized void onCompleted(MediaPlayer completedPlayer) {
+        if (player != completedPlayer) return;
+        Logger.info("MediaPlayer: completed");
+        fire(onComplete);
+    }
+
+    private synchronized boolean onPlayerError(MediaPlayer failedPlayer, int what, int extra) {
+        if (player != failedPlayer) return true;
+        Logger.error("MediaPlayer error: what={} extra={}", what, extra);
+        fire(onError);
+        // PlayerController's error path retries stale URLs once and advances when
+        // that fails. Firing completion too would race a second auto-advance against
+        // that recovery and could replace the retried track.
+        return true;
     }
 
     @Override
@@ -190,7 +199,8 @@ public final class AndroidAudioBackend implements AudioBackend {
 
     private void applyVolume() {
         if (player != null && prepared) {
-            player.setVolume(volume, volume);
+            float effective = ducked ? volume * 0.3f : volume;
+            player.setVolume(effective, effective);
         }
     }
 
@@ -274,7 +284,7 @@ public final class AndroidAudioBackend implements AudioBackend {
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
                 if (player != null && prepared && player.isPlaying()) {
                     ducked = true;
-                    player.setVolume(volume * 0.3f, volume * 0.3f);
+                    applyVolume();
                 }
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
@@ -303,6 +313,11 @@ public final class AndroidAudioBackend implements AudioBackend {
     private void releasePlayer() {
         if (player != null) {
             try {
+                // Detach first so callbacks queued by reset/release cannot act on a
+                // subsequently assigned player through the backend's shared fields.
+                player.setOnPreparedListener(null);
+                player.setOnCompletionListener(null);
+                player.setOnErrorListener(null);
                 player.reset();
                 player.release();
             } catch (Throwable ignored) {

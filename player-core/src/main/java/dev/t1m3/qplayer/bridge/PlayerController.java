@@ -46,6 +46,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -322,31 +324,41 @@ public final class PlayerController {
     // --- Volume fade in/out (Settings toggle) ------------------------------
     // Drives backend.setVolume() directly, never the public volume Property/
     // setVolume(float) (those are the user's own slider — a fade must not
-    // overwrite what it displays). Ticked from pump(), which already runs
-    // every frame on both platforms, so no separate timer is needed.
+    // overwrite what it displays). The clock deliberately lives outside the render
+    // pump: Android can suspend the Surface and desktop can destroy its render thread
+    // while audio keeps playing, and a frame-driven ramp would then remain stuck at a
+    // small intermediate gain indefinitely.
     private volatile boolean fadeEnabled = false;
     private static final long FADE_IN_MS = 700;
     private static final long FADE_OUT_MS = 900;
-    // 0 = no fade in flight. A real epoch ms timestamp otherwise; pump() reads
-    // wall-clock elapsed against it each tick.
-    private volatile long fadeStartAt = 0L;
-    private volatile long fadeDurationMs = FADE_IN_MS;
-    private volatile float fadeFromGain = 1f;
-    private volatile float fadeToGain = 1f;
+    private static final long FADE_TICK_MS = 16;
+    private final ScheduledExecutorService fadeWorker = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "qplayer-volume-fade");
+        t.setDaemon(true);
+        return t;
+    });
+    private final Object fadeLock = new Object();
+    // Guarded by fadeLock. Every start/cancel increments generation, so a queued tick
+    // or completion belonging to an old track becomes a harmless no-op.
+    private long fadeGeneration;
+    private boolean fadeRunning;
+    private long fadeStartNs;
+    private long fadeDurationNs = TimeUnit.MILLISECONDS.toNanos(FADE_IN_MS);
+    private float fadeFromGain = 1f;
+    private float fadeToGain = 1f;
+    private float fadeCurrentGain = 1f;
+    private Runnable fadeCompleteAction;
+    // Separate from the QML Property so the audio clock can read it safely and a fade
+    // never mistakes its current effective gain for the user's requested volume.
+    private volatile float userVolume = 0.8f;
     // Set once a fade-out has been STARTED for the CURRENT track, so pump()'s
     // near-the-end check doesn't keep re-triggering it every tick for the
     // remainder of playback.
     private volatile boolean fadeOutDoneForTrack = false;
-    // Run once the in-flight ramp reaches its target (tickFade, t>=1) then
-    // cleared. Used to defer the actual backend.pause() until a manual
-    // pause's fade-out finishes instead of hard-cutting — see toggle().
-    // null = nothing pending.
-    private volatile Runnable fadeCompleteAction;
     // Set by next()/prev() just before their playAt() call, consumed (and reset)
-    // the next time startFadeIn() runs: a manual skip still fades the OUTGOING
-    // track out (playAt()'s backend.pause() below), but the incoming one should
-    // just start at full volume, not also ramp up — a fade-in there only adds a
-    // second delay on top of however long the new track took to resolve.
+    // the next time startFadeIn() runs. The outgoing track may fade while an async
+    // URL resolves, but the incoming one starts at full gain — another fade-in would
+    // only add a second delay after however long the new track already took to load.
     private volatile boolean suppressNextFadeIn = false;
     private volatile long uid;
     // neteaseId of the track we last re-resolved after a playback error; cleared
@@ -586,11 +598,16 @@ public final class PlayerController {
         // Audio-focus driven pause/resume (phone call, another player): keep the
         // intended-play state, the UI, and the media session in sync.
         backend.setOnPaused(() -> {
+            // Audio focus is an external discontinuity, not part of a user-requested
+            // ramp. Settle at full logical gain while silent so focus regain cannot
+            // inherit an interrupted fade's small intermediate value.
+            cancelFadeAtGain(1f);
             playingIntent = false;
             post(() -> playing.set(false));
             notifyPlayback();
         });
         backend.setOnResumed(() -> {
+            cancelFadeAtGain(1f);
             playingIntent = true;
             post(() -> playing.set(true));
             notifyPlayback();
@@ -669,18 +686,16 @@ public final class PlayerController {
      *  the source took. */
     private void startFadeIn() {
         fadeOutDoneForTrack = false;
-        fadeCompleteAction = null;
         if (suppressNextFadeIn) {
             suppressNextFadeIn = false;
-            fadeStartAt = 0L;
-            backend.setVolume(volume.peek());
+            cancelFadeAtGain(1f);
             return;
         }
-        if (!fadeEnabled) { backend.setVolume(volume.peek()); return; }
-        fadeFromGain = 0f;
-        fadeToGain = 1f;
-        fadeDurationMs = FADE_IN_MS;
-        fadeStartAt = System.currentTimeMillis();
+        if (!fadeEnabled) {
+            cancelFadeAtGain(1f);
+            return;
+        }
+        startVolumeFade(0f, 1f, FADE_IN_MS, null);
     }
 
     /** Ramp toward silence over {@code durationMs} starting from wherever the
@@ -689,54 +704,128 @@ public final class PlayerController {
      *  onComplete} once (e.g. the actual backend.pause() a manual pause
      *  deferred). Overwrites any in-flight ramp. */
     private void startFadeOut(long durationMs, Runnable onComplete) {
-        fadeFromGain = currentFadeGain();
-        fadeToGain = 0f;
-        fadeDurationMs = Math.max(1L, durationMs);
-        fadeStartAt = System.currentTimeMillis();
-        fadeCompleteAction = onComplete;
+        startVolumeFade(currentFadeGain(), 0f, durationMs, onComplete);
     }
 
-    /** The gain the in-flight ramp is at right now (or 1 -- settled/no ramp,
-     *  matching the always-full-volume-once-a-fade-in-completes invariant
-     *  everything else here relies on). */
-    private float currentFadeGain() {
-        if (fadeStartAt == 0L) return 1f;
-        long elapsed = System.currentTimeMillis() - fadeStartAt;
-        float t = elapsed >= fadeDurationMs ? 1f : (float) elapsed / fadeDurationMs;
-        return fadeFromGain + (fadeToGain - fadeFromGain) * t;
-    }
-
-    /** Advance any in-flight ramp (running its completion action, if any, once
-     *  it reaches target), or notice the current track is within {@link
-     *  #FADE_OUT_MS} of its natural end and start fading out so it never
-     *  hard-cuts into the next track's silence-then-fade-in. Ticked from
-     *  {@link #pump()}, which already runs every frame on both platforms --
-     *  no separate timer needed. */
-    private void tickFade(long now) {
-        if (!fadeEnabled) return;
-        if (fadeStartAt != 0L) {
-            long elapsed = now - fadeStartAt;
-            float t = elapsed >= fadeDurationMs ? 1f : (float) elapsed / fadeDurationMs;
-            float g = fadeFromGain + (fadeToGain - fadeFromGain) * t;
-            backend.setVolume(volume.peek() * g);
-            if (t >= 1f) {
-                fadeStartAt = 0L;
-                Runnable action = fadeCompleteAction;
-                fadeCompleteAction = null;
-                if (action != null) action.run();
-            }
-            return;
+    /** Start one generation-bound ramp. Its first sample is applied immediately;
+     *  later samples run on a tiny daemon clock, never on the GL/render thread. */
+    private void startVolumeFade(float from, float to, long durationMs, Runnable onComplete) {
+        final long generation;
+        float start = clampGain(from);
+        synchronized (fadeLock) {
+            generation = ++fadeGeneration;
+            fadeRunning = true;
+            fadeStartNs = System.nanoTime();
+            fadeDurationNs = TimeUnit.MILLISECONDS.toNanos(Math.max(1L, durationMs));
+            fadeFromGain = start;
+            fadeToGain = clampGain(to);
+            fadeCurrentGain = start;
+            fadeCompleteAction = onComplete;
         }
+        applyEffectiveVolume(start);
+        scheduleFadeTick(generation);
+    }
+
+    private void scheduleFadeTick(long generation) {
+        if (fadeWorker.isShutdown()) return;
+        try {
+            fadeWorker.schedule(() -> tickVolumeFade(generation), FADE_TICK_MS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException ignored) {
+            // shutdown() raced this final sample; the backend is being released too.
+        }
+    }
+
+    private void tickVolumeFade(long generation) {
+        float gain;
+        boolean again;
+        Runnable completion = null;
+        synchronized (fadeLock) {
+            if (!fadeRunning || generation != fadeGeneration) return;
+            long elapsed = Math.max(0L, System.nanoTime() - fadeStartNs);
+            float t = elapsed >= fadeDurationNs ? 1f : (float) elapsed / fadeDurationNs;
+            gain = fadeFromGain + (fadeToGain - fadeFromGain) * t;
+            fadeCurrentGain = gain;
+            again = t < 1f;
+            if (!again) {
+                fadeRunning = false;
+                completion = fadeCompleteAction;
+                fadeCompleteAction = null;
+            }
+        }
+        applyEffectiveVolume(gain);
+        if (again) {
+            scheduleFadeTick(generation);
+        } else if (completion != null) {
+            final Runnable action = completion;
+            // Android's main executor may not run this immediately. Re-check the
+            // generation at execution time so switching/resuming in the meantime
+            // cannot let an old fade-out pause the new source.
+            onMain(() -> {
+                synchronized (fadeLock) {
+                    if (fadeGeneration != generation || fadeRunning) return;
+                }
+                action.run();
+            });
+        }
+    }
+
+    private void cancelFadeAtGain(float gain) {
+        float clamped = clampGain(gain);
+        synchronized (fadeLock) {
+            fadeGeneration++;
+            fadeRunning = false;
+            fadeCompleteAction = null;
+            fadeCurrentGain = clamped;
+        }
+        applyEffectiveVolume(clamped);
+    }
+
+    /** Cancel the outgoing track's fade before replacing the backend source. The new
+     *  source is armed at silence for a real fade-in, or at full gain when a manual
+     *  next/previous explicitly suppresses that fade. */
+    private void playBackend(String source, long startMs) {
+        float initialGain = fadeEnabled && !suppressNextFadeIn ? 0f : 1f;
+        cancelFadeAtGain(initialGain);
+        backend.play(source, startMs);
+    }
+
+    private void applyEffectiveVolume(float gain) {
+        backend.setVolume(userVolume * clampGain(gain));
+    }
+
+    private static float clampGain(float gain) {
+        return Math.max(0f, Math.min(1f, gain));
+    }
+
+    /** The gain the in-flight ramp is at right now (or its last settled target). */
+    private float currentFadeGain() {
+        synchronized (fadeLock) {
+            if (!fadeRunning) return fadeCurrentGain;
+            long elapsed = Math.max(0L, System.nanoTime() - fadeStartNs);
+            float t = elapsed >= fadeDurationNs ? 1f : (float) elapsed / fadeDurationNs;
+            return fadeFromGain + (fadeToGain - fadeFromGain) * t;
+        }
+    }
+
+    private boolean isFadeRunning() {
+        synchronized (fadeLock) {
+            return fadeRunning;
+        }
+    }
+
+    /** Notice when the current track enters its natural end window. The render pump
+     *  only detects this boundary; once started, the independent fade clock above
+     *  always carries the ramp to its exact target. */
+    private void tickFade() {
+        if (!fadeEnabled) return;
+        if (isFadeRunning()) return;
         if (fadeOutDoneForTrack || !backend.isPlaying()) return;
         long dur = backend.duration();
         if (dur <= 0) return;
         long remaining = dur - backend.position();
         if (remaining >= 0 && remaining <= FADE_OUT_MS) {
-            fadeFromGain = 1f;
-            fadeToGain = 0f;
-            fadeDurationMs = Math.max(1L, remaining);
-            fadeStartAt = now;
             fadeOutDoneForTrack = true;
+            startVolumeFade(currentFadeGain(), 0f, Math.max(1L, remaining), null);
         }
     }
 
@@ -753,7 +842,7 @@ public final class PlayerController {
             }
         }
         long now = System.currentTimeMillis();
-        tickFade(now);
+        tickFade();
         if (now - lastPositionPush >= 200L) {
             lastPositionPush = now;
             if (backend.isPlaying()) {
@@ -1782,7 +1871,7 @@ public final class PlayerController {
             if (src == null || src.isEmpty()) return;
             loadLocalLyrics(t);
             Logger.info("play local: {}", t.title);
-            backend.play(src, resumeMs);
+            playBackend(src, resumeMs);
             playingIntent = true;
             post(() -> playing.set(true));
             notifyPlayback();
@@ -1792,7 +1881,7 @@ public final class PlayerController {
             String cached = t.neteaseId != 0 ? diskCache.getAudio(t.neteaseId) : null;
             if (cached != null) {
                 Logger.info("play netease (audio cache): {}", t.title);
-                backend.play(cached, resumeMs);
+                playBackend(cached, resumeMs);
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
@@ -1807,7 +1896,7 @@ public final class PlayerController {
                 cacheThumb64Async(t.coverUrl);
             } else if (t.streamUrl != null) {
                 Logger.info("play netease (cached url): {}", t.title);
-                backend.play(t.playable(), resumeMs);
+                playBackend(t.playable(), resumeMs);
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
@@ -1820,7 +1909,7 @@ public final class PlayerController {
         } else if (t.source == Track.Source.CUSTOM_API) {
             if (t.streamUrl != null) {
                 Logger.info("play custom-api (cached url): {}", t.title);
-                backend.play(t.playable(), resumeMs);
+                playBackend(t.playable(), resumeMs);
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
@@ -2207,33 +2296,23 @@ public final class PlayerController {
                     playAt(playIndex);
                     return;
                 }
-                if (fadeStartAt != 0L && backend.isPlaying()) {
+                if (isFadeRunning() && backend.isPlaying()) {
                     // Caught mid a pause's deferred fade-out (backend.pause() never
                     // actually ran) -- cancel that pending pause and ramp back up
                     // from wherever the gain currently sits instead of restarting
                     // from silence or leaving it stuck fading down.
-                    fadeCompleteAction = null;
                     if (fadeEnabled) {
-                        fadeFromGain = currentFadeGain();
-                        fadeToGain = 1f;
-                        fadeDurationMs = FADE_IN_MS;
-                        fadeStartAt = System.currentTimeMillis();
+                        startVolumeFade(currentFadeGain(), 1f, FADE_IN_MS, null);
                     } else {
-                        fadeStartAt = 0L;
-                        backend.setVolume(volume.peek());
+                        cancelFadeAtGain(1f);
                     }
                 } else {
                     // Genuinely paused already (no ramp in flight to pick back up) --
                     // fade back in from silence, symmetric with the pause fade-out.
                     if (fadeEnabled) {
-                        fadeFromGain = 0f;
-                        fadeToGain = 1f;
-                        fadeDurationMs = FADE_IN_MS;
-                        fadeStartAt = System.currentTimeMillis();
-                        backend.setVolume(0f);
+                        startVolumeFade(0f, 1f, FADE_IN_MS, null);
                     } else {
-                        fadeStartAt = 0L;
-                        backend.setVolume(volume.peek());
+                        cancelFadeAtGain(1f);
                     }
                     backend.resume();
                 }
@@ -2310,6 +2389,7 @@ public final class PlayerController {
     public void seek(long ms) {
         final long t = Math.max(0L, ms);
         onMain(() -> {
+            resetNaturalEndFadeAfterSeek();
             seekRevision.incrementAndGet();
             stoppedLyricPositionMs = t;
             backend.seek(t);
@@ -2322,6 +2402,7 @@ public final class PlayerController {
      *  bypasses the main-thread Handler to avoid OEM background throttling. */
     public void mediaSeek(long ms) {
         final long t = Math.max(0L, ms);
+        resetNaturalEndFadeAfterSeek();
         seekRevision.incrementAndGet();
         stoppedLyricPositionMs = t;
         backend.seek(t);
@@ -2331,6 +2412,16 @@ public final class PlayerController {
 
     public long seekRevision() {
         return seekRevision.get();
+    }
+
+    private void resetNaturalEndFadeAfterSeek() {
+        // Seeking away from the final fade window must restore normal gain. Without
+        // this, the one-shot end marker remains set and the track continues silently
+        // at the completed fade's zero gain for the rest of its new position.
+        if (fadeOutDoneForTrack) {
+            fadeOutDoneForTrack = false;
+            cancelFadeAtGain(1f);
+        }
     }
 
     public long position() {
@@ -2378,7 +2469,8 @@ public final class PlayerController {
 
     public void setVolume(float v) {
         float clamped = Math.max(0f, Math.min(1f, v));
-        backend.setVolume(clamped);
+        userVolume = clamped;
+        applyEffectiveVolume(currentFadeGain());
         volume.set(clamped);
     }
 
@@ -2405,8 +2497,7 @@ public final class PlayerController {
     public void setFadeEnabled(boolean enabled) {
         this.fadeEnabled = enabled;
         if (!enabled) {
-            fadeStartAt = 0L;
-            backend.setVolume(volume.peek());
+            cancelFadeAtGain(1f);
         }
     }
 
@@ -2690,7 +2781,7 @@ public final class PlayerController {
                     updateCover(t, expectedIndex, expectedCoverRevision);
                     loadNeteaseLyrics(t, expectedIndex);
                     Logger.info("play netease: {} — {}", t.title, playUrl);
-                    backend.play(playUrl, resumeMs);
+                    playBackend(playUrl, resumeMs);
                     playingIntent = true;
                     post(() -> playing.set(true));
                     notifyPlayback();
@@ -2734,7 +2825,7 @@ public final class PlayerController {
                     updateCover(t, expectedIndex, expectedCoverRevision);
                     loadCustomLyrics(t, expectedIndex);
                     Logger.info("play custom-api: {} — {}", t.title, url);
-                    backend.play(url, resumeMs);
+                    playBackend(url, resumeMs);
                     playingIntent = true;
                     post(() -> playing.set(true));
                     notifyPlayback();
@@ -3970,12 +4061,9 @@ public final class PlayerController {
         if (!playingIntent) return;
         playingIntent = false;
         post(() -> playing.set(false));
-        // MediaSession callbacks must never depend on tickFade(), which is driven by
-        // the GL/render pump and stops while Android has the UI in the background.
-        // The old fade path therefore delayed the real pause until the app reopened.
-        fadeCompleteAction = null;
-        fadeStartAt = 0L;
-        backend.setVolume(volume.peek());
+        // MediaSession commands are immediate by contract. Cancel any UI fade so a
+        // queued completion can neither pause later nor leave the backend at low gain.
+        cancelFadeAtGain(1f);
         backend.pause();
         notifyPlayback();
     }
@@ -3989,11 +4077,9 @@ public final class PlayerController {
             onMain(() -> playAt(playIndex));
             return;
         }
-        // Symmetric with mediaPause(): a fade-in would remain silent at gain=0 until
-        // the suspended render pump ran again. Restore full gain and resume inline.
-        fadeCompleteAction = null;
-        fadeStartAt = 0L;
-        backend.setVolume(volume.peek());
+        // Symmetric with mediaPause(): discard any old ramp and resume at the exact
+        // user volume rather than inheriting its intermediate effective gain.
+        cancelFadeAtGain(1f);
         if (!backend.isPlaying()) backend.resume();
         playingIntent = true;
         post(() -> playing.set(true));
@@ -4149,6 +4235,12 @@ public final class PlayerController {
         // A just-clicked lyric adjustment may still be queued behind network work;
         // persist the current in-memory map synchronously before stopping the worker.
         saveLyricOffsets();
+        synchronized (fadeLock) {
+            fadeGeneration++;
+            fadeRunning = false;
+            fadeCompleteAction = null;
+        }
+        fadeWorker.shutdownNow();
         backend.release();
         worker.shutdownNow();
         searchWorker.shutdownNow();
