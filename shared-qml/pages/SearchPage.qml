@@ -84,7 +84,7 @@ Item {
             Layout.fillHeight: true
             visible: query.text.length === 0
 
-            property int rowH: 44
+            property int rowH: 52
             // 分段展开: 5条(折叠) -> 30条 -> 70条 -> 100条(全部)
             property int collapsedCount: 5
             property int firstExpandCount: 30
@@ -157,49 +157,92 @@ Item {
                             y: index * hotArea.rowH
 
                             Rectangle {
-                                anchors.fill: parent
-                                radius: 8
-                                color: rowMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+                                x: 0; y: 4
+                                width: parent.width; height: parent.height - 8
+                                radius: 14
+                                color: Theme.color.surfaceContainerLow
+                                border.width: historyOpenRipple.containsMouse || historyRemoveRipple.containsMouse ? 1.5 : 1
+                                border.color: historyOpenRipple.containsMouse || historyRemoveRipple.containsMouse
+                                              ? Theme.color.outline
+                                              : Theme.color.outlineVariant
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: Theme.color.onSurfaceColor
+                                    opacity: historyOpenRipple.containsMouse || historyRemoveRipple.containsMouse ? 0.04 : 0
+                                    Behavior on opacity {
+                                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                                    }
+                                }
                             }
-                            Text {
-                                x: 12
+
+                            Rectangle {
+                                x: 10; width: 32; height: 32; radius: 16
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "history"
-                                font.family: Theme.iconFont.name
-                                font.pixelSize: 20
-                                color: Theme.color.onSurfaceVariantColor
+                                color: Theme.color.secondaryContainer
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "history"
+                                    font.family: Theme.iconFont.name
+                                    font.pixelSize: 18
+                                    color: Theme.color.onSecondaryContainerColor
+                                }
                             }
                             Text {
-                                x: 44; width: parent.width - 44 - 44
+                                x: 54; width: parent.width - 54 - 48
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: player.searchHistory && player.searchHistory[index] ? player.searchHistory[index] : ""
                                 font.pixelSize: 15
+                                font.weight: Font.Medium
                                 color: Theme.color.onSurfaceColor
                                 elide: Text.ElideRight
                             }
+
+                            Rectangle {
+                                x: parent.width - 45
+                                width: 1; height: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Theme.color.outlineVariant
+                                opacity: 0.75
+                            }
                             Text {
-                                x: parent.width - 40; width: 40
+                                x: parent.width - 44; width: 44
                                 anchors.verticalCenter: parent.verticalCenter
                                 horizontalAlignment: Text.AlignHCenter
                                 text: "close"
                                 font.family: Theme.iconFont.name
                                 font.pixelSize: 18
-                                color: Theme.color.onSurfaceVariantColor
+                                color: historyRemoveRipple.containsMouse
+                                       ? Theme.color.error
+                                       : Theme.color.onSurfaceVariantColor
+                                Behavior on color { ColorAnimation { duration: 120 } }
                             }
-                            MouseArea {
-                                id: rowMA
-                                anchors.fill: parent
+
+                            Ripple {
+                                id: historyOpenRipple
+                                x: 0; y: 4
+                                width: parent.width - 44; height: parent.height - 8
+                                clipTopLeftRadius: 14
+                                clipBottomLeftRadius: 14
+                                rippleColor: Theme.color.onSurfaceColor
                                 onClicked: {
-                                    if (mouseX >= parent.width - 44) {
-                                        player.removeSearchHistory(index)
-                                    } else {
-                                        var kw = player.searchHistory && player.searchHistory[index] ? player.searchHistory[index] : ""
-                                        if (kw.length > 0) {
-                                            query.text = kw
-                                            page.runSearchNow(true)
-                                        }
+                                    var kw = player.searchHistory && player.searchHistory[index] ? player.searchHistory[index] : ""
+                                    if (kw.length > 0) {
+                                        query.text = kw
+                                        page.runSearchNow(true)
                                     }
                                 }
+                            }
+                            Ripple {
+                                id: historyRemoveRipple
+                                x: parent.width - 44; y: 4
+                                width: 44; height: parent.height - 8
+                                clipTopRightRadius: 14
+                                clipBottomRightRadius: 14
+                                rippleColor: Theme.color.error
+                                onClicked: player.removeSearchHistory(index)
                             }
                         }
                     }
@@ -283,39 +326,84 @@ Item {
                         model: player.hotSearches
 
                         Item {
+                            id: hotRow
                             width: hotArea.width
                             height: hotArea.rowH
                             y: index * hotArea.rowH
+                            property string keyword: modelData ? modelData.toString() : ""
 
                             Rectangle {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12; anchors.rightMargin: 12
-                                radius: 8
-                                color: hma.pressed ? Theme.color.surfaceContainerHigh : "transparent"
+                                x: 16; y: 4
+                                width: parent.width - 32; height: parent.height - 8
+                                radius: 14
+                                color: Theme.color.surfaceContainerLow
+                                border.width: hotRipple.containsMouse ? 1.5 : 1
+                                border.color: hotRipple.containsMouse
+                                              ? Theme.color.outline
+                                              : Theme.color.outlineVariant
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: Theme.color.onSurfaceColor
+                                    opacity: hotRipple.containsMouse ? 0.04 : 0
+                                    Behavior on opacity {
+                                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                                    }
+                                }
                             }
 
-                            Row {
-                                anchors.left: parent.left; anchors.leftMargin: 24
+                            Rectangle {
+                                x: 26; width: 32; height: 32; radius: 16
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: 8
+                                color: index < 3
+                                       ? Theme.color.primaryContainer
+                                       : Theme.color.surfaceContainerHighest
 
                                 Text {
-                                    text: "search"
-                                    font.family: Theme.iconFont.name; font.pixelSize: 20
-                                    color: Theme.color.onSurfaceVariantColor
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: modelData || ""
-                                    font.pixelSize: 15; color: Theme.color.onSurfaceColor
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.centerIn: parent
+                                    text: (index + 1).toString()
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                    color: index < 3
+                                           ? Theme.color.onPrimaryContainerColor
+                                           : Theme.color.onSurfaceVariantColor
                                 }
                             }
 
-                            MouseArea {
-                                id: hma; anchors.fill: parent
+                            Text {
+                                x: 70; width: parent.width - 70 - 52
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: hotRow.keyword
+                                font.pixelSize: 15
+                                font.weight: Font.Medium
+                                color: Theme.color.onSurfaceColor
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                x: parent.width - 48; width: 24
+                                anchors.verticalCenter: parent.verticalCenter
+                                horizontalAlignment: Text.AlignHCenter
+                                text: "arrow_outward"
+                                font.family: Theme.iconFont.name
+                                font.pixelSize: 18
+                                color: hotRipple.containsMouse
+                                       ? Theme.color.primary
+                                       : Theme.color.onSurfaceVariantColor
+                                Behavior on color { ColorAnimation { duration: 120 } }
+                            }
+
+                            Ripple {
+                                id: hotRipple
+                                x: 16; y: 4
+                                width: parent.width - 32; height: parent.height - 8
+                                clipRadius: 14
+                                rippleColor: Theme.color.onSurfaceColor
                                 onClicked: {
-                                    query.text = modelData
+                                    var kw = hotRow.keyword
+                                    if (kw.length === 0) return
+                                    query.text = kw
                                     page.runSearchNow(true)
                                 }
                             }
