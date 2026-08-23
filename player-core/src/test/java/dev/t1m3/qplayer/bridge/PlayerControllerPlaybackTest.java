@@ -58,7 +58,7 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
-    public void mediaSessionControlsBypassRenderDrivenFade() throws Exception {
+    public void mediaSessionControlsUseTheSameFadeAsManualToggle() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
         PlayerController controller = null;
@@ -73,18 +73,82 @@ public class PlayerControllerPlaybackTest {
             controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
             controller.setFadeEnabled(true);
             controller.playQueueIndex(0);
+            backend.fireStarted();
+            waitForVolume(backend, 0.8f, 1600L);
 
+            // The MediaSession intent flips immediately (state must be reported right
+            // away), but the notification/lock-screen/dynamic-island pause now rides
+            // the same ramp-down as a manual toggle() pause instead of cutting audio.
             int pausesBeforeMediaCommand = backend.pauseCalls;
             controller.mediaPause();
+            assertFalse(controller.isPlaying());
+            assertEquals(pausesBeforeMediaCommand, backend.pauseCalls);
+            assertTrue(backend.playing);
 
+            waitForVolume(backend, 0f, 1600L);
             assertEquals(pausesBeforeMediaCommand + 1, backend.pauseCalls);
             assertFalse(backend.playing);
 
+            // Resuming from the notification fades back in from silence, symmetric
+            // with the pause.
             int resumesBeforeMediaCommand = backend.resumeCalls;
             controller.mediaResume();
-
+            assertTrue(controller.isPlaying());
             assertEquals(resumesBeforeMediaCommand + 1, backend.resumeCalls);
             assertTrue(backend.playing);
+            assertEquals(0f, backend.volume, 0.05f);
+
+            waitForVolume(backend, 0.8f, 1600L);
+            assertEquals(resumesBeforeMediaCommand + 1, backend.resumeCalls);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void mediaResumeDuringPauseFadePicksUpTheRampWithoutDoubleResume() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("media-pause-resume-race").toPath();
+            AppDirs.setBase(base.toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"title\":\"track\",\"durationMs\":120000,\"filePath\":\"track.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.setFadeEnabled(true);
+            controller.playQueueIndex(0);
+            backend.fireStarted();
+            waitForVolume(backend, 0.8f, 1600L);
+
+            // playAt() itself unconditionally pauses the backend once up front (there
+            // is nothing playing yet to fade), so the "no extra pause" baseline is
+            // captured here, not literal 0.
+            int pausesBeforeMediaCommand = backend.pauseCalls;
+            controller.mediaPause();
+            Thread.sleep(120L); // catch the fade-out mid-ramp, before it reaches silence
+            assertTrue(backend.volume < 0.8f);
+            assertTrue(backend.playing); // the deferred backend.pause() hasn't landed yet
+
+            int resumesBeforeMediaCommand = backend.resumeCalls;
+            controller.mediaResume();
+            assertTrue(controller.isPlaying());
+            // Backend was never actually paused -- pick the ramp back up instead of
+            // issuing a redundant resume().
+            assertEquals(resumesBeforeMediaCommand, backend.resumeCalls);
+            assertTrue(backend.playing);
+
+            waitForVolume(backend, 0.8f, 1600L);
+            // The superseded pause's deferred completion must not fire late and
+            // pause the backend out from under the resume.
+            Thread.sleep(1000L);
+            assertTrue(backend.playing);
+            assertEquals(pausesBeforeMediaCommand, backend.pauseCalls);
         } finally {
             if (controller != null) controller.shutdown();
             AppDirs.setBase(oldBase);

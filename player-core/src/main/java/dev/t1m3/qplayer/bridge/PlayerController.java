@@ -4367,10 +4367,16 @@ public final class PlayerController {
         if (!playingIntent) return;
         playingIntent = false;
         post(() -> playing.set(false));
-        // MediaSession commands are immediate by contract. Cancel any UI fade so a
-        // queued completion can neither pause later nor leave the backend at low gain.
-        cancelFadeAtGain(1f);
-        backend.pause();
+        // playingIntent flips immediately (MediaSession state must be immediate by
+        // contract); the actual backend.pause() rides the same fade-out toggle()
+        // uses, deferred until silence, so lock-screen/notification/dynamic-island
+        // pause ramps down instead of cutting audio hard.
+        if (fadeEnabled) {
+            startFadeOut(FADE_OUT_MS, () -> { if (!playingIntent) backend.pause(); });
+        } else {
+            cancelFadeAtGain(1f);
+            backend.pause();
+        }
         notifyPlayback();
     }
 
@@ -4383,10 +4389,22 @@ public final class PlayerController {
             onMain(() -> playAt(playIndex));
             return;
         }
-        // Symmetric with mediaPause(): discard any old ramp and resume at the exact
-        // user volume rather than inheriting its intermediate effective gain.
-        cancelFadeAtGain(1f);
-        if (!backend.isPlaying()) backend.resume();
+        // Mirrors toggle()'s resume branch: pick the fade back up mid-ramp if a
+        // pause's fade-out is still in flight, otherwise fade in from silence.
+        if (isFadeRunning() && backend.isPlaying()) {
+            if (fadeEnabled) {
+                startVolumeFade(currentFadeGain(), 1f, FADE_IN_MS, null);
+            } else {
+                cancelFadeAtGain(1f);
+            }
+        } else {
+            if (fadeEnabled) {
+                startVolumeFade(0f, 1f, FADE_IN_MS, null);
+            } else {
+                cancelFadeAtGain(1f);
+            }
+            if (!backend.isPlaying()) backend.resume();
+        }
         playingIntent = true;
         post(() -> playing.set(true));
         notifyPlayback();
