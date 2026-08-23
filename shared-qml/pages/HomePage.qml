@@ -19,7 +19,7 @@ Item {
     property real minTile: 200
     property int cols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minTile + gap)))
     property real tile: (width - 2 * pad - (cols - 1) * gap) / cols
-    property real cardH: tile + 52
+    property real cardH: tile + 60
 
     property int recCount: player.recommendPlaylists ? player.recommendPlaylists.length : 0
     property int dailyCount: player.recommendations ? player.recommendations.length : 0
@@ -72,6 +72,7 @@ Item {
             Repeater {
                 model: player.recommendPlaylists
                 PlaylistCard {
+                    playlistId: modelData.id
                     tile: page.tile
                     x: page.pad + (index % page.cols) * (page.tile + page.gap)
                     y: page.greetH + Math.floor(index / page.cols) * (page.cardH + page.gap)

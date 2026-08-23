@@ -22,7 +22,7 @@ Flickable {
     property real minTile: 200
     property int cols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minTile + gap)))
     property real tile: (width - 2 * pad - (cols - 1) * gap) / cols
-    property real cardH: tile + 52
+    property real cardH: tile + 60
 
     clip: true
     contentWidth: width
@@ -38,6 +38,7 @@ Flickable {
         Repeater {
             model: grid.list
             PlaylistCard {
+                playlistId: modelData.id
                 tile: grid.tile
                 x: grid.pad + (index % grid.cols) * (grid.tile + grid.gap)
                 y: grid.pad + Math.floor(index / grid.cols) * (grid.cardH + grid.gap)

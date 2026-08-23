@@ -38,7 +38,7 @@ ColumnLayout {
         }
         Button {
             visible: row.spec && row.spec.icon.length === 0
-            type: row.spec ? row.spec.buttonType : "tonal"
+            type: row.spec ? row.spec.buttonType : "filledTonal"
             text: row.spec ? row.spec.button : ""
             onClicked: settings.invoke(row.spec.action)
         }

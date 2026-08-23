@@ -7,6 +7,7 @@ Item {
     property var model: [] // Array of {icon: "name", text: "label"}
     property int currentIndex: 0
     property bool extended: false
+    property string sectionLabel: ""
     
     // Width animation
     implicitWidth: extended ? 240 : 80
@@ -22,7 +23,17 @@ Item {
     // Background
     Rectangle {
         anchors.fill: parent
-        color: Theme.color.surface
+        color: Theme.color.surfaceContainerLow
+    }
+
+    // Separate navigation from page content without giving the rail a heavy card
+    // edge. This remains visible in both compact-rail and extended modes.
+    Rectangle {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: 1
+        color: Theme.color.outlineVariant
     }
     
     ColumnLayout {
@@ -57,6 +68,29 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 12 // Space between Header and First Item
             spacing: 8// Space between rail items
+
+            // Extended rails benefit from a small section heading; it disappears
+            // completely in compact mode instead of leaving an unexplained gap.
+            Item {
+                Layout.fillWidth: true
+                Layout.preferredHeight: root.extended && root.sectionLabel !== "" ? 28 : 0
+                opacity: root.extended && root.sectionLabel !== "" ? 1 : 0
+                Behavior on Layout.preferredHeight {
+                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                }
+                Behavior on opacity { NumberAnimation { duration: 140 } }
+
+                Text {
+                    x: 24
+                    y: 0
+                    height: parent.height
+                    verticalAlignment: Text.AlignVCenter
+                    text: root.sectionLabel
+                    color: Theme.color.onSurfaceVariantColor
+                    font.family: Theme.typography.labelMedium.family
+                    font.pixelSize: Theme.typography.labelMedium.size
+                }
+            }
             
             Repeater {
                 model: root.model
@@ -97,7 +131,7 @@ Item {
                         // Height and Radius are now driven by expansionProgress, so no Behavior needed on them directly
                         Behavior on color { ColorAnimation { duration: 200 } }
                     }
-                    
+
                     // Icon
                     Text {
                         id: iconText
@@ -159,9 +193,11 @@ Item {
         
         // Footer
         Loader {
+            id: footerLoader
             Layout.fillWidth: true
             sourceComponent: root.footer
             visible: root.footer !== null
+            Layout.preferredHeight: item ? item.implicitHeight : 0
         }
     }
 }

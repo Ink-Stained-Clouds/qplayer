@@ -25,7 +25,7 @@ ColumnLayout {
             onAccepted: settings.setValue(row.spec.key, field.text)
         }
         Button {
-            type: "tonal"; text: "应用"
+            type: "filledTonal"; text: "应用"
             onClicked: settings.setValue(row.spec.key, field.text)
         }
     }

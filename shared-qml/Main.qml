@@ -159,6 +159,7 @@ Rectangle {
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         currentIndex: app.page
         model: app.navItems
+        sectionLabel: "导航"
         onItemClicked: app.switchTo(index)
 
         // Rail header: the app mark in the top-left corner, which only the wide
@@ -251,6 +252,97 @@ Rectangle {
                     font.pixelSize: Theme.typography.titleLarge.size
                 }
         }
+
+        // Secondary destinations live at the bottom of the wide rail instead of
+        // competing with page-level actions in the top bar. Labels fade with the
+        // extended rail; the compact rail keeps the same three icon targets.
+        footer: Item {
+            implicitHeight: 164
+
+            Rectangle {
+                x: 12
+                y: 0
+                width: parent.width - 24
+                height: 1
+                color: Theme.color.outlineVariant
+            }
+
+            Repeater {
+                model: [
+                    { icon: "download", text: "已下载" },
+                    { icon: player.loggedIn ? "account_circle" : "login",
+                      text: player.loggedIn ? "账户" : "登录" },
+                    { icon: "settings", text: "设置" }
+                ]
+
+                Item {
+                    id: footerAction
+                    x: 0
+                    y: 10 + index * 48
+                    width: parent.width
+                    height: 48
+
+                    Rectangle {
+                        id: footerState
+                        property color hoverColor: Theme.color.surfaceContainerHighest
+                        x: app.expanded ? 12 : (parent.width - 48) / 2
+                        y: 2
+                        width: app.expanded ? parent.width - 24 : 48
+                        height: 44
+                        radius: 22
+                        color: footerRipple.containsMouse
+                               ? hoverColor
+                               : Qt.rgba(hoverColor.r, hoverColor.g, hoverColor.b, 0)
+                        Behavior on color { ColorAnimation { duration: 140 } }
+                    }
+
+                    Text {
+                        x: app.expanded ? 28 : (parent.width - width) / 2
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.icon
+                        font.family: Theme.iconFont.name
+                        font.pixelSize: 22
+                        color: Theme.color.onSurfaceVariantColor
+                        Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    }
+
+                    Text {
+                        x: 64
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 76
+                        text: modelData.text
+                        color: Theme.color.onSurfaceColor
+                        font.family: Theme.typography.labelLarge.family
+                        font.pixelSize: Theme.typography.labelLarge.size
+                        elide: Text.ElideRight
+                        opacity: app.expanded ? 1 : 0
+                        visible: opacity > 0.01
+                        Behavior on opacity { NumberAnimation { duration: 160 } }
+                    }
+
+                    Ripple {
+                        id: footerRipple
+                        x: footerState.x
+                        y: footerState.y
+                        width: footerState.width
+                        height: footerState.height
+                        clipRadius: footerState.radius
+                        rippleColor: Theme.color.onSurfaceColor
+                        onClicked: {
+                            if (index === 0) {
+                                player.refreshCachedSongs()
+                                app.openOverlay("cachedSongs")
+                            } else if (index === 1) {
+                                if (player.loggedIn) app.openOverlay("account")
+                                else app.loginOpen = true
+                            } else {
+                                app.openOverlay("settings")
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     TopAppBar {
@@ -270,6 +362,7 @@ Rectangle {
             onClicked: app.openOverlay("queue")
         }
         IconButton {
+            visible: !app.wide
             type: "standard"
             icon: "download"
             onClicked: {
@@ -278,11 +371,13 @@ Rectangle {
             }
         }
         IconButton {
+            visible: !app.wide
             type: "standard"
             icon: player.loggedIn ? "account_circle" : "login"
             onClicked: if (player.loggedIn) app.openOverlay("account"); else app.loginOpen = true
         }
         IconButton {
+            visible: !app.wide
             type: "standard"
             icon: "settings"
             onClicked: app.openOverlay("settings")
@@ -478,7 +573,7 @@ Rectangle {
 
     Dialog {
         id: graphicsFallbackDialog
-        title: "已切换到 OpenGL"
+        title: "图形后端回退"
         icon: "warning"
         text: "Vulkan 图形后端初始化失败，QPlayer 已自动使用 OpenGL 继续运行，并已更新设置。"
         acceptText: "知道了"

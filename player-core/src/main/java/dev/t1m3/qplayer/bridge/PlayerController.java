@@ -610,6 +610,19 @@ public final class PlayerController {
         }
     }
 
+    /** Copy a shareable netease playlist link to the system clipboard. */
+    public void copyPlaylistLink(long playlistId) {
+        if (playlistId == 0) return;
+        String url = "https://music.163.com/playlist?id=" + playlistId;
+        java.util.function.Consumer<String> c = clipboard;
+        if (c != null) {
+            c.accept(url);
+            showToast("已复制链接");
+        } else {
+            showToast(url);
+        }
+    }
+
     // --- Volume fade in/out -------------------------------------------------
 
     /** Start a fade-in from silence to the user's set volume. Called from the
@@ -1584,6 +1597,35 @@ public final class PlayerController {
 
     public void playPlaylistTrack(int i) {
         playSongList(playlistTracks.peek(), i);
+    }
+
+    /** Fetch a playlist from its card context menu and start it from the first song.
+     *  This deliberately does not open the detail page or replace its loading state. */
+    public void playPlaylist(long playlistId) {
+        if (playlistId == 0) return;
+        worker.submit(() -> {
+            List<NeteaseSong> songs;
+            try {
+                songs = netease.playlistTracks(playlistId, 200);
+                fillMissingCovers(songs);
+                buildSongThumbs(songs, "128");
+            } catch (Throwable e) {
+                Logger.warn("play playlist {} failed: {}", playlistId, e.getMessage());
+                PlaylistCacheIndex.Cached cached = playlistCacheIndex.get(playlistId);
+                if (cached == null || cached.songs.isEmpty()) {
+                    showToast("播放歌单失败");
+                    return;
+                }
+                songs = new ArrayList<>(cached.songs.size());
+                for (NeteaseSong song : cached.songs) songs.add(withLocalThumb(song));
+            }
+            if (songs.isEmpty()) {
+                showToast("歌单中暂无歌曲");
+                return;
+            }
+            List<NeteaseSong> ready = songs;
+            post(() -> playSongList(ready, 0));
+        });
     }
 
     /** Play a single netease song id (no surrounding queue). */

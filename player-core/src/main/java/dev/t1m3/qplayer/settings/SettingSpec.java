@@ -76,7 +76,7 @@ public final class SettingSpec {
     /** Material Symbols name; an action row with an icon draws an IconButton
      *  instead of a labelled button. */
     public final String icon;
-    /** md3 Button type for an action/text row's button: tonal, outlined, text. */
+    /** md3 Button type for an action/text row's button: filledTonal, outlined, text. */
     public final String buttonType;
     /** Whether a provider's live text sits on the title row (cache usage, app
      *  version) rather than on its own line below it (the current font). */
@@ -187,7 +187,7 @@ public final class SettingSpec {
         private String platform = ANY;
         private String group;
         private String icon = "";
-        private String buttonType = "tonal";
+        private String buttonType = "filledTonal";
         private boolean inlineProvider;
         private String accessory = "";
         private boolean hidden;
