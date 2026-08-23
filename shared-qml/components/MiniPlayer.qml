@@ -15,7 +15,6 @@ Rectangle {
     id: mini
 
     signal lyricsRequested()
-    signal togetherRequested()
 
     function fmt(ms) {
         if (ms <= 0) return "0:00";
@@ -164,25 +163,9 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: 1
         type: "standard"
-        // Five 48dp controls leave no title space on compact phones. Together is
-        // the room entry point, so it replaces the less frequently used mode
-        // button below this breakpoint; playback mode remains on the lyric page.
-        visible: mini.width >= 480
         icon: player.playMode === 1 ? "shuffle"
               : (player.playMode === 2 ? "repeat_one" : "repeat")
         onClicked: player.cyclePlayMode()
-    }
-    IconButton {
-        id: togetherBtn
-        anchors.right: modeBtn.visible ? modeBtn.left : likeBtn.left
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: 1
-        type: "standard"
-        icon: "group"
-        visible: player.loggedIn
-        contentColor: player.listenTogetherInRoom
-                      ? Theme.color.primary : Theme.color.onSurfaceVariantColor
-        onClicked: mini.togetherRequested()
     }
 
     CoverImage {
@@ -209,9 +192,7 @@ Rectangle {
     Item {
         anchors.left: cover.right
         anchors.leftMargin: 12
-        anchors.right: togetherBtn.visible
-                       ? togetherBtn.left
-                       : (modeBtn.visible ? modeBtn.left : likeBtn.left)
+        anchors.right: modeBtn.left
         anchors.rightMargin: 4
         anchors.top: track.bottom
         anchors.bottom: parent.bottom

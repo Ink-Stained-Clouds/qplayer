@@ -383,6 +383,14 @@ Rectangle {
             onClicked: if (player.loggedIn) app.openOverlay("account"); else app.loginOpen = true
         }
         IconButton {
+            visible: !app.wide && player.loggedIn
+            type: "standard"
+            icon: "group"
+            contentColor: player.listenTogetherInRoom
+                          ? Theme.color.primary : Theme.color.onSurfaceVariantColor
+            onClicked: togetherDialog.open()
+        }
+        IconButton {
             visible: !app.wide
             type: "standard"
             icon: "settings"
@@ -506,7 +514,6 @@ Rectangle {
         anchors.bottom: bottomNav.top
         height: 84
         onLyricsRequested: player.setLyricsOpen(true)
-        onTogetherRequested: togetherDialog.open()
     }
 
     // Bottom navigation (compact). On wide layouts the rail replaces it, so collapse
