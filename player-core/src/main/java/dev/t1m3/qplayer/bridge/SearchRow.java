@@ -16,6 +16,13 @@ public final class SearchRow {
     public String name;
     public String artist;
     public String coverThumbPath;
+    /** Menu identity. Exactly one is populated for each source kind. Keeping these
+     *  on the flattened row lets SongContextMenu work without reaching back into a
+     *  source-specific result list. */
+    public long id;
+    public String filePath;
+    public String customId;
+    public boolean menuEnabled;
     /** Display label for {@link #kind} ("网易云"/"本地"/"自定义源"), shown as a
      *  small per-row tag in SearchPage.qml's unified list — precomputed here so
      *  QML doesn't need its own kind-to-label mapping. */

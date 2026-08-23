@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
@@ -270,6 +271,7 @@ public final class PlayerController {
     // --- Search cache ------------------------------------------------------
     /** TTL for cached search results: 5 minutes. */
     private static final long SEARCH_CACHE_TTL_MS = 5 * 60 * 1000L;
+    private static final int SEARCH_PAGE_SIZE = 50;
     /** Max number of search results to keep in memory (LRU eviction). */
     private static final int SEARCH_CACHE_MAX_SIZE = 20;
     /** Bounded LRU cache: evicts oldest entry when capacity is reached. */
@@ -286,9 +288,13 @@ public final class PlayerController {
     /** Holds a cached search result with its creation timestamp. */
     private static final class CacheEntry {
         final List<NeteaseSong> songs;
+        final int nextOffset;
+        final boolean hasMore;
         final long timestamp;
-        CacheEntry(List<NeteaseSong> songs) {
-            this.songs = songs;
+        CacheEntry(List<NeteaseSong> songs, int nextOffset, boolean hasMore) {
+            this.songs = Collections.unmodifiableList(new ArrayList<>(songs));
+            this.nextOffset = nextOffset;
+            this.hasMore = hasMore;
             this.timestamp = System.currentTimeMillis();
         }
         boolean isExpired() {
@@ -299,6 +305,9 @@ public final class PlayerController {
     // Guards against stale async search results: set to the trimmed key before
     // each search(); async workers check equality before publishing results.
     private volatile String currentSearchKey = "";
+    private volatile String currentSearchQuery = "";
+    private volatile int searchNextOffset;
+    private volatile boolean searchPageInFlight;
     // Same guard, for searchCustom() against dev.t1m3.qplayer.customapi.CustomApiClient.
     private volatile String currentCustomSearchKey = "";
     // User-configured third-party music API (independent of the netease source
@@ -458,6 +467,8 @@ public final class PlayerController {
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
+    public final Property<Boolean> searchLoading = new Property<>(false);
+    public final Property<Boolean> searchHasMore = new Property<>(false);
     /** Search results from the user-configured custom API source (independent of
      *  {@link #searchResults}'s netease source), shown in their own SearchPage.qml
      *  section. Empty when the custom source isn't configured/enabled. */
@@ -1505,6 +1516,52 @@ public final class PlayerController {
         if (filePath == null || filePath.isEmpty()) return;
         for (Track t : customPlaylist) {
             if (t.source == Track.Source.LOCAL && filePath.equals(t.filePath)) {
+                customPlaylist.remove(t);
+                customPlaylistTracks.set(new ArrayList<>(customPlaylist));
+                showToast("已移出播放列表");
+                worker.submit(this::saveCustomPlaylist);
+                return;
+            }
+        }
+    }
+
+    /** True when a third-party custom-API result is already in the local playlist. */
+    public boolean isCustomApiInCustomPlaylist(String customId) {
+        if (customId == null || customId.isEmpty()) return false;
+        for (Track t : customPlaylist) {
+            if (t.source == Track.Source.CUSTOM_API && customId.equals(t.customId)) return true;
+        }
+        return false;
+    }
+
+    /** Add a custom-API search result to the local playlist by its source-stable id. */
+    public void addCustomApiToCustomPlaylist(String customId) {
+        if (customId == null || customId.isEmpty() || isCustomApiInCustomPlaylist(customId)) return;
+        CustomSong found = null;
+        List<CustomSong> results = customSearchResults.peek();
+        if (results != null) {
+            for (CustomSong song : results) {
+                if (customId.equals(song.id)) {
+                    found = song;
+                    break;
+                }
+            }
+        }
+        if (found == null) {
+            showToast("添加失败");
+            return;
+        }
+        customPlaylist.add(toTrackCustom(found));
+        customPlaylistTracks.set(new ArrayList<>(customPlaylist));
+        showToast("已加入播放列表");
+        worker.submit(this::saveCustomPlaylist);
+    }
+
+    /** Remove a custom-API entry from the local playlist by its source-stable id. */
+    public void removeCustomApiFromCustomPlaylist(String customId) {
+        if (customId == null || customId.isEmpty()) return;
+        for (Track t : customPlaylist) {
+            if (t.source == Track.Source.CUSTOM_API && customId.equals(t.customId)) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
                 showToast("已移出播放列表");
@@ -3201,17 +3258,26 @@ public final class PlayerController {
      *  a network round-trip. */
     public void search(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
-        final String key = keyword.trim().toLowerCase();
+        final String query = keyword.trim();
+        final String key = query.toLowerCase(Locale.ROOT);
         currentSearchKey = key;
+        currentSearchQuery = query;
         // Fast path: check cache on the calling (render) thread.
         CacheEntry entry = searchCache.get(key);
         if (entry != null && !entry.isExpired()) {
             searchResults.set(entry.songs);
             resultCount.set(entry.songs.size());
+            searchNextOffset = entry.nextOffset;
+            searchPageInFlight = false;
+            searchLoading.set(false);
+            searchHasMore.set(entry.hasMore);
             rebuildSearchRows();
             Logger.info("search cache hit: {}", key);
             return;
         }
+        searchPageInFlight = true;
+        searchLoading.set(true);
+        searchHasMore.set(false);
         searchWorker.submit(() -> {
             try {
                 if (!key.equals(currentSearchKey)) return;
@@ -3224,24 +3290,35 @@ public final class PlayerController {
                         if (!key.equals(currentSearchKey)) return;
                         searchResults.set(existing.songs);
                         resultCount.set(existing.songs.size());
+                        searchNextOffset = existing.nextOffset;
+                        searchPageInFlight = false;
+                        searchLoading.set(false);
+                        searchHasMore.set(existing.hasMore);
                         rebuildSearchRows();
                     });
                     return;
                 }
-                List<NeteaseSong> r = netease.searchSongs(keyword, 30, 0);
+                NeteaseClient.SongSearchPage page =
+                        netease.searchSongsPage(query, SEARCH_PAGE_SIZE, 0);
                 if (!key.equals(currentSearchKey)) return;
-                // Legacy /search/get omits album picUrl; batch-fetch details, then
-                // refresh the thumbnail URL for the rows whose cover we just filled
-                // (parseSong already set it for songs that had a cover).
+                // Refresh the thumbnail URL for any rows whose cover metadata had
+                // to be completed through the song-detail endpoint.
+                List<NeteaseSong> r = page.songs;
                 fillMissingCovers(r);
                 buildSongThumbs(r, "128");
-                searchCache.put(key, new CacheEntry(r));
+                int nextOffset = page.consumed;
+                boolean hasMore = page.hasMore(0, SEARCH_PAGE_SIZE);
+                searchCache.put(key, new CacheEntry(r, nextOffset, hasMore));
                 for (NeteaseSong s : r) songMetaIndex.upsert(s);
                 songMetaIndex.save();
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
                     searchResults.set(r);
                     resultCount.set(r.size());
+                    searchNextOffset = nextOffset;
+                    searchPageInFlight = false;
+                    searchLoading.set(false);
+                    searchHasMore.set(hasMore);
                     rebuildSearchRows();
                 });
             } catch (Throwable e) {
@@ -3256,6 +3333,10 @@ public final class PlayerController {
                     if (!key.equals(currentSearchKey)) return;
                     searchResults.set(offline);
                     resultCount.set(offline.size());
+                    searchNextOffset = 0;
+                    searchPageInFlight = false;
+                    searchLoading.set(false);
+                    searchHasMore.set(false);
                     rebuildSearchRows();
                     // Give feedback either way -- an empty offline list used to
                     // leave the page blank with zero explanation (looked stuck,
@@ -3267,6 +3348,95 @@ public final class PlayerController {
                 });
             }
         });
+    }
+
+    /** Fetch the next cloudsearch page when SearchPage's virtual list nears its end. */
+    public void loadMoreSearch() {
+        if (searchPageInFlight || !Boolean.TRUE.equals(searchHasMore.peek())) return;
+        final String query = currentSearchQuery;
+        final String key = currentSearchKey;
+        final int offset = searchNextOffset;
+        if (query.isEmpty() || key.isEmpty()) return;
+
+        List<NeteaseSong> current = searchResults.peek();
+        final List<NeteaseSong> base = current == null
+                ? new ArrayList<NeteaseSong>() : new ArrayList<>(current);
+        searchPageInFlight = true;
+        searchLoading.set(true);
+        searchWorker.submit(() -> {
+            try {
+                if (!key.equals(currentSearchKey) || offset != searchNextOffset) return;
+                NeteaseClient.SongSearchPage page =
+                        netease.searchSongsPage(query, SEARCH_PAGE_SIZE, offset);
+                if (!key.equals(currentSearchKey) || offset != searchNextOffset) return;
+
+                List<NeteaseSong> additions = page.songs;
+                fillMissingCovers(additions);
+                buildSongThumbs(additions, "128");
+                List<NeteaseSong> merged = appendUniqueSongs(base, additions);
+                int nextOffset = offset + page.consumed;
+                boolean hasMore = page.hasMore(offset, SEARCH_PAGE_SIZE)
+                        && page.consumed > 0;
+                searchCache.put(key, new CacheEntry(merged, nextOffset, hasMore));
+                for (NeteaseSong song : additions) songMetaIndex.upsert(song);
+                songMetaIndex.save();
+                post(() -> {
+                    if (!key.equals(currentSearchKey) || offset != searchNextOffset) return;
+                    searchResults.set(merged);
+                    resultCount.set(merged.size());
+                    searchNextOffset = nextOffset;
+                    searchPageInFlight = false;
+                    searchLoading.set(false);
+                    searchHasMore.set(hasMore);
+                    rebuildSearchRows();
+                });
+            } catch (Throwable e) {
+                Logger.warn("load more search failed at offset {}: {}", offset, e.getMessage());
+                post(() -> {
+                    if (!key.equals(currentSearchKey) || offset != searchNextOffset) return;
+                    searchPageInFlight = false;
+                    searchLoading.set(false);
+                    // Keep hasMore=true: scrolling away and back can retry.
+                });
+            }
+        });
+    }
+
+    private static List<NeteaseSong> appendUniqueSongs(List<NeteaseSong> base,
+            List<NeteaseSong> additions) {
+        List<NeteaseSong> merged = new ArrayList<>(base.size() + additions.size());
+        Set<Long> ids = new HashSet<>();
+        for (NeteaseSong song : base) {
+            merged.add(song);
+            if (song.id != 0L) ids.add(song.id);
+        }
+        for (NeteaseSong song : additions) {
+            if (song.id != 0L && !ids.add(song.id)) continue;
+            merged.add(song);
+        }
+        return merged;
+    }
+
+    /**
+     * Invalidate visible results as soon as the input text changes, before the
+     * debounce timer starts the next requests. This also advances both network
+     * generation keys immediately, so an older response cannot be published in
+     * the 350 ms debounce window and appear under an unrelated keyword.
+     */
+    public void prepareSearch(String keyword) {
+        String query = keyword == null ? "" : keyword.trim();
+        currentSearchKey = query.toLowerCase(Locale.ROOT);
+        currentSearchQuery = query;
+        currentCustomSearchKey = query;
+        searchNextOffset = 0;
+        searchPageInFlight = false;
+        searchResults.set(Collections.<NeteaseSong>emptyList());
+        localSearchResults.set(Collections.<Track>emptyList());
+        customSearchResults.set(Collections.<CustomSong>emptyList());
+        resultCount.set(0);
+        searchLoading.set(false);
+        searchHasMore.set(false);
+        rebuildSearchRows();
     }
 
     /** Search the user-configured custom API source and publish to
@@ -3307,7 +3477,7 @@ public final class PlayerController {
      *  and publish to {@link #localSearchResults}. Synchronous — the library is
      *  already in memory (scanned at startup), no network round-trip to wait on. */
     public void searchLocal(String keyword) {
-        String q = keyword == null ? "" : keyword.trim().toLowerCase();
+        String q = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         if (q.isEmpty()) {
             localSearchResults.set(Collections.<Track>emptyList());
             rebuildSearchRows();
@@ -3329,7 +3499,7 @@ public final class PlayerController {
      *  order — SearchPage.qml renders one unified list instead of three
      *  independently-scrolling ones (which fought over layout space; see
      *  SearchPage.qml). Must run on the render thread (Property write). */
-    private void rebuildSearchRows() {
+    void rebuildSearchRows() {
         List<SearchRow> rows = new ArrayList<>();
         List<NeteaseSong> ns = searchResults.peek();
         if (ns != null) {
@@ -3342,6 +3512,8 @@ public final class PlayerController {
                 row.name = s.name;
                 row.artist = s.artist;
                 row.coverThumbPath = s.coverThumbPath;
+                row.id = s.id;
+                row.menuEnabled = s.id != 0;
                 rows.add(row);
             }
         }
@@ -3356,6 +3528,8 @@ public final class PlayerController {
                 row.name = t.title;
                 row.artist = t.artist;
                 row.coverThumbPath = t.coverThumbPath;
+                row.filePath = t.filePath;
+                row.menuEnabled = t.filePath != null && !t.filePath.isEmpty();
                 rows.add(row);
             }
         }
@@ -3370,6 +3544,8 @@ public final class PlayerController {
                 row.name = s.name;
                 row.artist = s.artist;
                 row.coverThumbPath = s.coverThumbPath;
+                row.customId = s.id;
+                row.menuEnabled = s.id != null && !s.id.isEmpty();
                 rows.add(row);
             }
         }
@@ -3391,7 +3567,7 @@ public final class PlayerController {
     }
 
     private static boolean containsIgnoreCase(String s, String needleLower) {
-        return s != null && s.toLowerCase().contains(needleLower);
+        return s != null && s.toLowerCase(Locale.ROOT).contains(needleLower);
     }
 
     /** Play a track from {@link #localSearchResults} — a filtered view of

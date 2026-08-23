@@ -37,6 +37,9 @@ Flickable {
     // Long-press menu opt-in for the rows (netease-backed lists set songMenu true).
     // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
     property bool songMenu: false
+    // Unified/mixed lists can decide eligibility per model row (SearchRow exposes
+    // menuEnabled). Homogeneous lists keep the old all-rows behavior by default.
+    property bool menuEligibilityFromModel: false
     property bool ownedPlaylist: false
     // Rows belong to the cached-songs list: with songMenu on, the row menu's
     // "缓存此歌曲" entry becomes "删除缓存" (see SongContextMenu.inCacheList).
@@ -50,8 +53,14 @@ Flickable {
     property int rowH: 64
     property int activatedIndex: -1
     property int removeIndex: -1
+    // Optional incremental-data hook. SearchPage enables this so reaching the
+    // tail asks the controller for another API page without coupling this generic
+    // virtual list to a specific data source.
+    property bool loadMoreEnabled: false
+    property int loadMoreThresholdRows: 6
     signal activated()
     signal removeRequested()
+    signal loadMoreRequested()
 
     property int count: list ? list.length : 0
 
@@ -73,6 +82,16 @@ Flickable {
     clip: true
     contentWidth: width
     contentHeight: count * rowH
+
+    function requestMoreIfNeeded() {
+        if (!loadMoreEnabled || contentHeight <= 0) return
+        if (contentY + height >= contentHeight - loadMoreThresholdRows * rowH)
+            loadMoreRequested()
+    }
+
+    onContentYChanged: requestMoreIfNeeded()
+    onContentHeightChanged: requestMoreIfNeeded()
+    onHeightChanged: requestMoreIfNeeded()
 
     Item {
         width: view.width
@@ -104,8 +123,10 @@ Flickable {
                     : index === player.index)
                 offlineReady: view.showOfflineBadge && !!modelData.cachedOffline
                 removable: view.removable
-                song: view.songMenu ? modelData : null
+                song: view.songMenu && (!view.menuEligibilityFromModel || !!modelData.menuEnabled)
+                      ? modelData : null
                 menuEnabled: view.songMenu
+                             && (!view.menuEligibilityFromModel || !!modelData.menuEnabled)
                 inOwnedPlaylist: view.ownedPlaylist
                 inCacheList: view.cacheList
                 onActivated: { view.activatedIndex = index; view.activated() }

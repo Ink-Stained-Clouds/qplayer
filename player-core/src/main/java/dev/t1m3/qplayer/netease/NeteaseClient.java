@@ -37,10 +37,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Java port of the netease cloud-music web client. Encrypts every POST with
- * {@link NeteaseCrypto#weapi(String)}, persists cookies across runs, and
- * exposes a single {@link #weapiCall(String, Map)} for use by feature-
- * specific wrappers ({@code songUrl}, {@code playlistDetail} etc.).
+ * Java port of the NetEase cloud-music client. Endpoint paths and transports
+ * are selected centrally by {@link NeteaseApi}; feature wrappers never choose
+ * weapi/eapi/xeapi themselves.
  *
  * <p>No external HTTP dependency on purpose — we stay on {@code HttpURLConnection}
  * so this works on mc 1.8.9 (Java 8) without adding jars to the standalone
@@ -52,8 +51,10 @@ public final class NeteaseClient {
     public static final NeteaseClient INSTANCE = new NeteaseClient();
 
     private static final String BASE = "https://music.163.com";
+    /** Unencrypted mobile API host (xeapi key registration only). */
+    private static final String API_BASE = "https://interface.music.163.com";
     /** Mobile API host the official apps hit for eapi-encrypted endpoints. */
-    private static final String EAPI_BASE = "https://interface.music.163.com";
+    private static final String EAPI_BASE = "https://interfacepc.music.163.com";
     /** Newest mobile host: risk-controlled writes (playlist subscribe, ...) the
      *  official Android app encrypts with "xeapi". */
     private static final String XEAPI_BASE = "https://interface3.music.163.com";
@@ -136,7 +137,7 @@ public final class NeteaseClient {
      * {@code csrf_token} from the cookie jar if the caller didn't supply
      * one. Returns the raw response body as UTF-8 text — caller parses.
      */
-    public synchronized String weapiCall(String path, Map<String, Object> json) throws IOException {
+    private synchronized String weapiCall(String path, Map<String, Object> json) throws IOException {
         String csrf = cookies.getOrDefault("__csrf", "");
         Map<String, Object> body = json == null ? new HashMap<String, Object>() : new HashMap<String, Object>(json);
         if (!body.containsKey("csrf_token")) body.put("csrf_token", csrf);
@@ -194,37 +195,6 @@ public final class NeteaseClient {
         }
     }
 
-    /** Convenience wrapper: weapiCall + parse JSON object response.
-     *  Also performs cookie-expiry detection: a {@code code == 301} in the
-     *  response body means the MUSIC_U session has expired server-side,
-     *  so we wipe the local cookie jar to force a re-login. */
-    public JsonObject weapiJson(String path, Map<String, Object> json) throws IOException {
-        return weapiJson(path, json, true);
-    }
-
-    /** {@code reportErrors=false} silences the failure toast — for an attempt inside a
-     *  fallback chain (e.g. radio/like tier 2, or the code-512 first try), where a later
-     *  tier may still succeed and a toast would be a false alarm ("网络环境有风险" even
-     *  though the song got favorited). Cookie-expiry handling still runs. */
-    public JsonObject weapiJson(String path, Map<String, Object> json, boolean reportErrors)
-            throws IOException {
-        String resp = weapiCall(path, json);
-        JsonElement el = new JsonParser().parse(resp);
-        if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
-        JsonObject obj = el.getAsJsonObject();
-        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : 200;
-        if (code == 301 && isLoggedIn() && !"login/qrcode/client/login".equals(path)) {
-            Logger.warn("Netease: session expired (code 301) on /weapi/{} — clearing cookies", path);
-            clearCookies();
-        } else if (code != 200 && !path.startsWith("login/") && reportErrors) {
-            // Any failure that carries a server reason (a private playlist, risk control,
-            // ...) surfaces as a toast. Skip the login/qrcode flow: its 800-803 codes are
-            // poll states ("waiting"/"scanned"), not errors.
-            reportError(neteaseMessage(obj));
-        }
-        return obj;
-    }
-
     /**
      * POST to the mobile {@code /eapi/<path>} host. {@code apiPath} is the
      * {@code /api/...} signing path the body is signed against (the request goes
@@ -234,7 +204,7 @@ public final class NeteaseClient {
      * set the anti-cheat token rides along in the header — required by
      * {@code playlist/subscribe}. Returns the raw response body as UTF-8.
      */
-    public synchronized String eapiCall(String apiPath, Map<String, Object> json, boolean checkToken)
+    private synchronized String eapiCall(String apiPath, Map<String, Object> json, boolean checkToken)
             throws IOException {
         ensureDeviceCookies();
         String csrf = cookies.getOrDefault("__csrf", "");
@@ -315,23 +285,6 @@ public final class NeteaseClient {
         }
     }
 
-    /** {@link #eapiCall} + parse + the same toast/expiry handling as {@link #weapiJson}. */
-    public JsonObject eapiJson(String apiPath, Map<String, Object> json, boolean checkToken)
-            throws IOException {
-        String resp = eapiCall(apiPath, json, checkToken);
-        JsonElement el = new JsonParser().parse(resp);
-        if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
-        JsonObject obj = el.getAsJsonObject();
-        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : 200;
-        if (code == 301 && isLoggedIn()) {
-            Logger.warn("Netease: session expired (code 301) on /eapi/{} — clearing cookies", apiPath);
-            clearCookies();
-        } else if (code != 200) {
-            reportError(neteaseMessage(obj));
-        }
-        return obj;
-    }
-
     /**
      * POST to the newest mobile {@code /xeapi/<path>} host. {@code apiPath} is the
      * {@code /api/...} path the body is built against (request goes to
@@ -339,11 +292,9 @@ public final class NeteaseClient {
      * the URL-encoded request payload (e.g. {@code "id=123456"}). A one-off
      * anti-crawler session key is registered on first use ({@link #ensureXeapiSession})
      * and the request is encrypted into the {@code B}/{@code S}/{@code R} form fields;
-     * the response is AES-decrypted back to JSON. This is the path the official Android
-     * app uses for risk-controlled writes that eapi can no longer clear (playlist
-     * subscribe trips code 405 "操作过于频繁" on eapi). Returns the JSON response text.
+     * the response is AES-decrypted back to JSON. Returns the JSON response text.
      */
-    public synchronized String xeapiCall(String apiPath, String formBody) throws IOException {
+    private synchronized String xeapiCall(String apiPath, String formBody) throws IOException {
         ensureDeviceCookies();
         ensureXeapiSession();
         String deviceId = cookies.getOrDefault("deviceId", "");
@@ -409,31 +360,59 @@ public final class NeteaseClient {
         }
     }
 
-    /** {@link #xeapiCall} + parse + the same toast/expiry handling as {@link #eapiJson}. */
-    public JsonObject xeapiJson(String apiPath, String formBody) throws IOException {
-        String resp = xeapiCall(apiPath, formBody);
-        JsonElement el = new JsonParser().parse(resp);
-        if (!el.isJsonObject()) throw new IOException("not a JSON object: " + truncate(resp, 200));
-        JsonObject obj = el.getAsJsonObject();
-        int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : 200;
-        if (code == 301 && isLoggedIn()) {
-            Logger.warn("Netease: session expired (code 301) on /xeapi/{} — clearing cookies", apiPath);
-            clearCookies();
-        } else if (code != 200) {
-            reportError(neteaseMessage(obj));
-        }
-        return obj;
+    /**
+     * The only request entry point used by feature wrappers. The endpoint
+     * catalogue owns the canonical path, encryption transport, anti-cheat
+     * requirement and login-flow response semantics.
+     */
+    private JsonObject apiJson(NeteaseApi.Endpoint endpoint, Map<String, Object> body)
+            throws IOException {
+        return apiJson(endpoint, body, true);
     }
 
-    /** {@link #xeapiCall} returning just the response {@code code}, without the
-     *  toast/expiry side effects of {@link #xeapiJson}. For callers that fall back
-     *  to another transport on failure and don't want a premature error toast. */
-    private int xeapiCode(String apiPath, String formBody) throws IOException {
-        String resp = xeapiCall(apiPath, formBody);
-        JsonElement el = new JsonParser().parse(resp);
-        if (!el.isJsonObject()) return -1;
-        JsonObject obj = el.getAsJsonObject();
-        return obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
+    private JsonObject apiJson(NeteaseApi.Endpoint endpoint, Map<String, Object> body,
+            boolean reportErrors) throws IOException {
+        String response;
+        switch (endpoint.transport) {
+            case WEAPI:
+                response = weapiCall(endpoint.weapiPath(), body);
+                break;
+            case EAPI:
+                response = eapiCall(endpoint.path, body, endpoint.checkToken);
+                break;
+            case XEAPI:
+                response = xeapiCall(endpoint.path, xeapiForm(body));
+                break;
+            default:
+                throw new IOException("endpoint requires a specialised direct request: " + endpoint.path);
+        }
+
+        JsonElement element = new JsonParser().parse(response);
+        if (!element.isJsonObject()) {
+            throw new IOException("not a JSON object from " + endpoint.path + ": "
+                    + truncate(response, 200));
+        }
+        JsonObject object = element.getAsJsonObject();
+        int code = object.has("code") && !object.get("code").isJsonNull()
+                ? object.get("code").getAsInt() : 200;
+        if (code == 301 && isLoggedIn() && !endpoint.loginFlow) {
+            Logger.warn("Netease: session expired (code 301) on {} — clearing cookies",
+                    endpoint.path);
+            clearCookies();
+        } else if (code != 200 && reportErrors && !endpoint.loginFlow) {
+            reportError(neteaseMessage(object));
+        }
+        return object;
+    }
+
+    private static String xeapiForm(Map<String, Object> body) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        if (body != null) {
+            for (Map.Entry<String, Object> entry : body.entrySet()) {
+                fields.put(entry.getKey(), String.valueOf(entry.getValue()));
+            }
+        }
+        return formEncode(fields);
     }
 
     /**
@@ -467,7 +446,7 @@ public final class NeteaseClient {
         form.put("timestamp", ts);
         form.put("uid", "");
 
-        String urlStr = EAPI_BASE + "/api/gorilla/anti/crawler/security/key/get";
+        String urlStr = API_BASE + NeteaseApi.XEAPI_SECURITY_KEY.path;
         String body = formEncode(form);
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         String resp;
@@ -601,8 +580,9 @@ public final class NeteaseClient {
         Map<String, Object> body = new HashMap<>();
         body.put("ids", "[" + songId + "]");
         body.put("level", level == null ? "standard" : level);
-        body.put("encodeType", "mp3");
-        JsonObject obj = weapiJson("song/enhance/player/url/v1", body);
+        body.put("encodeType", "flac");
+        if ("sky".equals(level)) body.put("immerseType", "c51");
+        JsonObject obj = apiJson(NeteaseApi.SONG_URL_V1, body);
         if (!obj.has("data") || !obj.get("data").isJsonArray()) return null;
         if (obj.get("data").getAsJsonArray().size() == 0) return null;
         JsonElement first = obj.get("data").getAsJsonArray().get(0);
@@ -623,7 +603,8 @@ public final class NeteaseClient {
     public List<String> searchHot() throws IOException {
         // NeteaseCloudMusicApi uses /hotsearchlist/get for the hot-search list; the
         // older search/hot/detail returns nothing now. Both shape data[].searchWord.
-        JsonObject obj = weapiJson("hotsearchlist/get", new HashMap<String, Object>());
+        JsonObject obj = apiJson(NeteaseApi.HOT_SEARCH_DETAIL,
+                new HashMap<String, Object>());
         List<String> out = new ArrayList<>();
         if (obj.has("data") && obj.get("data").isJsonArray()) {
             for (JsonElement el : obj.getAsJsonArray("data")) {
@@ -651,7 +632,7 @@ public final class NeteaseClient {
         body.put("offset", 0);
         body.put("total", true);
         body.put("n", 1000);
-        JsonObject obj = weapiJson("personalized/playlist", body);
+        JsonObject obj = apiJson(NeteaseApi.PERSONALIZED_PLAYLIST, body);
         List<NeteasePlaylist> out = new ArrayList<>();
         if (obj.has("result") && obj.get("result").isJsonArray()) {
             // Cap to the requested limit: without a logged-in cookie the endpoint
@@ -668,35 +649,64 @@ public final class NeteaseClient {
     }
 
     /**
-     * Search songs by keyword (type=1). Pagination via offset/limit.
-     * Uses the legacy {@code /search/get} weapi endpoint — the newer
-     * {@code /cloudsearch} requires eapi encryption which we don't ship
-     * yet. The legacy endpoint still returns the same song fields, just
-     * under the older {@code album/artists/duration} field names; the
-     * {@link #parseSong} helper falls back to those.
+     * Search songs by keyword (type=1). Pagination via offset/limit. Uses the
+     * current enhanced API definition ({@code /api/cloudsearch/pc} over eapi)
+     * rather than the legacy web-search endpoint, whose result set can drift
+     * away from the submitted keyword.
      */
-    public List<NeteaseSong> searchSongs(String keyword, int limit, int offset) throws IOException {
+    public static final class SongSearchPage {
+        public final List<NeteaseSong> songs;
+        /** Total number reported by cloudsearch, or -1 when the server omitted it. */
+        public final int total;
+        /** Raw rows consumed by this page, before QPlayer's junk-row filter. */
+        public final int consumed;
+
+        SongSearchPage(List<NeteaseSong> songs, int total, int consumed) {
+            this.songs = songs;
+            this.total = total;
+            this.consumed = consumed;
+        }
+
+        public boolean hasMore(int offset, int requestedLimit) {
+            int next = offset + consumed;
+            return total >= 0 ? next < total : consumed >= requestedLimit;
+        }
+    }
+
+    public SongSearchPage searchSongsPage(String keyword, int limit, int offset) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("s", keyword);
         body.put("type", 1);
         body.put("limit", limit);
         body.put("offset", offset);
-        JsonObject obj = weapiJson("search/get", body);
+        body.put("total", true);
+        JsonObject obj = apiJson(NeteaseApi.CLOUD_SEARCH, body);
         List<NeteaseSong> out = new ArrayList<>();
+        int total = -1;
+        int consumed = 0;
         if (obj.has("result") && obj.get("result").isJsonObject()) {
             JsonObject result = obj.getAsJsonObject("result");
+            if (result.has("songCount") && !result.get("songCount").isJsonNull()) {
+                total = result.get("songCount").getAsInt();
+            }
             if (result.has("songs") && result.get("songs").isJsonArray()) {
-                for (JsonElement el : result.getAsJsonArray("songs")) {
+                JsonArray songs = result.getAsJsonArray("songs");
+                consumed = songs.size();
+                for (JsonElement el : songs) {
                     if (!el.isJsonObject()) continue;
                     out.add(parseSong(el.getAsJsonObject()));
                 }
             }
         }
-        return filterJunkNumericNames(out, keyword);
+        return new SongSearchPage(filterJunkNumericNames(out, keyword), total, consumed);
     }
 
-    /** The legacy {@code search/get} endpoint occasionally mixes in low-quality UGC
-     *  tracks whose {@code name} is literally just a number (e.g. a DJ/sample-pack
+    public List<NeteaseSong> searchSongs(String keyword, int limit, int offset) throws IOException {
+        return searchSongsPage(keyword, limit, offset).songs;
+    }
+
+    /** Search can include low-quality UGC tracks whose {@code name} is literally
+     *  just a number (e.g. a DJ/sample-pack
      *  index) — real, playable songs server-side, just noise for a text keyword
      *  search. Drop them, unless the user's own keyword is itself numeric (so
      *  searching "67" still finds a song actually named "67"). */
@@ -716,7 +726,7 @@ public final class NeteaseClient {
         body.put("id", playlistId);
         body.put("n", 1000);
         body.put("s", 8);
-        JsonObject obj = weapiJson("v6/playlist/detail", body);
+        JsonObject obj = apiJson(NeteaseApi.PLAYLIST_DETAIL, body);
         if (!obj.has("playlist") || !obj.get("playlist").isJsonObject()) return null;
         return parsePlaylist(obj.getAsJsonObject("playlist"));
     }
@@ -735,10 +745,10 @@ public final class NeteaseClient {
         // empty), s=8 is the collector count the endpoint expects.
         detailBody.put("n", 100000);
         detailBody.put("s", 8);
-        JsonObject detail = weapiJson("v6/playlist/detail", detailBody);
+        JsonObject detail = apiJson(NeteaseApi.PLAYLIST_DETAIL, detailBody);
         List<NeteaseSong> out = new ArrayList<>();
-        // No playlist object => netease refused it (e.g. creator set it private); weapiJson
-        // has already surfaced the reason as a toast, so just return empty here.
+        // No playlist object => netease refused it (e.g. creator set it private);
+        // apiJson has already surfaced the reason as a toast, so return empty here.
         if (!detail.has("playlist") || !detail.get("playlist").isJsonObject()) return out;
         JsonObject pl = detail.getAsJsonObject("playlist");
         // Newer responses populate tracks[] directly when n is small enough. Require it
@@ -770,7 +780,7 @@ public final class NeteaseClient {
         ids.append(']');
         Map<String, Object> songBody = new HashMap<>();
         songBody.put("c", ids.toString());
-        JsonObject songResp = weapiJson("v3/song/detail", songBody);
+        JsonObject songResp = apiJson(NeteaseApi.SONG_DETAIL, songBody);
         if (songResp.has("songs") && songResp.get("songs").isJsonArray()) {
             for (JsonElement el : songResp.getAsJsonArray("songs")) {
                 if (!el.isJsonObject()) continue;
@@ -848,41 +858,28 @@ public final class NeteaseClient {
      * Collect (subscribe) or un-collect (unsubscribe) a playlist for the signed-in user.
      * True when code == 200.
      *
-     * <p>The two directions ride different transports because Netease's risk control
-     * diverges by direction:
-     * <ul>
-     *   <li><b>subscribe</b> → {@code /xeapi/playlist/subscribe}. The official Android
-     *       app moved collecting onto the newest "xeapi" scheme; the old eapi endpoint
-     *       now trips code 405 "操作过于频繁" regardless of the anti-cheat token (the
-     *       hard-coded {@code checkToken} is stale server-side). xeapi clears it.</li>
-     *   <li><b>unsubscribe</b> → {@code /eapi/playlist/unsubscribe}. Un-collecting is
-     *       laxly controlled and keeps working over plain eapi with no token, so we
-     *       leave it on the simpler path.</li>
-     * </ul>
+     * <p>Both directions follow api-enhanced's eapi definition with checkToken
+     * enabled; subscribe additionally carries the token value in its body.
      */
     public boolean playlistSubscribe(long playlistId, boolean subscribe) throws IOException {
-        // Matches api-enhanced's playlist_subscribe.js: both directions go through eapi
-        // with the anti-cheat token forced on; subscribe also carries the token value in
-        // the body. (An earlier attempt used xeapi for subscribe, which the server now
-        // answers with "操作频繁".)
-        String path = subscribe ? "/api/playlist/subscribe" : "/api/playlist/unsubscribe";
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", playlistId);
         if (subscribe) body.put("checkToken", CHECK_TOKEN);
-        JsonObject obj = eapiJson(path, body, true);
+        JsonObject obj = apiJson(subscribe
+                ? NeteaseApi.PLAYLIST_SUBSCRIBE
+                : NeteaseApi.PLAYLIST_UNSUBSCRIBE, body);
         return obj.has("code") && !obj.get("code").isJsonNull() && obj.get("code").getAsInt() == 200;
     }
 
     /**
      * Fetch full metadata for a single song. Used as a cover-URL fallback
-     * when legacy {@code /search/get} returns album rows without
-     * {@code picUrl} populated — {@code /v3/song/detail} always carries it.
+     * when a search row omits {@code picUrl}; {@code /v3/song/detail} carries it.
      * Returns {@code null} if the song is missing or the API blocks us.
      */
     public NeteaseSong songDetail(long songId) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("c", "[{\"id\":" + songId + "}]");
-        JsonObject obj = weapiJson("v3/song/detail", body);
+        JsonObject obj = apiJson(NeteaseApi.SONG_DETAIL, body);
         if (!obj.has("songs") || !obj.get("songs").isJsonArray()) return null;
         JsonArray arr = obj.getAsJsonArray("songs");
         if (arr.size() == 0 || !arr.get(0).isJsonObject()) return null;
@@ -903,7 +900,7 @@ public final class NeteaseClient {
         sb.append(']');
         Map<String, Object> body = new HashMap<>();
         body.put("c", sb.toString());
-        JsonObject obj = weapiJson("v3/song/detail", body);
+        JsonObject obj = apiJson(NeteaseApi.SONG_DETAIL, body);
         List<NeteaseSong> out = new ArrayList<>();
         if (!obj.has("songs") || !obj.get("songs").isJsonArray()) return out;
         for (JsonElement el : obj.getAsJsonArray("songs")) {
@@ -923,7 +920,7 @@ public final class NeteaseClient {
      */
     public long loginUid() throws IOException {
         if (!isLoggedIn()) return 0L;
-        JsonObject obj = weapiJson("w/nuser/account/get", new HashMap<String, Object>());
+        JsonObject obj = apiJson(NeteaseApi.LOGIN_STATUS, new HashMap<String, Object>());
         if (!obj.has("profile") || obj.get("profile").isJsonNull()) return 0L;
         JsonObject p = obj.getAsJsonObject("profile");
         if (!p.has("userId") || p.get("userId").isJsonNull()) return 0L;
@@ -943,7 +940,7 @@ public final class NeteaseClient {
         body.put("limit", limit);
         body.put("offset", 0);
         body.put("includeVideo", true);
-        JsonObject obj = weapiJson("user/playlist", body);
+        JsonObject obj = apiJson(NeteaseApi.USER_PLAYLIST, body);
         List<NeteasePlaylist> out = new ArrayList<>();
         if (obj.has("playlist") && obj.get("playlist").isJsonArray()) {
             for (JsonElement el : obj.getAsJsonArray("playlist")) {
@@ -984,7 +981,7 @@ public final class NeteaseClient {
     public List<NeteaseSong> recentPlayed(int limit) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("limit", limit);
-        JsonObject obj = weapiJson("play-record/song/list", body);
+        JsonObject obj = apiJson(NeteaseApi.RECENT_SONGS, body);
         List<NeteaseSong> out = new ArrayList<>();
         if (!obj.has("data") || !obj.get("data").isJsonObject()) return out;
         JsonObject data = obj.getAsJsonObject("data");
@@ -1069,7 +1066,7 @@ public final class NeteaseClient {
             logs.add(entry);
             Map<String, Object> body = new HashMap<>();
             body.put("logs", logs.toString());
-            weapiJson("feedback/weblog", body, false);
+            apiJson(NeteaseApi.WEBLOG, body, false);
         } catch (IOException e) {
             Logger.warn("scrobble failed for song {}: {}", songId, e.getMessage());
         }
@@ -1087,13 +1084,15 @@ public final class NeteaseClient {
     public dev.t1m3.qplayer.netease.dto.NeteaseLyric lyric(long songId) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("id", songId);
-        // SPlayer sends each version flag = 0 ("give me whatever you have").
+        body.put("cp", false);
         body.put("lv", 0);
         body.put("kv", 0);
         body.put("tv", 0);
         body.put("rv", 0);
         body.put("yv", 0);
-        JsonObject obj = weapiJson("song/lyric/v1", body);
+        body.put("ytv", 0);
+        body.put("yrv", 0);
+        JsonObject obj = apiJson(NeteaseApi.LYRIC_NEW, body);
         dev.t1m3.qplayer.netease.dto.NeteaseLyric out =
                 new dev.t1m3.qplayer.netease.dto.NeteaseLyric();
         out.lrc     = extractLyricField(obj, "lrc");
@@ -1122,26 +1121,14 @@ public final class NeteaseClient {
      * usually only care about the success flag.
      */
     public boolean like(long songId, boolean isLike) throws IOException {
-        // Tier 1: xeapi /radio/like — the official app's encrypted mobile path.
-        // Single-song favoriting hits the same risk control that pushed playlist
-        // subscribe onto xeapi, so try it here first. Quiet (no toast / no
-        // exception): a non-200 or a transport error just falls through to weapi.
-        try {
-            int xc = xeapiCode("/api/radio/like",
-                    "trackId=" + songId + "&like=" + isLike + "&alg=itembased&time=3");
-            if (xc == 200) return true;
-            Logger.warn("xeapi radio/like non-200 for {} (like={}): code {}", songId, isLike, xc);
-        } catch (IOException e) {
-            Logger.warn("xeapi radio/like failed for {} (like={}): {}", songId, isLike, e.getMessage());
-        }
-        // Tier 2: legacy weapi /radio/like. Quiet — toggleLike still has the playlist
-        // fallback (setFavorite) after this, so a failure here must not toast.
         Map<String, Object> body = new HashMap<>();
         body.put("trackId", songId);
         body.put("like", isLike);
         body.put("alg", "itembased");
         body.put("time", "3");
-        JsonObject obj = weapiJson("radio/like", body, false);
+        // Quiet: toggleLike still has the playlist fallback (setFavorite), so an
+        // intermediate risk-control failure must not surface as the final error.
+        JsonObject obj = apiJson(NeteaseApi.LIKE, body, false);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
             Logger.warn("netease radio/like failed for {} (like={}): {}",
@@ -1196,7 +1183,7 @@ public final class NeteaseClient {
         body.put("imme", "true");
         // Quiet: manipulatePlaylistTracks retries on code 512, and setFavorite uses this
         // as the fallback tier of toggleLike — an intermediate failure must not toast.
-        return weapiJson("playlist/manipulate/tracks", body, false);
+        return apiJson(NeteaseApi.PLAYLIST_TRACKS, body, false);
     }
 
     /**
@@ -1209,7 +1196,7 @@ public final class NeteaseClient {
         body.put("name", name);
         body.put("privacy", privacy ? "10" : "0");
         body.put("type", "NORMAL");
-        JsonObject obj = weapiJson("playlist/create", body);
+        JsonObject obj = apiJson(NeteaseApi.PLAYLIST_CREATE, body);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) return 0L;
         if (obj.has("id") && !obj.get("id").isJsonNull()) return obj.get("id").getAsLong();
@@ -1223,7 +1210,7 @@ public final class NeteaseClient {
     public boolean deletePlaylist(long playlistId) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("ids", "[" + playlistId + "]");
-        JsonObject obj = weapiJson("playlist/remove", body);
+        JsonObject obj = apiJson(NeteaseApi.PLAYLIST_DELETE, body);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
             Logger.warn("playlist/remove failed id={}: {}", playlistId, truncate(obj.toString(), 300));
@@ -1250,7 +1237,7 @@ public final class NeteaseClient {
         body.put("nos_product", 0);
         body.put("return_body", "{\"code\":200,\"size\":\"$(ObjectSize)\"}");
         body.put("type", "other");
-        JsonObject obj = weapiJson("nos/token/alloc", body);
+        JsonObject obj = apiJson(NeteaseApi.NOS_TOKEN_ALLOC, body);
         if (!obj.has("result") || !obj.get("result").isJsonObject()) {
             Logger.warn("nos/token/alloc failed: {}", truncate(obj.toString(), 300));
             return 0L;
@@ -1294,7 +1281,7 @@ public final class NeteaseClient {
         Map<String, Object> body = new HashMap<>();
         body.put("id", playlistId);
         body.put("coverImgId", coverImgId);
-        JsonObject obj = weapiJson("playlist/cover/update", body);
+        JsonObject obj = apiJson(NeteaseApi.PLAYLIST_COVER_UPDATE, body);
         int code = obj.has("code") && !obj.get("code").isJsonNull() ? obj.get("code").getAsInt() : -1;
         if (code != 200) {
             Logger.warn("playlist/cover/update failed id={}: {}", playlistId, truncate(obj.toString(), 300));
@@ -1311,7 +1298,7 @@ public final class NeteaseClient {
         if (uid == 0L) return java.util.Collections.emptySet();
         Map<String, Object> body = new HashMap<>();
         body.put("uid", uid);
-        JsonObject obj = weapiJson("song/like/get", body);
+        JsonObject obj = apiJson(NeteaseApi.LIKE_LIST, body);
         java.util.Set<Long> out = new java.util.HashSet<>();
         if (obj.has("ids") && obj.get("ids").isJsonArray()) {
             for (JsonElement el : obj.getAsJsonArray("ids")) {
@@ -1328,7 +1315,8 @@ public final class NeteaseClient {
      */
     public List<NeteaseSong> recommendSongs() throws IOException {
         if (!isLoggedIn()) return java.util.Collections.emptyList();
-        JsonObject obj = weapiJson("v1/discovery/recommend/songs", new HashMap<String, Object>());
+        JsonObject obj = apiJson(NeteaseApi.RECOMMEND_SONGS,
+                new HashMap<String, Object>());
         List<NeteaseSong> out = new ArrayList<>();
         // Newer schema: data.dailySongs[]. Legacy: recommend[].
         JsonArray arr = null;
@@ -1356,7 +1344,7 @@ public final class NeteaseClient {
     public dev.t1m3.qplayer.netease.dto.NeteaseUser userDetail(long uid) throws IOException {
         if (uid == 0L) return null;
         Map<String, Object> body = new HashMap<>();
-        JsonObject obj = weapiJson("v1/user/detail/" + uid, body);
+        JsonObject obj = apiJson(NeteaseApi.userDetail(uid), body);
         if (!obj.has("profile") || !obj.get("profile").isJsonObject()) return null;
         JsonObject p = obj.getAsJsonObject("profile");
         dev.t1m3.qplayer.netease.dto.NeteaseUser out =
@@ -1376,7 +1364,7 @@ public final class NeteaseClient {
     /** Best-effort server-side logout. Local cookies are wiped regardless. */
     public void logout() {
         try {
-            weapiCall("logout", new HashMap<String, Object>());
+            apiJson(NeteaseApi.LOGOUT, new HashMap<String, Object>(), false);
         } catch (Throwable e) {
             // Server may 301; that's fine, we clear locally anyway.
         }
@@ -1392,8 +1380,8 @@ public final class NeteaseClient {
      */
     public String qrLoginKey() throws IOException {
         Map<String, Object> body = new HashMap<>();
-        body.put("type", 1);
-        JsonObject obj = weapiJson("login/qrcode/unikey", body);
+        body.put("type", 3);
+        JsonObject obj = apiJson(NeteaseApi.QR_LOGIN_KEY, body, false);
         if (!obj.has("unikey") || obj.get("unikey").isJsonNull()) {
             throw new IOException("qrLoginKey: no unikey in response: " + obj);
         }
@@ -1455,8 +1443,8 @@ public final class NeteaseClient {
     public int qrLoginCheck(String unikey) throws IOException {
         Map<String, Object> body = new HashMap<>();
         body.put("key", unikey);
-        body.put("type", 1);
-        JsonObject obj = weapiJson("login/qrcode/client/login", body);
+        body.put("type", 3);
+        JsonObject obj = apiJson(NeteaseApi.QR_LOGIN_CHECK, body, false);
         if (!obj.has("code")) {
             throw new IOException("qrLoginCheck: no code in response: " + obj);
         }

@@ -1,7 +1,10 @@
 package dev.t1m3.qplayer.bridge;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
+import dev.t1m3.qplayer.customapi.CustomSong;
+import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.netease.NeteaseClient;
+import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.store.AppDirs;
 import org.junit.Rule;
 import org.junit.Test;
@@ -246,6 +249,53 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void unifiedSearchRowsKeepSourceMenuIdentity() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("search-menu").toPath();
+            AppDirs.setBase(base.toString());
+            controller = new PlayerController(new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            NeteaseSong netease = new NeteaseSong();
+            netease.id = 42L;
+            netease.name = "network";
+            Track local = new Track();
+            local.title = "local";
+            local.filePath = "/music/local.flac";
+            CustomSong custom = new CustomSong();
+            custom.id = "external-7";
+            custom.name = "custom";
+
+            controller.searchResults.set(Arrays.asList(netease));
+            controller.localSearchResults.set(Arrays.asList(local));
+            controller.customSearchResults.set(Arrays.asList(custom));
+            controller.rebuildSearchRows();
+
+            java.util.List<SearchRow> rows = controller.searchRows.peek();
+            assertEquals(3, rows.size());
+            assertTrue(rows.get(0).menuEnabled);
+            assertEquals(42L, rows.get(0).id);
+            assertTrue(rows.get(1).menuEnabled);
+            assertEquals("/music/local.flac", rows.get(1).filePath);
+            assertTrue(rows.get(2).menuEnabled);
+            assertEquals("external-7", rows.get(2).customId);
+
+            controller.addCustomApiToCustomPlaylist("external-7");
+            assertTrue(controller.isCustomApiInCustomPlaylist("external-7"));
+            assertEquals(Track.Source.CUSTOM_API,
+                    controller.customPlaylistTracks.peek().get(0).source);
+            controller.removeCustomApiFromCustomPlaylist("external-7");
+            assertFalse(controller.isCustomApiInCustomPlaylist("external-7"));
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
     public void convertsLegacyTextSearchHistoryToVersionedJson() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
@@ -272,6 +322,44 @@ public class PlayerControllerPlaybackTest {
             assertTrue(saved.contains("\"version\":1"));
             assertTrue(saved.contains("\"items\":[\"first\",\"second\"]"));
             assertFalse(Files.exists(legacy));
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void changingSearchTextImmediatelyDropsPreviousMixedSourceRows() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("search-generation").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            NeteaseSong netease = new NeteaseSong();
+            netease.id = 1L;
+            Track local = new Track();
+            local.filePath = "/music/old.flac";
+            CustomSong custom = new CustomSong();
+            custom.id = "old-custom";
+            controller.searchResults.set(Arrays.asList(netease));
+            controller.localSearchResults.set(Arrays.asList(local));
+            controller.customSearchResults.set(Arrays.asList(custom));
+            controller.rebuildSearchRows();
+            assertEquals(3, controller.searchRows.peek().size());
+
+            controller.prepareSearch("new keyword");
+
+            assertTrue(controller.searchResults.peek().isEmpty());
+            assertTrue(controller.localSearchResults.peek().isEmpty());
+            assertTrue(controller.customSearchResults.peek().isEmpty());
+            assertTrue(controller.searchRows.peek().isEmpty());
+            assertEquals(Integer.valueOf(0), controller.resultCount.peek());
         } finally {
             if (controller != null) controller.shutdown();
             AppDirs.setBase(oldBase);

@@ -57,6 +57,9 @@ Item {
                 // in-memory filter, but large libraries still make it expensive enough
                 // to debounce together with the two network sources.
                 onTextChanged: {
+                    // Clear the previous query's mixed-source rows immediately and
+                    // invalidate its in-flight requests before waiting for debounce.
+                    player.prepareSearch(text)
                     if (text.length > 0) searchDebounce.restart()
                     else { searchDebounce.stop(); page.historyExpandLevel = 0 }
                 }
@@ -423,16 +426,19 @@ Item {
         // every sibling like real Qt does), squeezing whichever section came
         // after the fillHeight one down to nothing under a short window.
         //
-        // No per-row context menu here ("加入播放列表/复制链接" are built around
-        // neteaseId) — this list mixes netease/local/custom rows, so it drops
-        // the menu uniformly rather than threading per-kind eligibility through
-        // VirtualSongList/SongRow. Still available via Home/Playlist pages.
+        // SearchRow carries a source-specific menu identity (netease id, local path,
+        // or custom-api id), so the same right-click/long-press interaction remains
+        // available even though all three sources share one visual list.
         VirtualSongList {
             id: unifiedResults
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: query.text.length > 0
             list: player.searchRows
+            songMenu: true
+            menuEligibilityFromModel: true
+            loadMoreEnabled: player.searchHasMore && !player.searchLoading
+            onLoadMoreRequested: player.loadMoreSearch()
             onActivated: player.playSearchRow(unifiedResults.activatedIndex)
         }
     }

@@ -34,6 +34,18 @@ Menu {
             menu.model = items
             return
         }
+        // Third-party custom API ids are strings and cannot use the netease-only
+        // cache/share/server-playlist actions below. They still support QPlayer's
+        // local playlist, matching local-file search results.
+        if (s.customId) {
+            if (player.isCustomApiInCustomPlaylist(s.customId)) {
+                items.push({ text: "移出播放列表", icon: "playlist_remove", action: menu._removeCustomApiAction(s.customId) })
+            } else {
+                items.push({ text: "加入播放列表", icon: "playlist_add", action: menu._addCustomApiAction(s.customId) })
+            }
+            menu.model = items
+            return
+        }
         // Search-result/playlist-track rows hand over a NeteaseSong (".id"); queue and
         // custom-playlist rows hand over a Track (".neteaseId") instead.
         var songId = s.id !== undefined ? s.id : s.neteaseId
@@ -97,6 +109,12 @@ Menu {
     }
     function _removeLocalCustomAction(filePath) {
         return function() { player.removeLocalFromCustomPlaylist(filePath) }
+    }
+    function _addCustomApiAction(customId) {
+        return function() { player.addCustomApiToCustomPlaylist(customId) }
+    }
+    function _removeCustomApiAction(customId) {
+        return function() { player.removeCustomApiFromCustomPlaylist(customId) }
     }
     function _copyAction(songId) {
         return function() { player.copySongLink(songId) }
