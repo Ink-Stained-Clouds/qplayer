@@ -25,6 +25,45 @@ public class PlayerControllerPlaybackTest {
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
+    public void togetherQueueReplacementNeverFallsBackToTheOldNumericIndex() {
+        // A reordered queue keeps the currently audible song by id, even though it
+        // moved from index 1 to index 0.
+        assertEquals(20L, PlayerController.togetherReplacementTarget(
+                Arrays.asList(20L, 30L, 40L), 20L, 0L));
+
+        // A matching GOTO is authoritative once its target is in the new queue.
+        assertEquals(40L, PlayerController.togetherReplacementTarget(
+                Arrays.asList(20L, 30L, 40L), 20L, 40L));
+
+        // The new queue arrived before its GOTO. Defer instead of playing whatever
+        // happens to occupy the previous numeric index and echoing that mistake.
+        assertEquals(0L, PlayerController.togetherReplacementTarget(
+                Arrays.asList(30L, 40L, 50L), 20L, 0L));
+        assertEquals(0L, PlayerController.togetherReplacementTarget(
+                Arrays.asList(30L, 40L, 50L), 20L, 20L));
+    }
+
+    @Test
+    public void togetherRemoteCommandNeverReplaysAnOlderSnapshot() {
+        assertTrue(PlayerController.isNewTogetherRemoteCommand(
+                200L, "goto:new", 100L, "goto:old", -1L, ""));
+        assertFalse(PlayerController.isNewTogetherRemoteCommand(
+                99L, "goto:older", 100L, "goto:old", -1L, ""));
+
+        // A command already queued on the main thread is part of the ordering floor;
+        // a replica returning an intermediate snapshot must not enqueue behind it.
+        assertFalse(PlayerController.isNewTogetherRemoteCommand(
+                150L, "goto:middle", 100L, "goto:old", 200L, "goto:new"));
+        assertFalse(PlayerController.isNewTogetherRemoteCommand(
+                200L, "goto:new", 100L, "goto:old", 200L, "goto:new"));
+
+        // Millisecond timestamps can collide; a distinct command observed at the
+        // same sequence is still allowed, while exact signatures are deduplicated.
+        assertTrue(PlayerController.isNewTogetherRemoteCommand(
+                200L, "pause:new", 200L, "goto:new", -1L, ""));
+    }
+
+    @Test
     public void selectingTrackAfterSessionRestoreDoesNotReplayItOnResume() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();

@@ -585,6 +585,10 @@ public final class PlayerController {
     private volatile long togetherSuppressReportsUntil;
     private volatile long togetherLastRemoteSeq = -1L;
     private volatile String togetherLastRemoteCommand = "";
+    /** Remote command queued onto the host main thread but not applied yet. Without
+     *  this guard, a slow frame can enqueue the same snapshot on consecutive polls. */
+    private volatile String togetherPendingRemoteCommand = "";
+    private volatile long togetherPendingRemoteSeq = -1L;
     private volatile String togetherLastQueueSignature = "";
     private volatile long togetherLastSongId;
     private volatile boolean togetherLastPlaying;
@@ -4566,6 +4570,8 @@ public final class PlayerController {
         togetherQueueVersion = 0L;
         togetherLastRemoteSeq = -1L;
         togetherLastRemoteCommand = "";
+        togetherPendingRemoteCommand = "";
+        togetherPendingRemoteSeq = -1L;
         togetherSuppressReportsUntil = System.currentTimeMillis() + 1800L;
         publishTogetherRoom(room);
         baselineTogetherLocal();
@@ -4596,6 +4602,8 @@ public final class PlayerController {
         togetherUserId = 0L;
         pendingTogetherDesiredPlaying = null;
         pendingTogetherTargetSongId = 0L;
+        togetherPendingRemoteCommand = "";
+        togetherPendingRemoteSeq = -1L;
         post(() -> {
             listenTogetherInRoom.set(false);
             listenTogetherRoomId.set("");
@@ -4682,20 +4690,29 @@ public final class PlayerController {
                 + command.serverSeq + ":" + command.commandType + ":"
                 + command.targetSongId + ":" + command.progressMs + ":" + command.playStatus;
         boolean newCommand = command != null && command.userId != togetherUserId
-                && (initial || command.serverSeq > togetherLastRemoteSeq
-                    || !remoteSignature.equals(togetherLastRemoteCommand));
-        if (newCommand) {
-            togetherLastRemoteSeq = command.serverSeq;
-            togetherLastRemoteCommand = remoteSignature;
-            if (!initial) {
-                String message = togetherCommandToast(command.commandType);
-                if (!message.isEmpty()) showToast(message);
-            }
-        }
+                && isNewTogetherRemoteCommand(command.serverSeq, remoteSignature,
+                        togetherLastRemoteSeq, togetherLastRemoteCommand,
+                        togetherPendingRemoteSeq, togetherPendingRemoteCommand);
 
         String remoteQueueSignature = songIdsSignature(snapshot.songIds);
         boolean replaceQueue = !snapshot.songIds.isEmpty()
                 && !remoteQueueSignature.equals(currentTogetherQueueSignature());
+
+        // The playlist and its matching GOTO are separate server writes. A poll can
+        // therefore observe the new list together with the previous play command.
+        // Never index into that list using playIndex: the same numeric slot can be a
+        // completely different song, which would then be reported as a local GOTO
+        // and race the real command (jump -> jump back, depending on write order).
+        // Preserve the current song when it is present; otherwise wait until the
+        // command naming a song in the new list arrives.
+        Track localTrack = currentTrack();
+        final long localSongId = localTrack != null ? localTrack.neteaseId : 0L;
+        final long replacementTarget = replaceQueue
+                ? togetherReplacementTarget(snapshot.songIds, localSongId,
+                        newCommand ? command.targetSongId : 0L)
+                : 0L;
+        if (replaceQueue && replacementTarget == 0L) return;
+
         List<NeteaseSong> replacement = replaceQueue
                 ? togetherSongDetails(snapshot.songIds) : Collections.<NeteaseSong>emptyList();
         if (!replaceQueue && !newCommand) return;
@@ -4704,24 +4721,68 @@ public final class PlayerController {
         final boolean shouldReplace = replaceQueue && !replacement.isEmpty();
         final List<NeteaseSong> songs = replacement;
         final NeteaseClient.TogetherCommand remote = newCommand ? command : null;
+        final String applyingRemoteSignature = newCommand ? remoteSignature : "";
+        if (newCommand) {
+            togetherPendingRemoteCommand = applyingRemoteSignature;
+            togetherPendingRemoteSeq = command.serverSeq;
+        }
         onMain(() -> {
-            if (!togetherActive) return;
+            if (!togetherActive) {
+                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
+                    togetherPendingRemoteCommand = "";
+                    togetherPendingRemoteSeq = -1L;
+                }
+                return;
+            }
+
+            Track currentBeforeReplacement = currentTrack();
+            long targetId = remote != null && remote.targetSongId != 0L
+                    ? remote.targetSongId
+                    : (shouldReplace ? replacementTarget : localSongId);
+            List<Track> replacementTracks = Collections.emptyList();
+            int targetIndex;
             if (shouldReplace) {
                 List<Track> tracks = new ArrayList<>(songs.size());
                 for (NeteaseSong song : songs) tracks.add(toTrack(song));
+                replacementTracks = tracks;
+                targetIndex = indexOfNeteaseTrack(tracks, targetId);
+                // A detail response can omit an unavailable song. Do not destroy the
+                // live queue or consume its GOTO until the target is actually usable.
+                if (targetIndex < 0) {
+                    if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
+                        togetherPendingRemoteCommand = "";
+                        togetherPendingRemoteSeq = -1L;
+                    }
+                    return;
+                }
                 currentQueuePlaylistId = 0L;
                 queue.clear();
-                queue.addAll(tracks);
+                queue.addAll(replacementTracks);
                 post(() -> queueTracks.set(new ArrayList<>(queue)));
+            } else {
+                targetIndex = indexOfNeteaseTrack(targetId);
             }
 
-            long targetId = remote != null ? remote.targetSongId : 0L;
-            if (targetId == 0L && playIndex >= 0 && playIndex < queue.size()) {
-                targetId = queue.get(playIndex).neteaseId;
+            if (targetIndex < 0) {
+                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
+                    togetherPendingRemoteCommand = "";
+                    togetherPendingRemoteSeq = -1L;
+                }
+                return;
             }
-            if (targetId == 0L && !queue.isEmpty()) targetId = queue.get(0).neteaseId;
-            int targetIndex = indexOfNeteaseTrack(targetId);
-            if (targetIndex < 0) return;
+
+            if (remote != null) {
+                togetherLastRemoteSeq = remote.serverSeq;
+                togetherLastRemoteCommand = applyingRemoteSignature;
+                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
+                    togetherPendingRemoteCommand = "";
+                    togetherPendingRemoteSeq = -1L;
+                }
+                if (!initial) {
+                    String message = togetherCommandToast(remote.commandType);
+                    if (!message.isEmpty()) showToast(message);
+                }
+            }
 
             // A PROGRESS report describes only a seek. NetEase still attaches the
             // sender's playStatus to it, but applying that field here incorrectly
@@ -4733,8 +4794,15 @@ public final class PlayerController {
                     ? playingIntent : remote.shouldPlay();
             long progress = remote == null ? Math.max(0L, backend.position())
                     : Math.max(0L, remote.progressMs);
-            Track current = currentTrack();
-            boolean changedTrack = current == null || current.neteaseId != targetId || shouldReplace;
+            boolean changedTrack = currentBeforeReplacement == null
+                    || currentBeforeReplacement.neteaseId != targetId;
+            // A queue-only reorder can move the current song without changing the
+            // audible source. Keep playback running and only rebind its index.
+            if (!changedTrack && shouldReplace && playIndex != targetIndex) {
+                playIndex = targetIndex;
+                final int reboundIndex = targetIndex;
+                post(() -> index.set(reboundIndex));
+            }
             if (changedTrack) {
                 pendingTogetherDesiredPlaying = desiredPlaying;
                 pendingTogetherTargetSongId = targetId;
@@ -4755,6 +4823,32 @@ public final class PlayerController {
             }
             baselineTogetherLocal();
         });
+    }
+
+    /** Selects a stable target when a remote playlist is observed. A non-zero
+     *  command target is authoritative, but only if that exact id is already in
+     *  the received list. Without one, the currently audible song must survive a
+     *  reorder; returning zero tells the caller to defer an unmatched replacement. */
+    static long togetherReplacementTarget(List<Long> remoteSongIds, long localSongId,
+            long commandTargetSongId) {
+        if (remoteSongIds == null || remoteSongIds.isEmpty()) return 0L;
+        long desired = commandTargetSongId != 0L ? commandTargetSongId : localSongId;
+        if (desired == 0L) return 0L;
+        for (Long id : remoteSongIds) {
+            if (id != null && id == desired) return desired;
+        }
+        return 0L;
+    }
+
+    /** NetEase's serverSeq is a server timestamp. Eventual-consistency reads may
+     *  briefly return an older playCommand after a newer GOTO was already seen; a
+     *  different signature alone must not make that stale command executable. */
+    static boolean isNewTogetherRemoteCommand(long candidateSeq, String candidateSignature,
+            long appliedSeq, String appliedSignature, long pendingSeq, String pendingSignature) {
+        String signature = candidateSignature == null ? "" : candidateSignature;
+        if (signature.equals(appliedSignature) || signature.equals(pendingSignature)) return false;
+        long newestSeenSeq = Math.max(appliedSeq, pendingSeq);
+        return candidateSeq > newestSeenSeq || candidateSeq == newestSeenSeq;
     }
 
     private void applyTogetherPlaying(boolean shouldPlay) {
@@ -4791,8 +4885,12 @@ public final class PlayerController {
     }
 
     private int indexOfNeteaseTrack(long songId) {
-        for (int i = 0; i < queue.size(); i++) {
-            if (queue.get(i).neteaseId == songId) return i;
+        return indexOfNeteaseTrack(queue, songId);
+    }
+
+    private static int indexOfNeteaseTrack(List<Track> tracks, long songId) {
+        for (int i = 0; i < tracks.size(); i++) {
+            if (tracks.get(i).neteaseId == songId) return i;
         }
         return -1;
     }

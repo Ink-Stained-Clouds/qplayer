@@ -36,7 +36,7 @@ Item {
                     text: "房间 " + player.listenTogetherRoomId
                     color: Theme.color.onSurfaceColor
                     fontSize: 14
-                    elide: Text.ElideMiddle
+                    wrapMode: Text.Wrap
                 }
                 Text {
                     Layout.fillWidth: true
