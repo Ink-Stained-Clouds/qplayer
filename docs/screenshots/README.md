@@ -103,7 +103,7 @@ magick docs/icon.png -resize 104x104 /tmp/qplayer-banner-icon.png
 magick /tmp/qplayer-banner-base.png \
   /tmp/qplayer-banner-preview.png -geometry +520+130 -composite \
   /tmp/qplayer-banner-icon.png -geometry +64+76 -composite \
-  -depth 8 -strip PNG32:docs/banner.png
+  -alpha off -colorspace sRGB -depth 8 -strip PNG24:docs/banner.png
 ```
 
 ## 第二张渲染图
