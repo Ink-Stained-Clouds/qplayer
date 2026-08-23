@@ -28,7 +28,7 @@ import java.util.Random;
 /** Three selectable album-driven fluid backdrops, implemented in SkSL for both hosts. */
 public final class FluidBackground {
 
-    public static final int STYLE_AMLL_S = 0;
+    public static final int STYLE_PIXI_RENDERER = 0;
     public static final int STYLE_MESH_GRADIENT = 1;
     public static final int STYLE_CLASSIC = 2;
 
@@ -36,7 +36,7 @@ public final class FluidBackground {
 
     private static final String SHADER_ROOT = "/shaders/fluid/";
     private static final String[][] SHADER_FILES = {
-            {"amll_s.sksl", "amll_s_fade.sksl"},
+            {"pixi_renderer.sksl", "pixi_renderer_fade.sksl"},
             {"meshgradient.sksl", "meshgradient.sksl"},
             {"classic.sksl", "classic_fade.sksl"}
     };
@@ -70,7 +70,8 @@ public final class FluidBackground {
     }
 
     private static int normalizeStyle(int style) {
-        return style >= STYLE_AMLL_S && style <= STYLE_CLASSIC ? style : STYLE_AMLL_S;
+        return style >= STYLE_PIXI_RENDERER && style <= STYLE_CLASSIC
+                ? style : STYLE_PIXI_RENDERER;
     }
 
     private final long startNs;
@@ -261,7 +262,7 @@ public final class FluidBackground {
             return;
         }
         boolean fading = coverPrevShader != null && fade < 1f;
-        boolean rawTexture = activeStyle == STYLE_AMLL_S;
+        boolean rawTexture = activeStyle == STYLE_PIXI_RENDERER;
         Shader currentChild = rawTexture ? coverShader : coverAdjustedShader;
         Shader previousChild = rawTexture ? coverPrevShader : coverPrevAdjustedShader;
         Shader shaded = null;
@@ -270,7 +271,7 @@ public final class FluidBackground {
                 b.setUniform("resolution", resW, resH);
                 b.setUniform("time", time);
                 b.setChild("cover", currentChild);
-                if (activeStyle == STYLE_AMLL_S) b.setUniform("bend", bendDirection);
+                if (activeStyle == STYLE_PIXI_RENDERER) b.setUniform("bend", bendDirection);
                 if (activeStyle != STYLE_CLASSIC) b.setUniform("angles", coverAngles);
                 if (fading) {
                     b.setChild("coverPrev", previousChild);

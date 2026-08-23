@@ -379,7 +379,8 @@ public final class LyricCompositor {
             lyCoverKey = title + "|" + coverUrl;
         }
         boolean bgStatic = settings != null && settings.lyricBgStatic();
-        int bgStyle = settings != null ? settings.lyricBgStyle() : FluidBackground.STYLE_AMLL_S;
+        int bgStyle = settings != null
+                ? settings.lyricBgStyle() : FluidBackground.STYLE_PIXI_RENDERER;
         int bgClip = canvas.save();
         canvas.clipRect(Rect.makeWH(w, h));
         fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,

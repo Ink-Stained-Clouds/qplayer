@@ -1,7 +1,7 @@
-# AMLL Core Mesh Gradient
+# AMLL Core Background Renderers
 
-The Fluid lyric background contains a Java/Skija and SkSL port of the Mesh
-Gradient renderer from @applemusic-like-lyrics/core.
+QPlayer's Pixi and Mesh Gradient lyric backgrounds contain Java/Skija and SkSL
+ports of background renderers from @applemusic-like-lyrics/core.
 
 - Upstream project: https://github.com/amll-dev/applemusic-like-lyrics
 - Upstream package: packages/core
@@ -10,6 +10,7 @@ Gradient renderer from @applemusic-like-lyrics/core.
 
 Ported source areas:
 
+- src/bg-render/pixi-renderer.ts (including its historical S-curve deformation)
 - src/bg-render/mesh-renderer/index.ts
 - src/bg-render/mesh-renderer/cp-presets.ts
 - src/bg-render/mesh-renderer/cp-generate.ts
@@ -18,7 +19,9 @@ Ported source areas:
 
 QPlayer modifications made in 2026:
 
-- TypeScript/WebGL was rewritten as Java 21 with Skija drawVertices.
+- The PixiJS renderer and its filters were rewritten as a SkSL runtime effect.
+- The TypeScript/WebGL Mesh Gradient renderer was rewritten as Java 21 with
+  Skija drawVertices.
 - GLSL was rewritten as a SkSL runtime-effect resource.
 - Control-point presets were moved into a data resource.
 - Album transitions and static-frame caching were integrated with QPlayer's

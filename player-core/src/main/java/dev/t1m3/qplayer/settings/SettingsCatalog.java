@@ -43,8 +43,8 @@ public final class SettingsCatalog {
     /** Fluid backdrop renderer, kept separate from dynamic/static so every style
      *  can still use the existing battery-saving static cache. */
     public static final String BG_STYLE_KEY = "lyricBgStyle";
-    public static final int BG_STYLE_AMLL_S = 0;
-    public static final int BG_STYLE_FLUID = 1;
+    public static final int BG_STYLE_PIXI_RENDERER = 0;
+    public static final int BG_STYLE_MESH_GRADIENT = 1;
     public static final int BG_STYLE_CLASSIC = 2;
 
     // Dark-mode row values (the segmented control's indices).
@@ -136,8 +136,8 @@ public final class SettingsCatalog {
         out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
                 .desc("动态流动 / 静态(渲染一次,更省电)")
                 .build());
-        out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_AMLL_S,
-                        "Slik", "Mesh Gradient", "Classic")
+        out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_PIXI_RENDERER,
+                        "Pixi Renderer", "Mesh Gradient", "Classic")
                 .desc("切换歌词页的流体背景算法")
                 .build());
         // ---- 本地 -----------------------------------------------------------
