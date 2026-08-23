@@ -97,6 +97,7 @@ public final class QPlayerActivity extends Activity {
 
         // Cookies / config live in app-private storage on Android.
         AppDirs.setBase(getFilesDir().getAbsolutePath());
+        AppDirs.migrateLegacyLayout();
 
         // A downloaded update APK (see downloadAndInstallUpdate below) has served its
         // purpose once the app relaunches -- it's never deleted right after handing it

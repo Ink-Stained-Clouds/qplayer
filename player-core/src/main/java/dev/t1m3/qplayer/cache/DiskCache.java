@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.cache;
 
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
@@ -8,13 +9,16 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 
 /**
  * Unified disk cache for audio files, lyrics and cover images.
  * <p>
- * Three sub-directories under {@code AppDirs.base()/cache/}:
- * {@code audio/}, {@code lyric/}, {@code image/}.
+ * Four sub-directories under {@code AppDirs.cacheBase()/cache/}:
+ * {@code audio/}, {@code lyric/}, {@code image/}, {@code thumb64/}.
  * <p>
  * LRU eviction by last-modified time: after every write the total size is
  * checked against {@link #maxSizeBytes} and oldest files are deleted until
@@ -27,7 +31,7 @@ public final class DiskCache {
 
     /** Not final: {@link #setBaseDir} lets the desktop settings page repoint the
      *  cache root at runtime, which a compile-time constant couldn't support. */
-    private volatile String baseDir = AppDirs.cacheBase() + "/cache";
+    private volatile String baseDir = AppDirs.cacheDir().toString();
 
     /** Sub-directory names. */
     public static final String AUDIO   = "audio";
@@ -64,7 +68,7 @@ public final class DiskCache {
      *  just let the old location go stale. */
     public void setBaseDir(String dir) {
         if (dir == null || dir.trim().isEmpty()) return;
-        this.baseDir = dir + "/cache";
+        this.baseDir = Paths.get(dir, "cache").toString();
     }
 
     public String baseDir() {
@@ -244,13 +248,11 @@ public final class DiskCache {
 
     private void writeBytes(byte[] data, String path) {
         if (data == null || path == null) return;
-        ensureParent(path);
-        try (FileOutputStream out = new FileOutputStream(path)) {
-            out.write(data);
+        try {
+            StorageFiles.writeBytesAtomic(Paths.get(path), data);
             Logger.info("disk cache written: {} ({} B)", fileName(path), data.length);
         } catch (Throwable e) {
             Logger.warn("disk cache write failed: {}", e.getMessage());
-            cleanPartial(path);
         }
         evictIfNeeded();
     }
@@ -266,23 +268,26 @@ public final class DiskCache {
         if (url == null || path == null) return;
         ensureParent(path);
         HttpURLConnection c = null;
+        Path target = Paths.get(path);
+        Path pending = StorageFiles.pendingPath(target);
         try {
             c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
             c.setRequestProperty("User-Agent", "qplayer/1.0");
             try (InputStream in = c.getInputStream();
-                 FileOutputStream out = new FileOutputStream(path)) {
+                 FileOutputStream out = new FileOutputStream(pending.toFile())) {
                 byte[] buf = new byte[16384];
                 int n;
                 while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
             }
+            StorageFiles.replace(pending, target);
             if (!quiet) {
                 Logger.info("disk cache downloaded: {} ({} B)", fileName(path), new File(path).length());
             }
         } catch (Throwable e) {
             Logger.warn("disk cache download failed: {}", e.getMessage());
-            cleanPartial(path);
+            try { Files.deleteIfExists(pending); } catch (Throwable ignored) {}
         } finally {
             if (c != null) c.disconnect();
         }
@@ -339,11 +344,6 @@ public final class DiskCache {
     private static void ensureParent(String path) {
         File parent = new File(path).getParentFile();
         if (parent != null && !parent.exists()) parent.mkdirs();
-    }
-
-    private static void cleanPartial(String path) {
-        File f = new File(path);
-        if (f.exists()) f.delete();
     }
 
     private static long dirSize(File dir) {

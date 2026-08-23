@@ -81,13 +81,17 @@ public final class Main {
             return;
         }
 
+        // We own the instance lock, so no running process can still write the old
+        // flat layout while it is moved. SingleInstance has already migrated just
+        // its lock/port pair so this check itself also works across upgrades.
+        AppDirs.migrateLegacyLayout();
+
         // Put the rolling log under the writable app data dir (~/.qplayer/logs) —
         // when installed to Program Files the working dir isn't writable, so a
         // CWD-relative logs/ would silently fail. Set before log4j2 first inits
         // (in Log4j2Sink below); log4j2.xml reads ${sys:qplayer.logs}.
         if (System.getProperty("qplayer.logs") == null) {
-            System.setProperty("qplayer.logs",
-                    new File(dev.t1m3.qplayer.store.AppDirs.base(), "logs").getAbsolutePath());
+            System.setProperty("qplayer.logs", AppDirs.logsDir().toFile().getAbsolutePath());
         }
 
         // Route the shared player-core logger to log4j2 (colored console + rolling
@@ -110,10 +114,9 @@ public final class Main {
         // served its purpose once the app restarts -- it's never deleted right
         // after launching it (risky to delete a file an installer might still be
         // reading from), and <cacheBase>/updates is a sibling of DiskCache's own
-        // cache/ tree, not inside it, so it's otherwise invisible to the
-        // cache-size display and "清除缓存" button forever. Sweep it at every
-        // startup instead.
-        deleteRecursive(new File(AppDirs.cacheBase(), "updates"));
+        // Installer downloads are transient. Sweep them at every startup after
+        // any legacy updates/ directory has been migrated into cache/updates/.
+        deleteRecursive(AppDirs.updatesDir().toFile());
 
         // Settings: the catalog, the value plumbing and every side effect live in
         // player-core (shared with Android). The host contributes a store, the
@@ -217,6 +220,7 @@ public final class Main {
         if (!initialCacheFolder.isEmpty()) {
             AppDirs.setCacheBase(initialCacheFolder);
             controller.diskCache.setBaseDir(initialCacheFolder);
+            deleteRecursive(AppDirs.updatesDir().toFile());
         }
         settings.onChange("cacheFolder", v -> {
             String folder = String.valueOf(v);
@@ -300,7 +304,7 @@ public final class Main {
     private static void downloadAndInstallUpdate(PlayerController controller, String[] urls) {
         new Thread(() -> {
             String name = urls.length > 0 ? fileNameOf(urls[0]) : "qplayer-update";
-            File dir = new File(AppDirs.cacheBase(), "updates");
+            File dir = AppDirs.updatesDir().toFile();
             dir.mkdirs();
             File out = new File(dir, name);
             for (String url : urls) {

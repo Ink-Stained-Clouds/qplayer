@@ -5,12 +5,11 @@ import com.google.gson.reflect.TypeToken;
 
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -35,7 +34,7 @@ public final class SongMetaIndex {
 
     private static final int MAX_ENTRIES = 3000;
 
-    private final File file = new File(AppDirs.base(), "song_meta_index.json");
+    private final File file = AppDirs.indexFile("songs.json").toFile();
     private final Gson gson = new Gson();
     private final Map<Long, NeteaseSong> byId = Collections.synchronizedMap(
             new LinkedHashMap<Long, NeteaseSong>(256, 0.75f, true) {
@@ -49,7 +48,7 @@ public final class SongMetaIndex {
     public void load() {
         try {
             if (!file.isFile()) return;
-            String json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            String json = StorageFiles.readUtf8(file.toPath());
             Type t = new TypeToken<List<NeteaseSong>>() {}.getType();
             List<NeteaseSong> list = gson.fromJson(json, t);
             if (list == null) return;
@@ -118,13 +117,11 @@ public final class SongMetaIndex {
     public void save() {
         if (!dirty) return;
         try {
-            File parent = file.getParentFile();
-            if (parent != null && !parent.exists()) parent.mkdirs();
             List<NeteaseSong> snapshot;
             synchronized (byId) {
                 snapshot = new ArrayList<>(byId.values());
             }
-            Files.write(file.toPath(), gson.toJson(snapshot).getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(file.toPath(), gson.toJson(snapshot));
             dirty = false;
         } catch (Throwable e) {
             Logger.warn("SongMetaIndex save failed: {}", e.getMessage());

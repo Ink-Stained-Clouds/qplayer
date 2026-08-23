@@ -5,12 +5,11 @@ import com.google.gson.reflect.TypeToken;
 
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -55,7 +54,7 @@ public final class PlaylistCacheIndex {
 
     private static final int MAX_ENTRIES = 300;
 
-    private final File file = new File(AppDirs.base(), "playlist_cache_index.json");
+    private final File file = AppDirs.indexFile("playlists.json").toFile();
     private final Gson gson = new Gson();
     private final Map<Long, Cached> byId = Collections.synchronizedMap(
             new LinkedHashMap<Long, Cached>(64, 0.75f, true) {
@@ -69,7 +68,7 @@ public final class PlaylistCacheIndex {
     public void load() {
         try {
             if (!file.isFile()) return;
-            String json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            String json = StorageFiles.readUtf8(file.toPath());
             Type t = new TypeToken<List<Cached>>() {}.getType();
             List<Cached> list = gson.fromJson(json, t);
             if (list == null) return;
@@ -124,13 +123,11 @@ public final class PlaylistCacheIndex {
     public void save() {
         if (!dirty) return;
         try {
-            File parent = file.getParentFile();
-            if (parent != null && !parent.exists()) parent.mkdirs();
             List<Cached> snap;
             synchronized (byId) {
                 snap = new ArrayList<>(byId.values());
             }
-            Files.write(file.toPath(), gson.toJson(snap).getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(file.toPath(), gson.toJson(snap));
             dirty = false;
         } catch (Throwable e) {
             Logger.warn("PlaylistCacheIndex save failed: {}", e.getMessage());

@@ -6,15 +6,14 @@ import com.google.gson.JsonObject;
 
 import dev.t1m3.qplayer.settings.SettingsStore;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 
 /**
  * Desktop half of the settings framework: a JSON file at
- * {@code <AppDirs.base()>/settings.json}. Everything else about settings —
+ * {@code <AppDirs.base()>/config/settings.json}. Everything else about settings —
  * which ones exist, their defaults, what they do, how they're rendered — lives
  * in {@code player-core}'s {@code dev.t1m3.qplayer.settings}, shared with
  * Android (which stores the same keys in SharedPreferences).
@@ -27,7 +26,7 @@ public final class JsonSettingsStore implements SettingsStore {
     private JsonObject store;
 
     public JsonSettingsStore() {
-        this.file = new File(AppDirs.base(), "settings.json");
+        this.file = AppDirs.configFile("settings.json").toFile();
         this.store = read(file);
     }
 
@@ -84,7 +83,7 @@ public final class JsonSettingsStore implements SettingsStore {
     private static JsonObject read(File f) {
         try {
             if (f.isFile()) {
-                String json = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+                String json = StorageFiles.readUtf8(f.toPath());
                 JsonObject o = GSON.fromJson(json, JsonObject.class);
                 if (o != null) return o;
             }
@@ -96,9 +95,7 @@ public final class JsonSettingsStore implements SettingsStore {
 
     private void persist() {
         try {
-            File dir = file.getParentFile();
-            if (dir != null && !dir.isDirectory()) dir.mkdirs();
-            Files.write(file.toPath(), GSON.toJson(store).getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(file.toPath(), GSON.toJson(store));
         } catch (Exception e) {
             Logger.warn("settings write failed: {}", e);
         }

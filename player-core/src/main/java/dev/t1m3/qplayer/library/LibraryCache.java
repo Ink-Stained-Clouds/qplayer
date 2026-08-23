@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
@@ -42,12 +43,15 @@ public final class LibraryCache {
     private static final int PLAY_EDGE = 512;
 
     private final Path indexFile;
+    private final Path baseDir;
+    private final Path legacyBaseDir;
     private final Path coversDir;
     private final Path lyricsDir;
     private final Gson gson = new Gson();
 
     public LibraryCache() {
-        Path baseDir = Paths.get(AppDirs.cacheBase(), "local-cache");
+        this.legacyBaseDir = Paths.get(AppDirs.cacheBase(), "local-cache");
+        this.baseDir = AppDirs.localCacheDir();
         this.indexFile = baseDir.resolve("library.json");
         this.coversDir = baseDir.resolve("covers");
         this.lyricsDir = baseDir.resolve("lyrics");
@@ -110,7 +114,7 @@ public final class LibraryCache {
                 if (t.source != Track.Source.LOCAL || t.filePath == null) continue;
                 index.entries.add(toEntry(t));
             }
-            Files.write(indexFile, gson.toJson(index).getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(indexFile, gson.toJson(index));
             pruneOrphans(tracks);
         } catch (Throwable t) {
             Logger.warn("LibraryCache: save failed: {}", t.getMessage());
@@ -139,7 +143,7 @@ public final class LibraryCache {
         try {
             Files.createDirectories(coversDir);
             Path p = coversDir.resolve(hash(filePath) + suffix);
-            Files.write(p, bytes);
+            StorageFiles.writeBytesAtomic(p, bytes);
             return p.toString();
         } catch (Throwable t) {
             Logger.warn("LibraryCache: cover write failed for {}: {}", filePath, t.getMessage());
@@ -153,7 +157,7 @@ public final class LibraryCache {
         try {
             Files.createDirectories(lyricsDir);
             Path p = lyricsDir.resolve(hash(filePath) + ".lrc");
-            Files.write(p, text.getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(p, text);
             return p.toString();
         } catch (Throwable t) {
             Logger.warn("LibraryCache: lyric write failed for {}: {}", filePath, t.getMessage());
@@ -163,7 +167,7 @@ public final class LibraryCache {
 
     // ---- internals ----
 
-    private static Track toTrack(Entry e) {
+    private Track toTrack(Entry e) {
         Track t = new Track();
         t.source = Track.Source.LOCAL;
         t.filePath = e.filePath;
@@ -172,14 +176,28 @@ public final class LibraryCache {
         t.artist = e.artist;
         t.album = e.album;
         t.durationMs = e.durationMs;
-        t.coverThumbPath = e.coverThumbPath;
-        t.coverLocalPath = e.coverLocalPath;
-        t.lyricFilePath = e.lyricFilePath;
-        t.translationFilePath = e.translationFilePath;
-        t.romajiFilePath = e.romajiFilePath;
+        t.coverThumbPath = remapLegacyPath(e.coverThumbPath);
+        t.coverLocalPath = remapLegacyPath(e.coverLocalPath);
+        t.lyricFilePath = remapLegacyPath(e.lyricFilePath);
+        t.translationFilePath = remapLegacyPath(e.translationFilePath);
+        t.romajiFilePath = remapLegacyPath(e.romajiFilePath);
         t.fileSize = e.fileSize;
         t.fileMtime = e.fileMtime;
         return t;
+    }
+
+    private String remapLegacyPath(String value) {
+        if (value == null || value.isEmpty()) return value;
+        try {
+            Path path = Paths.get(value).toAbsolutePath().normalize();
+            Path legacy = legacyBaseDir.toAbsolutePath().normalize();
+            if (!path.startsWith(legacy)) return value;
+            return baseDir.resolve(legacy.relativize(path)).toString();
+        } catch (RuntimeException ignored) {
+            // A malformed optional artwork/lyric path must not discard the whole
+            // otherwise-valid local library index.
+            return value;
+        }
     }
 
     private static Entry toEntry(Track t) {

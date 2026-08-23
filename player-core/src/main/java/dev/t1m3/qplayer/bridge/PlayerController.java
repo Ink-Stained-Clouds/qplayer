@@ -21,6 +21,8 @@ import dev.t1m3.qplayer.unblock.SongUnblocker;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.netease.dto.NeteaseUser;
+import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -1446,8 +1448,7 @@ public final class PlayerController {
 
     private void saveCustomPlaylist() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "custom_playlist.json");
-            f.getParentFile().mkdirs();
+            java.nio.file.Path file = AppDirs.stateFile("custom-playlist.json");
             StringBuilder sb = new StringBuilder();
             sb.append("{\"tracks\":[");
             List<Track> snap = new ArrayList<>(customPlaylist);
@@ -1466,8 +1467,7 @@ public final class PlayerController {
                 sb.append('}');
             }
             sb.append("]}");
-            java.nio.file.Files.write(f.toPath(),
-                    sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(file, sb.toString());
         } catch (Throwable e) {
             Logger.warn("saveCustomPlaylist failed: {}", e.getMessage());
         }
@@ -1475,10 +1475,9 @@ public final class PlayerController {
 
     private void loadCustomPlaylist() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "custom_playlist.json");
-            if (!f.exists()) return;
-            String text = new String(java.nio.file.Files.readAllBytes(f.toPath()),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Path file = AppDirs.stateFile("custom-playlist.json");
+            if (!java.nio.file.Files.exists(file)) return;
+            String text = StorageFiles.readUtf8(file);
             com.google.gson.JsonObject root = new com.google.gson.JsonParser().parse(text).getAsJsonObject();
             com.google.gson.JsonArray arr = root.has("tracks") ? root.getAsJsonArray("tracks") : new com.google.gson.JsonArray();
             List<Track> loaded = new ArrayList<>();
@@ -2072,10 +2071,8 @@ public final class PlayerController {
 
     private static void writeBytesToFile(byte[] data, String path) {
         if (data == null || path == null) return;
-        java.io.File parent = new java.io.File(path).getParentFile();
-        if (parent != null && !parent.exists()) parent.mkdirs();
-        try (java.io.FileOutputStream out = new java.io.FileOutputStream(path)) {
-            out.write(data);
+        try {
+            StorageFiles.writeBytesAtomic(java.nio.file.Paths.get(path), data);
         } catch (Throwable ignored) { }
     }
 
@@ -2719,14 +2716,14 @@ public final class PlayerController {
 
     private void saveSearchHistory() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
-            f.getParentFile().mkdirs();
-            StringBuilder sb = new StringBuilder();
+            JsonObject root = new JsonObject();
+            root.addProperty("version", 1);
+            JsonArray items = new JsonArray();
             synchronized (historyList) {
-                for (String s : historyList) sb.append(s).append('\n');
+                for (String s : historyList) items.add(s);
             }
-            java.nio.file.Files.write(f.toPath(),
-                    sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            root.add("items", items);
+            StorageFiles.writeUtf8Atomic(AppDirs.stateFile("search-history.json"), root.toString());
         } catch (Throwable e) {
             Logger.warn("saveSearchHistory failed: {}", e.getMessage());
         }
@@ -2734,21 +2731,42 @@ public final class PlayerController {
 
     private void loadSearchHistory() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "search_history.txt");
-            if (!f.exists()) return;
-            byte[] bytes = java.nio.file.Files.readAllBytes(f.toPath());
-            String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Path file = AppDirs.stateFile("search-history.json");
+            java.nio.file.Path legacy = AppDirs.legacyFile("search_history.txt");
+            List<String> loaded = new ArrayList<>();
+            boolean convertedLegacy = false;
+            if (java.nio.file.Files.isRegularFile(file)) {
+                JsonObject root = new JsonParser().parse(StorageFiles.readUtf8(file)).getAsJsonObject();
+                JsonArray items = root.has("items") && root.get("items").isJsonArray()
+                        ? root.getAsJsonArray("items") : new JsonArray();
+                for (JsonElement item : items) {
+                    if (!item.isJsonPrimitive()) continue;
+                    String value = item.getAsString().trim();
+                    if (!value.isEmpty() && !loaded.contains(value)) loaded.add(value);
+                    if (loaded.size() >= HISTORY_MAX) break;
+                }
+            } else if (java.nio.file.Files.isRegularFile(legacy)) {
+                String content = StorageFiles.readUtf8(legacy);
+                for (String line : content.split("\\R")) {
+                    String value = line.trim();
+                    if (!value.isEmpty() && !loaded.contains(value)) loaded.add(value);
+                    if (loaded.size() >= HISTORY_MAX) break;
+                }
+                convertedLegacy = true;
+            } else {
+                return;
+            }
             synchronized (historyList) {
                 historyList.clear();
-                for (String line : content.split("\n")) {
-                    String t = line.trim();
-                    if (!t.isEmpty()) {
-                        historyList.add(t);
-                        if (historyList.size() >= HISTORY_MAX) break;
-                    }
-                }
+                historyList.addAll(loaded);
                 List<String> snap = new ArrayList<>(historyList);
                 post(() -> searchHistory.set(snap));
+            }
+            if (convertedLegacy) {
+                saveSearchHistory();
+                if (java.nio.file.Files.isRegularFile(file)) {
+                    java.nio.file.Files.deleteIfExists(legacy);
+                }
             }
         } catch (Throwable e) {
             Logger.warn("loadSearchHistory failed: {}", e.getMessage());
@@ -2759,8 +2777,7 @@ public final class PlayerController {
 
     private synchronized void saveQueue() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "queue.json");
-            f.getParentFile().mkdirs();
+            java.nio.file.Path target = AppDirs.stateFile("queue.json");
             // Live backend position, not the positionMs Property: the Property only
             // refreshes from pump() (render thread, paused while backgrounded/during
             // shutdown), so it can be stale exactly when this matters most — the
@@ -2797,21 +2814,7 @@ public final class PlayerController {
                 sb.append('}');
             }
             sb.append("]}");
-            // Never leave a truncated queue when Android kills the process during
-            // a periodic checkpoint. Write beside the destination, then replace it
-            // atomically (with a normal replace fallback for unusual filesystems).
-            java.nio.file.Path target = f.toPath();
-            java.nio.file.Path pending = target.resolveSibling(f.getName() + ".pending");
-            java.nio.file.Files.write(pending,
-                    sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            try {
-                java.nio.file.Files.move(pending, target,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                java.nio.file.Files.move(pending, target,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
+            StorageFiles.writeUtf8Atomic(target, sb.toString());
         } catch (Throwable e) {
             Logger.warn("saveQueue failed: {}", e.getMessage());
         }
@@ -2825,10 +2828,9 @@ public final class PlayerController {
 
     private void loadQueue() {
         try {
-            java.io.File f = new java.io.File(dev.t1m3.qplayer.store.AppDirs.base(), "queue.json");
-            if (!f.exists()) return;
-            String text = new String(java.nio.file.Files.readAllBytes(f.toPath()),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Path file = AppDirs.stateFile("queue.json");
+            if (!java.nio.file.Files.exists(file)) return;
+            String text = StorageFiles.readUtf8(file);
             com.google.gson.JsonObject root = new com.google.gson.JsonParser().parse(text).getAsJsonObject();
             int savedIdx = root.has("playIndex") ? root.get("playIndex").getAsInt() : 0;
             long savedPos = root.has("positionMs") ? root.get("positionMs").getAsLong() : 0L;
@@ -2951,11 +2953,9 @@ public final class PlayerController {
 
     private void loadLyricOffsets() {
         try {
-            java.io.File file = new java.io.File(
-                    dev.t1m3.qplayer.store.AppDirs.base(), "lyric_offsets.json");
-            if (!file.isFile()) return;
-            String json = new String(java.nio.file.Files.readAllBytes(file.toPath()),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Path file = AppDirs.stateFile("lyric-offsets.json");
+            if (!java.nio.file.Files.isRegularFile(file)) return;
+            String json = StorageFiles.readUtf8(file);
             JsonObject root = new JsonParser().parse(json).getAsJsonObject();
             synchronized (lyricOffsets) {
                 lyricOffsets.clear();
@@ -2976,12 +2976,8 @@ public final class PlayerController {
                 for (Map.Entry<String, Integer> entry : lyricOffsets.entrySet())
                     root.addProperty(entry.getKey(), entry.getValue());
             }
-            java.io.File file = new java.io.File(
-                    dev.t1m3.qplayer.store.AppDirs.base(), "lyric_offsets.json");
-            java.io.File parent = file.getParentFile();
-            if (parent != null) parent.mkdirs();
-            java.nio.file.Files.write(file.toPath(), root.toString().getBytes(
-                    java.nio.charset.StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(
+                    AppDirs.stateFile("lyric-offsets.json"), root.toString());
         } catch (Throwable e) {
             Logger.warn("save lyric offsets failed: {}", e.getMessage());
         }

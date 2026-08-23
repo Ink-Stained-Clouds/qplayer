@@ -5,6 +5,7 @@ import com.sun.jna.win32.StdCallLibrary;
 import com.sun.jna.win32.W32APIOptions;
 
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.util.Logger;
 
 import java.io.File;
@@ -16,13 +17,12 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 
 /**
  * Single-instance guard. The first instance takes an exclusive OS lock on
- * {@code ~/.qplayer/instance.lock} (released automatically when the process dies,
+ * {@code ~/.qplayer/runtime/instance.lock} (released automatically when the process dies,
  * unlike a PID file) and listens on a loopback socket whose port it records in
  * {@code instance.port}. A second launch fails the lock, pings that port to bring
  * the running window to the front, and exits.
@@ -56,11 +56,17 @@ final class SingleInstance {
      *         is already running (it was signalled; the caller should exit).
      */
     static boolean acquire(Runnable onActivate) {
-        File dir = new File(AppDirs.base());
+        File lockFile = AppDirs.runtimeFile("instance.lock").toFile();
+        // If Windows could not rename a lock held by an older running build,
+        // continue using that live legacy inode for this launch's detection.
+        File legacyLock = AppDirs.legacyFile("instance.lock").toFile();
+        if (!lockFile.exists() && legacyLock.exists()) lockFile = legacyLock;
+        File dir = lockFile.getParentFile();
         //noinspection ResultOfMethodCallIgnored
         dir.mkdirs();
-        File lockFile = new File(dir, "instance.lock");
-        File portFile = new File(dir, "instance.port");
+        File portFile = AppDirs.runtimeFile("instance.port").toFile();
+        File legacyPort = AppDirs.legacyFile("instance.port").toFile();
+        if (!portFile.exists() && legacyPort.exists()) portFile = legacyPort;
 
         try {
             channel = FileChannel.open(lockFile.toPath(),
@@ -83,8 +89,8 @@ final class SingleInstance {
         // We're first. Start the activation listener and record its port.
         try {
             server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-            Files.writeString(portFile.toPath(), Integer.toString(server.getLocalPort()),
-                    StandardCharsets.US_ASCII);
+            StorageFiles.writeUtf8Atomic(
+                    portFile.toPath(), Integer.toString(server.getLocalPort()));
             Thread t = new Thread(() -> {
                 while (server != null && !server.isClosed()) {
                     try (Socket ignored = server.accept()) {

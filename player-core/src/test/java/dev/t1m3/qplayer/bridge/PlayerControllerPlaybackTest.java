@@ -10,6 +10,7 @@ import org.junit.rules.TemporaryFolder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -134,6 +135,40 @@ public class PlayerControllerPlaybackTest {
             controller.toggle();
             assertTrue(controller.isLyricClockRunning());
             assertEquals(3500L, controller.lyricClockPosition());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void convertsLegacyTextSearchHistoryToVersionedJson() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("search-history").toPath();
+            AppDirs.setBase(base.toString());
+            Path legacy = base.resolve("search_history.txt");
+            Files.write(legacy, " first \nsecond\nfirst\n".getBytes(StandardCharsets.UTF_8));
+
+            controller = new PlayerController(new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+            long deadline = System.currentTimeMillis() + 2000L;
+            while (controller.searchHistory.peek().size() < 2
+                    && System.currentTimeMillis() < deadline) {
+                controller.pump();
+                Thread.sleep(10L);
+            }
+            controller.pump();
+
+            assertEquals(Arrays.asList("first", "second"), controller.searchHistory.peek());
+            Path json = AppDirs.stateFile("search-history.json");
+            assertTrue(Files.isRegularFile(json));
+            String saved = new String(Files.readAllBytes(json), StandardCharsets.UTF_8);
+            assertTrue(saved.contains("\"version\":1"));
+            assertTrue(saved.contains("\"items\":[\"first\",\"second\"]"));
+            assertFalse(Files.exists(legacy));
         } finally {
             if (controller != null) controller.shutdown();
             AppDirs.setBase(oldBase);

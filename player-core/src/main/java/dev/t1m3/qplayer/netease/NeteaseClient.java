@@ -11,6 +11,7 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.util.Logger;
@@ -125,7 +126,7 @@ public final class NeteaseClient {
     }
 
     private NeteaseClient() {
-        cookieFile = Paths.get(AppDirs.base(), "netease-cookies.json");
+        cookieFile = AppDirs.credentialsFile("netease-cookies.json");
         loadCookies();
     }
 
@@ -1559,7 +1560,7 @@ public final class NeteaseClient {
     private void loadCookies() {
         if (!Files.exists(cookieFile)) return;
         try {
-            String txt = new String(Files.readAllBytes(cookieFile), StandardCharsets.UTF_8);
+            String txt = StorageFiles.readUtf8(cookieFile);
             if (txt == null || txt.trim().isEmpty()) return;
             JsonElement el = new JsonParser().parse(txt);
             if (!el.isJsonObject()) return;
@@ -1576,9 +1577,8 @@ public final class NeteaseClient {
 
     private void saveCookies() {
         try {
-            new File(AppDirs.base()).mkdirs();
             Map<String, Object> out = new LinkedHashMap<>(cookies);
-            Files.write(cookieFile, gson.toJson(out).getBytes(StandardCharsets.UTF_8));
+            StorageFiles.writeUtf8Atomic(cookieFile, gson.toJson(out), true);
         } catch (IOException e) {
             Logger.warn("Netease: cookie save failed: {}", e.getMessage());
         }
