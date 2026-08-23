@@ -14,10 +14,11 @@ Item {
     property int maxVisible: 3
 
     anchors.bottom: parent ? parent.bottom : undefined
-    anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
+    anchors.left: parent ? parent.left : undefined
+    anchors.right: parent ? parent.right : undefined
+    anchors.leftMargin: 16
+    anchors.rightMargin: 16
     anchors.bottomMargin: 24
-
-    width: Math.min(600, (parent ? parent.width : 300) - 32)
     // Rows are auto-height; give the control a generous fixed height so the
     // bottom-anchored slots always fit. Item doesn't clip, so overflow is fine.
     height: maxVisible * 72 + (maxVisible - 1) * 8

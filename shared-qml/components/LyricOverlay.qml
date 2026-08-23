@@ -48,6 +48,10 @@ Item {
         return m + ":" + (r < 10 ? "0" + r : r);
     }
 
+    function showToast(message) {
+        lyricSnack.show(message)
+    }
+
     // Swallow taps on the empty (lyrics) area so they don't leak through.
     MouseArea { anchors.fill: parent }
 
@@ -576,5 +580,12 @@ Item {
                 }
             }
         }
+    }
+
+    // The lyric page is composited in a separate host pass, above Main.qml's
+    // normal scene. Mirror transient notifications here so they remain visible.
+    ToastStack {
+        id: lyricSnack
+        z: 100
     }
 }

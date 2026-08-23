@@ -94,6 +94,26 @@ final class NeteaseApi {
             "/api/song/like/get", Transport.EAPI);
     static final Endpoint RECOMMEND_SONGS = endpoint(
             "/api/v3/discovery/recommend/songs", Transport.WEAPI);
+    static final Endpoint PLAYMODE_INTELLIGENCE_LIST = endpoint(
+            "/api/playmode/intelligence/list", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_ROOM_CREATE = endpoint(
+            "/api/listen/together/room/create", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_STATUS = endpoint(
+            "/api/listen/together/status/get", Transport.WEAPI);
+    static final Endpoint LISTEN_TOGETHER_ROOM_CHECK = endpoint(
+            "/api/listen/together/room/check", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_INVITATION_ACCEPT = endpoint(
+            "/api/listen/together/play/invitation/accept", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_SYNC_PLAYLIST_GET = endpoint(
+            "/api/listen/together/sync/playlist/get", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_SYNC_LIST_REPORT = endpoint(
+            "/api/listen/together/sync/list/command/report", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_PLAY_COMMAND_REPORT = endpoint(
+            "/api/listen/together/play/command/report", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_HEARTBEAT = endpoint(
+            "/api/listen/together/heartbeat", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_END = endpoint(
+            "/api/listen/together/end/v2", Transport.EAPI);
     static final Endpoint LOGOUT = login(
             "/api/logout", Transport.EAPI);
     static final Endpoint QR_LOGIN_KEY = login(

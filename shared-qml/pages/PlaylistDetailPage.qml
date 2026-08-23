@@ -44,6 +44,16 @@ Rectangle {
                 font.pixelSize: Theme.typography.titleLarge.size
                 elide: Text.ElideRight
             }
+            Button {
+                Layout.alignment: Qt.AlignVCenter
+                type: "text"
+                visible: player.loggedIn && !player.playlistLoading
+                         && player.playlistTracks && player.playlistTracks.length > 0
+                enabled: !player.intelligenceLoading
+                icon: "favorite"
+                text: player.intelligenceLoading ? "推荐中…" : "心动推荐"
+                onClicked: player.startIntelligenceMode(player.openPlaylistId)
+            }
             // Collect (subscribe) this playlist. Shown only once loaded and only for
             // playlists that aren't the user's own; filled when already collected. The
             // initial state comes from playlist/detail, so it's correct on open.

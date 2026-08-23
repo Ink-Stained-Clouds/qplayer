@@ -26,11 +26,19 @@ import java.nio.file.Paths;
  */
 public final class AppDirs {
 
-    private static volatile String base =
-            new File(System.getProperty("user.home", "."), ".qplayer").getAbsolutePath();
+    private static volatile String base = initialBase();
     private static volatile String cacheBase = base;
 
     private AppDirs() {
+    }
+
+    /** Desktop/dev override for isolated profiles and parallel instances. Main
+     *  accepts -D arguments before SingleInstance first touches this class, so a
+     *  packaged launch can use the same knob as Maven/Java. */
+    private static String initialBase() {
+        String override = System.getProperty("qplayer.data.dir", "").trim();
+        if (!override.isEmpty()) return new File(override).getAbsolutePath();
+        return new File(System.getProperty("user.home", "."), ".qplayer").getAbsolutePath();
     }
 
     /** Override the data directory (Android host calls this with filesDir). */

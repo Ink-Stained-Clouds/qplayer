@@ -55,6 +55,9 @@ public final class DesktopWindow {
     private final PlayerController controller;
     private final SettingsCore settings;
     private final LyricCompositor compositor = new LyricCompositor();
+    /** One clipboard bridge shared by QML text editing and controller actions
+     *  such as "复制链接" / "复制一起听邀请". */
+    private final GlfwClipboard clipboard = new GlfwClipboard(this);
     private volatile GraphicsBackend.Kind kind;
 
     // Input events (main thread) marshalled onto the render thread; playback/tray
@@ -203,7 +206,7 @@ public final class DesktopWindow {
         // load() so the constructed Items wire content invalidation from their
         // first frame; LyricCompositor uses the same cache for settled lyric chrome.
         v.renderer().setPictureCache(true);
-        v.setClipboard(new GlfwClipboard(this));
+        v.setClipboard(clipboard);
         if (controller != null) v.context("player", controller);
         if (settings != null) v.context("settings", settings);
         // hostWindow must always be registered, even on mac/Linux where there's no
@@ -217,6 +220,12 @@ public final class DesktopWindow {
         v.load(qmlSource);
         view = v;
         return v;
+    }
+
+    /** Copy application-generated text through the same GLFW/X11/Wayland bridge
+     *  used by QML Ctrl+C. Safe from render, worker, or main threads. */
+    public void setClipboardText(String text) {
+        clipboard.setText(text);
     }
 
     /** Load the fonts QML's own UI text is drawn with. The lyric page resolves its

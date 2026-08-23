@@ -85,4 +85,5 @@ Rectangle {
                 : player.removeFromQueue(q.removeIndex)
         }
     }
+
 }

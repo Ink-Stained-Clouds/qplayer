@@ -1338,6 +1338,319 @@ public final class NeteaseClient {
     }
 
     /**
+     * NetEase's "心动模式" continuation for a song inside a playlist. The API
+     * sometimes embeds complete {@code songInfo} objects and sometimes returns
+     * only IDs; normalize both shapes to full songs while preserving server order.
+     */
+    public List<NeteaseSong> intelligenceSongs(long songId, long playlistId,
+            long startSongId) throws IOException {
+        if (!isLoggedIn() || songId == 0L || playlistId == 0L) {
+            return Collections.emptyList();
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("songId", songId);
+        body.put("type", "fromPlayOne");
+        body.put("playlistId", playlistId);
+        body.put("startMusicId", startSongId == 0L ? songId : startSongId);
+        body.put("count", 1);
+        JsonObject obj = apiJson(NeteaseApi.PLAYMODE_INTELLIGENCE_LIST, body);
+        ensureOk(obj, "获取心动推荐失败");
+
+        List<NeteaseSong> embedded = new ArrayList<>();
+        List<Long> orderedIds = new ArrayList<>();
+        if (obj.has("data") && obj.get("data").isJsonArray()) {
+            for (JsonElement element : obj.getAsJsonArray("data")) {
+                if (!element.isJsonObject()) continue;
+                JsonObject row = element.getAsJsonObject();
+                JsonObject song = row.has("songInfo") && row.get("songInfo").isJsonObject()
+                        ? row.getAsJsonObject("songInfo") : null;
+                if (song != null) {
+                    NeteaseSong parsed = parseSong(song);
+                    if (parsed.id != 0L) {
+                        embedded.add(parsed);
+                        orderedIds.add(parsed.id);
+                    }
+                } else if (row.has("id") && !row.get("id").isJsonNull()) {
+                    orderedIds.add(row.get("id").getAsLong());
+                }
+            }
+        }
+        if (orderedIds.isEmpty()) return Collections.emptyList();
+        if (embedded.size() == orderedIds.size()) return embedded;
+
+        List<NeteaseSong> details = songDetails(orderedIds);
+        Map<Long, NeteaseSong> byId = new HashMap<>();
+        for (NeteaseSong song : details) byId.put(song.id, song);
+        List<NeteaseSong> ordered = new ArrayList<>();
+        for (Long id : orderedIds) {
+            NeteaseSong song = byId.get(id);
+            if (song != null) ordered.add(song);
+        }
+        return ordered;
+    }
+
+    // ---- Listen Together -------------------------------------------------
+
+    public static final class TogetherUser {
+        public long userId;
+        public String nickname = "";
+        public String avatarUrl = "";
+    }
+
+    public static final class TogetherRoom {
+        public String roomId = "";
+        public long creatorId;
+        public long effectiveDurationMs;
+        public final List<TogetherUser> users = new ArrayList<>();
+    }
+
+    public static final class TogetherStatus {
+        public boolean inRoom;
+        public String status = "";
+        public TogetherRoom room;
+    }
+
+    public static final class TogetherCommand {
+        public long userId;
+        public String commandType = "";
+        public long formerSongId;
+        public long targetSongId;
+        public long progressMs;
+        public String playStatus = "";
+        public long serverSeq;
+
+        public boolean shouldPlay() {
+            if ("PAUSE".equalsIgnoreCase(commandType)
+                    || "PAUSE".equalsIgnoreCase(playStatus)) return false;
+            return "PLAY".equalsIgnoreCase(commandType)
+                    || "GOTO".equalsIgnoreCase(commandType)
+                    || "NEXT".equalsIgnoreCase(commandType)
+                    || "PREV".equalsIgnoreCase(commandType)
+                    || "PLAY".equalsIgnoreCase(playStatus)
+                    || "PLAYING".equalsIgnoreCase(playStatus);
+        }
+    }
+
+    public static final class TogetherSnapshot {
+        public final List<Long> songIds = new ArrayList<>();
+        public final List<Map<String, Object>> versions = new ArrayList<>();
+        public TogetherCommand command;
+    }
+
+    public TogetherRoom createTogetherRoom() throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("refer", "songplay_more");
+        JsonObject obj = apiJson(NeteaseApi.LISTEN_TOGETHER_ROOM_CREATE, body);
+        ensureOk(obj, "创建一起听房间失败");
+        TogetherRoom room = parseRoomFromResponse(obj);
+        if (room == null || room.roomId.isEmpty()) throw new IOException("创建房间未返回 roomId");
+        return room;
+    }
+
+    public TogetherStatus togetherStatus() throws IOException {
+        JsonObject obj = apiJson(NeteaseApi.LISTEN_TOGETHER_STATUS,
+                new LinkedHashMap<String, Object>());
+        ensureOk(obj, "获取一起听状态失败");
+        TogetherStatus out = new TogetherStatus();
+        JsonObject data = object(obj, "data");
+        if (data == null) return out;
+        out.inRoom = bool(data, "inRoom", false);
+        out.status = string(data, "status");
+        out.room = parseRoom(object(data, "roomInfo"));
+        return out;
+    }
+
+    public boolean togetherRoomJoinable(String roomId) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        JsonObject obj = apiJson(NeteaseApi.LISTEN_TOGETHER_ROOM_CHECK, body);
+        ensureOk(obj, "检查一起听房间失败");
+        JsonObject data = object(obj, "data");
+        return data != null && bool(data, "joinable", false);
+    }
+
+    public TogetherRoom acceptTogetherInvitation(String roomId, long inviterId)
+            throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("refer", "inbox_invite");
+        body.put("roomId", roomId);
+        body.put("inviterId", inviterId);
+        JsonObject obj = apiJson(NeteaseApi.LISTEN_TOGETHER_INVITATION_ACCEPT, body);
+        ensureOk(obj, "加入一起听房间失败");
+        TogetherRoom room = parseRoomFromResponse(obj);
+        if (room == null) {
+            room = new TogetherRoom();
+            room.roomId = roomId;
+        }
+        return room;
+    }
+
+    public TogetherSnapshot togetherSnapshot(String roomId) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        JsonObject obj = apiJson(NeteaseApi.LISTEN_TOGETHER_SYNC_PLAYLIST_GET, body);
+        ensureOk(obj, "同步一起听状态失败");
+        TogetherSnapshot out = new TogetherSnapshot();
+        JsonObject data = object(obj, "data");
+        if (data == null) return out;
+        JsonObject playlist = object(data, "playlist");
+        if (playlist != null) {
+            String mode = string(playlist, "playMode");
+            boolean random = mode.toUpperCase(java.util.Locale.ROOT).contains("RANDOM")
+                    || mode.toUpperCase(java.util.Locale.ROOT).contains("SHUFFLE");
+            JsonObject list = object(playlist, random ? "randomList" : "displayList");
+            if (list == null) list = object(playlist, "displayList");
+            JsonArray result = list == null ? null : array(list, "result");
+            if (result != null) {
+                for (JsonElement element : result) {
+                    try { out.songIds.add(element.getAsLong()); } catch (Throwable ignored) { }
+                }
+            }
+            JsonArray versions = array(playlist, "version");
+            if (versions != null) {
+                for (JsonElement element : versions) {
+                    if (!element.isJsonObject()) continue;
+                    JsonObject version = element.getAsJsonObject();
+                    Map<String, Object> value = new LinkedHashMap<>();
+                    value.put("userId", number(version, "userId", 0L));
+                    value.put("version", number(version, "version", 0L));
+                    out.versions.add(value);
+                }
+            }
+        }
+        JsonObject command = object(data, "playCommand");
+        if (command == null) command = object(data, "commandInfo");
+        if (command != null) {
+            TogetherCommand parsed = new TogetherCommand();
+            parsed.userId = number(command, "userId", 0L);
+            parsed.commandType = string(command, "commandType");
+            parsed.formerSongId = number(command, "formerSongId", 0L);
+            parsed.targetSongId = number(command, "targetSongId", 0L);
+            parsed.progressMs = number(command, "progress", 0L);
+            parsed.playStatus = string(command, "playStatus");
+            parsed.serverSeq = number(command, "serverSeq", 0L);
+            out.command = parsed;
+        }
+        return out;
+    }
+
+    public void reportTogetherPlaylist(String roomId, long userId, long version,
+            List<Long> songIds) throws IOException {
+        List<String> ids = new ArrayList<>();
+        if (songIds != null) for (Long id : songIds) if (id != null && id != 0L) ids.add(String.valueOf(id));
+        Map<String, Object> versionRow = new LinkedHashMap<>();
+        versionRow.put("userId", userId);
+        versionRow.put("version", version);
+        Map<String, Object> playlist = new LinkedHashMap<>();
+        playlist.put("commandType", "REPLACE");
+        playlist.put("version", Collections.singletonList(versionRow));
+        playlist.put("anchorSongId", "");
+        playlist.put("anchorPosition", -1);
+        playlist.put("randomList", ids);
+        playlist.put("displayList", ids);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        body.put("playlistParam", gson.toJson(playlist));
+        ensureOk(apiJson(NeteaseApi.LISTEN_TOGETHER_SYNC_LIST_REPORT, body),
+                "上报一起听队列失败");
+    }
+
+    public void reportTogetherCommand(String roomId, String commandType, long progressMs,
+            boolean playing, long formerSongId, long targetSongId, long clientSeq)
+            throws IOException {
+        Map<String, Object> command = new LinkedHashMap<>();
+        command.put("commandType", commandType);
+        command.put("progress", Math.max(0L, progressMs));
+        command.put("playStatus", playing ? "PLAY" : "PAUSE");
+        command.put("formerSongId", String.valueOf(formerSongId));
+        command.put("targetSongId", String.valueOf(targetSongId));
+        command.put("clientSeq", clientSeq);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        body.put("commandInfo", gson.toJson(command));
+        ensureOk(apiJson(NeteaseApi.LISTEN_TOGETHER_PLAY_COMMAND_REPORT, body),
+                "上报一起听播放状态失败");
+    }
+
+    public void togetherHeartbeat(String roomId, long songId, boolean playing,
+            long progressMs) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        body.put("songId", songId);
+        body.put("playStatus", playing ? "PLAY" : "PAUSE");
+        body.put("progress", Math.max(0L, progressMs));
+        ensureOk(apiJson(NeteaseApi.LISTEN_TOGETHER_HEARTBEAT, body),
+                "一起听心跳失败");
+    }
+
+    public void endTogetherRoom(String roomId) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("roomId", roomId);
+        ensureOk(apiJson(NeteaseApi.LISTEN_TOGETHER_END, body), "退出一起听失败");
+    }
+
+    private TogetherRoom parseRoomFromResponse(JsonObject response) {
+        JsonObject data = object(response, "data");
+        if (data == null) return null;
+        JsonObject roomInfo = object(data, "roomInfo");
+        return parseRoom(roomInfo != null ? roomInfo : data);
+    }
+
+    private static TogetherRoom parseRoom(JsonObject room) {
+        if (room == null) return null;
+        TogetherRoom out = new TogetherRoom();
+        out.roomId = string(room, "roomId");
+        out.creatorId = number(room, "creatorId", 0L);
+        out.effectiveDurationMs = number(room, "effectiveDurationMs", 0L);
+        JsonArray users = array(room, "roomUsers");
+        if (users == null) users = array(room, "users");
+        if (users != null) {
+            for (JsonElement element : users) {
+                if (!element.isJsonObject()) continue;
+                JsonObject value = element.getAsJsonObject();
+                TogetherUser user = new TogetherUser();
+                user.userId = number(value, "userId", 0L);
+                user.nickname = string(value, "nickname");
+                user.avatarUrl = string(value, "avatarUrl");
+                out.users.add(user);
+            }
+        }
+        return out;
+    }
+
+    private static void ensureOk(JsonObject object, String fallback) throws IOException {
+        int code = object != null ? (int) number(object, "code", 200L) : -1;
+        if (code == 200) return;
+        String message = object == null ? "" : neteaseMessage(object);
+        throw new IOException(message == null || message.isEmpty() ? fallback + " (" + code + ")" : message);
+    }
+
+    private static JsonObject object(JsonObject parent, String key) {
+        return parent != null && parent.has(key) && parent.get(key).isJsonObject()
+                ? parent.getAsJsonObject(key) : null;
+    }
+
+    private static JsonArray array(JsonObject parent, String key) {
+        return parent != null && parent.has(key) && parent.get(key).isJsonArray()
+                ? parent.getAsJsonArray(key) : null;
+    }
+
+    private static String string(JsonObject parent, String key) {
+        if (parent == null || !parent.has(key) || parent.get(key).isJsonNull()) return "";
+        try { return parent.get(key).getAsString(); } catch (Throwable ignored) { return ""; }
+    }
+
+    private static long number(JsonObject parent, String key, long fallback) {
+        if (parent == null || !parent.has(key) || parent.get(key).isJsonNull()) return fallback;
+        try { return parent.get(key).getAsLong(); } catch (Throwable ignored) { return fallback; }
+    }
+
+    private static boolean bool(JsonObject parent, String key, boolean fallback) {
+        if (parent == null || !parent.has(key) || parent.get(key).isJsonNull()) return fallback;
+        try { return parent.get(key).getAsBoolean(); } catch (Throwable ignored) { return fallback; }
+    }
+
+    /**
      * Full profile of the given uid — used for the sidebar account
      * display. Returns {@code null} when the API blocks us or uid is 0.
      */

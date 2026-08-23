@@ -135,9 +135,15 @@ Rectangle {
         }
     }
 
-    // surface player toasts in the stacked toast notifications
+    // Surface player toasts in both render passes. The host composites lyricChrome
+    // over the normal QML scene while the lyric page is open, so a root-only toast
+    // exists but is hidden behind that pass.
+    function showToast(message) {
+        snack.show(message)
+        lyricOverlay.showToast(message)
+    }
     property string toastWatch: player.toast
-    onToastWatchChanged: if (player.toast.length > 0) { snack.show(player.toast) }
+    onToastWatchChanged: if (player.toast.length > 0) app.showToast(player.toast)
 
     // Chrome is absolute/anchor-positioned, NOT a ColumnLayout. The play clock
     // sets player.positionMs ~5x/s; each set bumps the engine change version and
@@ -500,6 +506,7 @@ Rectangle {
         anchors.bottom: bottomNav.top
         height: 84
         onLyricsRequested: player.setLyricsOpen(true)
+        onTogetherRequested: togetherDialog.open()
     }
 
     // Bottom navigation (compact). On wide layouts the rail replaces it, so collapse
@@ -524,6 +531,7 @@ Rectangle {
     // fluid backdrop + lyrics. Slides up from the bottom in lockstep with the host
     // layer -- same smoothstep(player.lyricSlide) offset the host applies.
     LyricOverlay {
+        id: lyricOverlay
         objectName: "lyricChrome"   // host renders this subtree in its own pass, over the fluid
         x: settings.leftInset
         width: parent.width - settings.leftInset - settings.rightInset
@@ -542,6 +550,8 @@ Rectangle {
         active: app.loginOpen
         onClosed: app.loginOpen = false
     }
+
+    ListenTogetherDialog { id: togetherDialog }
 
     // New-version dialog: the host's startup check sets player.updateAvailable when a
     // newer GitHub release exists; the update button downloads the APK in-app (through
@@ -593,7 +603,7 @@ Rectangle {
 
     // In-app update download progress, driven by the host (-1 idle, 0..100, -2 fail).
     property int updateProgWatch: player.updateProgress
-    onUpdateProgWatchChanged: if (player.updateProgress === -2) { snack.show("更新下载失败，请稍后重试") }
+    onUpdateProgWatchChanged: if (player.updateProgress === -2) app.showToast("更新下载失败，请稍后重试")
 
     Rectangle {
         visible: player.updateProgress >= 0 && player.updateProgress < 100
@@ -614,7 +624,14 @@ Rectangle {
         }
     }
 
-    ToastStack { id: snack }
+    ToastStack {
+        id: snack
+        anchors.left: rail.right
+        anchors.right: parent.right
+        anchors.leftMargin: 16
+        anchors.rightMargin: settings.rightInset + 16
+        z: 20000
+    }
 
     // Windows-only custom title bar (see TitleBar.qml / WinFrameless.java /
     // WindowChrome.java). hostWindow is registered on EVERY platform (a real,

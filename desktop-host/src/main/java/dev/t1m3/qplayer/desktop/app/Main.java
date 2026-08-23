@@ -191,6 +191,10 @@ public final class Main {
         });
 
         window.init();
+        // QML text fields already use DesktopWindow's GLFW clipboard bridge. Wire
+        // controller-generated links to it too; without this sink desktop merely
+        // displayed a success toast while nothing reached the Linux clipboard.
+        controller.setClipboard(window::setClipboardText);
 
         // Platform pickers. Android keeps its existing ACTION_GET_CONTENT cover
         // flow; desktop uses a FlatMac-themed Swing chooser on Windows/Linux/macOS.

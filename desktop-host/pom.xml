@@ -40,6 +40,8 @@
         <gfx></gfx>
         <win.w>1100</win.w>
         <win.h>720</win.h>
+        <!-- Optional isolated profile root, useful for parallel/demo instances. -->
+        <data.dir></data.dir>
     </properties>
 
     <build>
@@ -82,6 +84,7 @@
                         <argument>-Dqplayer.gfx=${gfx}</argument>
                         <argument>-Dqplayer.width=${win.w}</argument>
                         <argument>-Dqplayer.height=${win.h}</argument>
+                        <argument>-Dqplayer.data.dir=${data.dir}</argument>
                         <argument>-classpath</argument>
                         <classpath/>
                         <argument>dev.t1m3.qplayer.desktop.app.Main</argument>

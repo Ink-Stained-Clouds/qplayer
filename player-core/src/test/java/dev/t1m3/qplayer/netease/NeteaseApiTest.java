@@ -36,6 +36,26 @@ public class NeteaseApiTest {
                 "/api/song/like/get", NeteaseApi.Transport.EAPI);
         assertEndpoint(NeteaseApi.RECOMMEND_SONGS,
                 "/api/v3/discovery/recommend/songs", NeteaseApi.Transport.WEAPI);
+        assertEndpoint(NeteaseApi.PLAYMODE_INTELLIGENCE_LIST,
+                "/api/playmode/intelligence/list", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_ROOM_CREATE,
+                "/api/listen/together/room/create", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_STATUS,
+                "/api/listen/together/status/get", NeteaseApi.Transport.WEAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_ROOM_CHECK,
+                "/api/listen/together/room/check", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_INVITATION_ACCEPT,
+                "/api/listen/together/play/invitation/accept", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_SYNC_PLAYLIST_GET,
+                "/api/listen/together/sync/playlist/get", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_SYNC_LIST_REPORT,
+                "/api/listen/together/sync/list/command/report", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_PLAY_COMMAND_REPORT,
+                "/api/listen/together/play/command/report", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_HEARTBEAT,
+                "/api/listen/together/heartbeat", NeteaseApi.Transport.EAPI);
+        assertEndpoint(NeteaseApi.LISTEN_TOGETHER_END,
+                "/api/listen/together/end/v2", NeteaseApi.Transport.EAPI);
         assertTrue(NeteaseApi.PLAYLIST_SUBSCRIBE.checkToken);
         assertTrue(NeteaseApi.PLAYLIST_UNSUBSCRIBE.checkToken);
         assertTrue(NeteaseApi.QR_LOGIN_KEY.loginFlow);
