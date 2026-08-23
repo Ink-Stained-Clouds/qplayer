@@ -115,6 +115,9 @@ public final class LyricCompositor {
     private float bandShaderColH = -1f;
     private float bandShaderTopY = -1f;
     private float bandFracTop = -1f, bandFracBottom = -1f; // cached lit-band fractions
+    private final float[] bandStops = new float[4];
+    private final int[] blurBandColors = new int[4];
+    private final int[] sharpBandColors = new int[4];
     // Crossfade width beyond the lit band, as a fraction of column height: the sharp
     // plateau covers the lit lines, then ramps to full blur over this distance.
     private static final float BAND_RAMP = 0.24f;
@@ -126,6 +129,8 @@ public final class LyricCompositor {
     private float lyricShow = 0f;
     private long lyricShowNs = 0L;
     private final Paint lyLayerPaint = new Paint();
+    private Rect backdropClipRect;
+    private float backdropClipW = -1f, backdropClipH = -1f;
 
     // Cached lyric-column rect + cover-key string (both were rebuilt every frame).
     private Rect lyColRect;
@@ -381,8 +386,13 @@ public final class LyricCompositor {
         boolean bgStatic = settings != null && settings.lyricBgStatic();
         int bgStyle = settings != null
                 ? settings.lyricBgStyle() : FluidBackground.STYLE_PIXI_RENDERER;
+        if (backdropClipRect == null || backdropClipW != w || backdropClipH != h) {
+            backdropClipRect = Rect.makeWH(w, h);
+            backdropClipW = w;
+            backdropClipH = h;
+        }
         int bgClip = canvas.save();
-        canvas.clipRect(Rect.makeWH(w, h));
+        canvas.clipRect(backdropClipRect);
         fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,
                 System.nanoTime(), bgStatic, bgStyle);
         canvas.restoreToCount(bgClip);
@@ -526,18 +536,22 @@ public final class LyricCompositor {
         bandFracBottom = fBot;
         if (blurBandShader != null) blurBandShader.close();
         if (sharpBandShader != null) sharpBandShader.close();
-        float[] stops = monotonic(fTop - BAND_RAMP, fTop, fBot, fBot + BAND_RAMP);
+        monotonic(bandStops, fTop - BAND_RAMP, fTop, fBot, fBot + BAND_RAMP);
         int o = 0xFFFFFFFF, t = 0x00FFFFFF;
+        blurBandColors[0] = o; blurBandColors[1] = t;
+        blurBandColors[2] = t; blurBandColors[3] = o;
+        sharpBandColors[0] = t; sharpBandColors[1] = o;
+        sharpBandColors[2] = o; sharpBandColors[3] = t;
         blurBandShader = Shader.makeLinearGradient(0f, topY, 0f, topY + colH,
-                new int[]{o, t, t, o}, stops);   // blur kept outside the plateau
+                blurBandColors, bandStops);   // blur kept outside the plateau
         sharpBandShader = Shader.makeLinearGradient(0f, topY, 0f, topY + colH,
-                new int[]{t, o, o, t}, stops);   // sharp kept across the plateau
+                sharpBandColors, bandStops);   // sharp kept across the plateau
     }
 
     // Clamp four gradient stops into [0,1] and force them strictly increasing (Skija
     // rejects equal/out-of-order positions).
-    private static float[] monotonic(float s0, float s1, float s2, float s3) {
-        float[] s = {s0, s1, s2, s3};
+    private static void monotonic(float[] s, float s0, float s1, float s2, float s3) {
+        s[0] = s0; s[1] = s1; s[2] = s2; s[3] = s3;
         float eps = 1e-4f;
         for (int i = 0; i < s.length; i++) {
             if (s[i] < 0f) s[i] = 0f;
@@ -546,7 +560,6 @@ public final class LyricCompositor {
         for (int i = 1; i < s.length; i++) {
             if (s[i] <= s[i - 1]) s[i] = Math.min(1f, s[i - 1] + eps);
         }
-        return s;
     }
 
     // Rebuild the cached lyric gradients only when the column top or height changes

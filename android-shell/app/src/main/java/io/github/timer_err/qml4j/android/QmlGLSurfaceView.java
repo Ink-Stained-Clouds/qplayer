@@ -608,9 +608,12 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         profLastFrameNanos = t2;
         if (++profFrames >= 120) {
             dev.t1m3.qplayer.util.Logger.info(
-                "frame: {}fps render {}ms skip {}/{} bumps tick {} (per120)",
+                "frame: {}fps tick {}ms render {}ms present {}ms max-gap {}ms skip {}/{} bumps tick {} (per120)",
                 Math.round(1000.0 / (profGapMs / profFrames)),
+                round1(profLayoutMs / profFrames),
                 round1(profRenderMs / profFrames),
+                round1(profPresentMs / profFrames),
+                round1(profMaxGapMs),
                 profSkips, profFrames,
                 profBumpTick);
             profFrames = 0;

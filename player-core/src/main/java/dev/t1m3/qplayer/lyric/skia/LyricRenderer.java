@@ -4,6 +4,7 @@ import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.Syllable;
 import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.skija.ClipMode;
 import io.github.humbleui.skija.Font;
 import io.github.humbleui.skija.FontEdging;
 import io.github.humbleui.skija.FontHinting;
@@ -18,6 +19,9 @@ import io.github.humbleui.skija.Shader;
 import io.github.humbleui.skija.Surface;
 import io.github.humbleui.skija.TextBlob;
 import io.github.humbleui.skija.TextLine;
+import io.github.humbleui.skija.impl.Managed;
+import io.github.humbleui.skija.impl.Native;
+import io.github.humbleui.skija.impl.RefCnt;
 import io.github.humbleui.skija.shaper.Shaper;
 import io.github.humbleui.types.Rect;
 
@@ -309,6 +313,7 @@ public class LyricRenderer {
     // the edge blur. Time-constant (seconds) sets how fast it catches up.
     private static final float LIT_BAND_TAU = 0.14f;
     private float litBandTopSmooth, litBandBottomSmooth;
+    private final float[] litBandResult = new float[2];
     private boolean litBandSmoothInit;
     private long litBandSmoothNs;
     /**
@@ -919,7 +924,9 @@ public class LyricRenderer {
             }
         }
         litBandSmoothNs = now;
-        return new float[]{litBandTopSmooth, litBandBottomSmooth};
+        litBandResult[0] = litBandTopSmooth;
+        litBandResult[1] = litBandBottomSmooth;
+        return litBandResult;
     }
 
     public void render(Canvas canvas, float leftX, float topY,
@@ -2788,6 +2795,19 @@ public class LyricRenderer {
             return;
         }
 
+        // Plain LRC with synthetic per-token animation disabled has neither a
+        // karaoke sweep nor word glow. Drawing its immutable HarfBuzz blob directly
+        // avoids rasterising a 2x texture and building a RuntimeEffect every frame.
+        if (!enableLift) {
+            Paint paint = LyricSkia.scratchPaint();
+            paint.setColor(0xFFFFFFFF);
+            paint.setAlphaf(baseAlpha);
+            paint.setAntiAlias(true);
+            if (shadowOn) drawTextShadow(row.blob, startX, baselineY, baseAlpha);
+            canvas.drawTextBlob(row.blob, startX, baselineY, paint);
+            return;
+        }
+
         int n = row.to - row.from;
         if (sylLeftBuf.length < n + 1) sylLeftBuf = new float[n + 1];
         float[] sylLeft = sylLeftBuf;
@@ -2813,18 +2833,22 @@ public class LyricRenderer {
                 layerPaint);
         try {
             ensureHighResRaster(row, ascent, descent, shadowOn);
-            try (Shader liftedShader = makeLiftShader(row, startX, baselineY, rowRightX, n,
-                    syllables, pos, sweepX, activeK, glowOn)) {
+            long liftedShader = makeLiftShader(row, startX, baselineY, rowRightX, n,
+                    syllables, pos, sweepX, activeK, glowOn);
+            try {
                 Paint textPaint = LyricSkia.scratchPaint();
-                textPaint.setShader(liftedShader);
-                textPaint.setAlphaf(1f);
-                textPaint.setAntiAlias(true);
-                canvas.drawRect(Rect.makeLTRB(
-                        startX + row.rasterLeft,
-                        baselineY + row.rasterTop - MAX_SHADER_LIFT_PX,
-                        startX + row.rasterLeft + row.rasterWidth,
-                        baselineY + row.rasterTop + row.rasterHeight), textPaint);
-                textPaint.setShader(null);
+                setShader(textPaint, liftedShader);
+                try {
+                    textPaint.setAlphaf(1f);
+                    textPaint.setAntiAlias(true);
+                    drawRect(canvas,
+                            startX + row.rasterLeft,
+                            baselineY + row.rasterTop - MAX_SHADER_LIFT_PX,
+                            startX + row.rasterLeft + row.rasterWidth,
+                            baselineY + row.rasterTop + row.rasterHeight, textPaint);
+                } finally {
+                    setShader(textPaint, 0L);
+                }
                 // Apply the karaoke sweep to the base text first. The word glow is
                 // deliberately composited afterwards: masking it with the sweep made
                 // the unsung half dark, so an "entire word" glow still looked like a
@@ -2835,6 +2859,11 @@ public class LyricRenderer {
                 }
                 drawWordGlows(canvas, syllables, row, startX, baselineY,
                         ascent, descent, pos, activeK, glowOn, liftedShader);
+            } finally {
+                // RuntimeEffectBuilder returns one owned sk_sp. Paint temporarily
+                // refs it while drawing; after all paints are cleared, release the
+                // original ref without constructing a Java Shader/Cleaner wrapper.
+                Managed._nInvokeFinalizer(RefCnt._FinalizerHolder.PTR, liftedShader);
             }
         } finally {
             canvas.restore();
@@ -2899,9 +2928,9 @@ public class LyricRenderer {
 
     /** Build a cheap per-frame shader over the cached 2x row texture. HarfBuzz
      * geometry and source pixels are both immutable; only lift uniforms change. */
-    private Shader makeLiftShader(ShapedRow row, float startX, float baselineY,
-                                  float rowRightX, int n, List<Syllable> syllables,
-                                  long pos, float sweepX, float activeK, boolean glowOn) {
+    private long makeLiftShader(ShapedRow row, float startX, float baselineY,
+                                float rowRightX, int n, List<Syllable> syllables,
+                                long pos, float sweepX, float activeK, boolean glowOn) {
         int count = Math.min(n, MAX_LIFT_SEGMENTS);
         java.util.Arrays.fill(liftUniformBuf, 0f);
         for (int i = 0; i < count; i++) {
@@ -2950,14 +2979,14 @@ public class LyricRenderer {
                 startX + row.rasterLeft, baselineY + row.rasterTop);
         builder.setUniform("sourceScale", TEXT_SUPERSAMPLE);
         builder.setChild("content", row.highResImageShader);
-        return builder.makeShader();
+        return RuntimeEffectBuilder._nMakeShader(Native.getPtr(builder), null);
     }
 
     /** Every eligible display word contributes its complete shaped range to the
      * glow layer. Word grouping never changes the independently timed base lift. */
     private void drawWordGlows(Canvas canvas, List<Syllable> syllables, ShapedRow row,
                                float startX, float baselineY, float ascent, float descent,
-                               long pos, float activeK, boolean glowOn, Shader liftedShader) {
+                               long pos, float activeK, boolean glowOn, long liftedShader) {
         if (!wordGlowSupported || !glowOn || row.words.length == 0) return;
         boolean glowLayerSaved = false;
         try {
@@ -2992,24 +3021,42 @@ public class LyricRenderer {
                 float x1 = startX + Math.max(word.x0, word.x1) + 1f;
                 canvas.save();
                 try {
-                    canvas.clipRect(Rect.makeLTRB(x0,
+                    clipRect(canvas, x0,
                             baselineY + ascent - MAX_SHADER_LIFT_PX,
-                            x1, baselineY + descent + 2f));
-                    glowGlyphPaint.setShader(liftedShader);
+                            x1, baselineY + descent + 2f);
+                    setShader(glowGlyphPaint, liftedShader);
                     glowGlyphPaint.setAlphaf(alpha);
-                    canvas.drawRect(Rect.makeLTRB(
+                    drawRect(canvas,
                             startX + row.rasterLeft,
                             baselineY + row.rasterTop - MAX_SHADER_LIFT_PX,
                             startX + row.rasterLeft + row.rasterWidth,
-                            baselineY + row.rasterTop + row.rasterHeight), glowGlyphPaint);
+                            baselineY + row.rasterTop + row.rasterHeight, glowGlyphPaint);
                 } finally {
-                    glowGlyphPaint.setShader(null);
+                    setShader(glowGlyphPaint, 0L);
                     canvas.restore();
                 }
             }
         } finally {
             if (glowLayerSaved) canvas.restore();
         }
+    }
+
+    // Skija's Rect factories allocate a Java wrapper. These paths run for every
+    // animated row (and every glowing word), so use the public native primitives.
+    private static void drawRect(Canvas canvas, float left, float top,
+                                 float right, float bottom, Paint paint) {
+        Canvas._nDrawRect(Native.getPtr(canvas), left, top, right, bottom,
+                Native.getPtr(paint));
+    }
+
+    private static void clipRect(Canvas canvas, float left, float top,
+                                 float right, float bottom) {
+        Canvas._nClipRect(Native.getPtr(canvas), left, top, right, bottom,
+                ClipMode.INTERSECT.ordinal(), false);
+    }
+
+    private static void setShader(Paint paint, long shader) {
+        Paint._nSetShader(Native.getPtr(paint), shader);
     }
 
     private RuntimeEffect liftEffect() {
