@@ -87,6 +87,46 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void togetherNaturalAdvanceElectsOneStableLeader() {
+        NeteaseClient.TogetherRoom room = new NeteaseClient.TogetherRoom();
+        room.creatorId = 42L;
+        NeteaseClient.TogetherUser peer = new NeteaseClient.TogetherUser();
+        peer.userId = 17L;
+        room.users.add(peer);
+
+        // The creator remains authoritative even when it is not the smallest id.
+        assertEquals(42L, PlayerController.togetherLeaderId(room, 17L));
+        assertTrue(PlayerController.shouldWaitForTogetherLeader(true, 17L, 42L));
+        assertFalse(PlayerController.shouldWaitForTogetherLeader(true, 42L, 42L));
+
+        // Partial legacy room payloads without creatorId still elect the same
+        // participant on both clients through a deterministic smallest-id fallback.
+        room.creatorId = 0L;
+        assertEquals(17L, PlayerController.togetherLeaderId(room, 42L));
+        assertEquals(17L, PlayerController.togetherLeaderId(room, 17L));
+        assertFalse(PlayerController.shouldWaitForTogetherLeader(false, 42L, 17L));
+    }
+
+    @Test
+    public void togetherTrackSwitcherTakesControlFromTheCreator() {
+        NeteaseClient.TogetherCommand command = new NeteaseClient.TogetherCommand();
+        command.userId = 17L;
+        command.commandType = "GOTO";
+        assertEquals(17L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
+
+        // Timeline and transport changes do not affect who owns natural advance.
+        command.commandType = "PROGRESS";
+        assertEquals(42L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
+        command.commandType = "PAUSE";
+        assertEquals(42L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
+
+        // NEXT/PREV are track selections too, including commands from official
+        // clients that do not encode them as GOTO.
+        command.commandType = "NEXT";
+        assertEquals(17L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
+    }
+
+    @Test
     public void selectingTrackAfterSessionRestoreDoesNotReplayItOnResume() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();

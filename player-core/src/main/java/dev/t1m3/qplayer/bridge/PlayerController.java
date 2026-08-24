@@ -583,6 +583,14 @@ public final class PlayerController {
     private volatile long togetherQueueVersion;
     private volatile long togetherTickCount;
     private volatile long togetherSuppressReportsUntil;
+    /** The room creator is the initial natural-advance authority. Any participant
+     *  that later switches tracks takes ownership; followers wait for that user's
+     *  GOTO instead of racing a second autoAdvance at the same song boundary. */
+    private volatile long togetherLeaderUserId;
+    private static final long TOGETHER_AUTO_ADVANCE_GRACE_MS = 3500L;
+    private final AtomicLong togetherAutoAdvanceGeneration = new AtomicLong();
+    private volatile long togetherPendingAutoAdvanceSongId;
+    private volatile int togetherPendingAutoAdvanceIndex = -1;
     private volatile long togetherLastRemoteSeq = -1L;
     private volatile String togetherLastRemoteCommand = "";
     /** Remote command queued onto the host main thread but not applied yet. Without
@@ -2097,6 +2105,9 @@ public final class PlayerController {
 
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        // Any real local/remote selection supersedes a follower's delayed takeover.
+        // The generation also makes an already-queued timeout callback harmless.
+        cancelPendingTogetherAutoAdvance();
         // loadQueue() sets needsReplay because its restored track exists only as
         // metadata until the user resumes it. Any successful route into playAt(),
         // including clicking a different song first, is now taking responsibility
@@ -2662,6 +2673,15 @@ public final class PlayerController {
     private void autoAdvance() {
         if (queue.isEmpty()) return;
         pendingNaturalEnd = true;
+        if (shouldWaitForTogetherLeader(togetherActive, togetherUserId,
+                togetherLeaderUserId)) {
+            scheduleTogetherAutoAdvanceFallback();
+            return;
+        }
+        performAutoAdvance();
+    }
+
+    private void performAutoAdvance() {
         switch (playMode.peek()) {
             case 2:
                 playAt(playIndex);
@@ -2673,6 +2693,40 @@ public final class PlayerController {
                 playAt((playIndex + 1) % queue.size());
                 break;
         }
+    }
+
+    /** Followers do not independently choose the next song: that is harmless in
+     *  list order but races badly in shuffle mode. Keep a bounded failover so a
+     *  sleeping/disconnected creator cannot strand playback at the end forever. */
+    private void scheduleTogetherAutoAdvanceFallback() {
+        Track ended = currentTrack();
+        if (ended == null || ended.neteaseId == 0L) {
+            performAutoAdvance();
+            return;
+        }
+        final long endedSongId = ended.neteaseId;
+        final int endedIndex = playIndex;
+        final long generation = togetherAutoAdvanceGeneration.incrementAndGet();
+        togetherPendingAutoAdvanceSongId = endedSongId;
+        togetherPendingAutoAdvanceIndex = endedIndex;
+        Logger.info("listen-together: waiting for leader {} to advance song {}",
+                togetherLeaderUserId, endedSongId);
+        togetherWorker.schedule(() -> onMain(() -> {
+            Track current = currentTrack();
+            if (generation != togetherAutoAdvanceGeneration.get()
+                    || playIndex != endedIndex || current == null
+                    || current.neteaseId != endedSongId) return;
+            togetherPendingAutoAdvanceSongId = 0L;
+            togetherPendingAutoAdvanceIndex = -1;
+            Logger.warn("listen-together: leader advance timed out; taking over");
+            performAutoAdvance();
+        }), TOGETHER_AUTO_ADVANCE_GRACE_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelPendingTogetherAutoAdvance() {
+        togetherAutoAdvanceGeneration.incrementAndGet();
+        togetherPendingAutoAdvanceSongId = 0L;
+        togetherPendingAutoAdvanceIndex = -1;
     }
 
     public void seek(long ms) {
@@ -4688,12 +4742,20 @@ public final class PlayerController {
         togetherLastRemoteCommand = "";
         togetherPendingRemoteCommand = "";
         togetherPendingRemoteSeq = -1L;
+        cancelPendingTogetherAutoAdvance();
+        togetherLeaderUserId = togetherLeaderId(room, userId);
         togetherSuppressReportsUntil = System.currentTimeMillis() + 1800L;
         publishTogetherRoom(room);
         baselineTogetherLocal();
     }
 
     private void publishTogetherRoom(NeteaseClient.TogetherRoom room) {
+        // Membership/status refreshes repeat the immutable room creator. Use it only
+        // for initial election; otherwise they would undo dynamic control transfer
+        // after another participant switches tracks.
+        if (togetherLeaderUserId == 0L) {
+            togetherLeaderUserId = togetherLeaderId(room, togetherUserId);
+        }
         StringBuilder members = new StringBuilder();
         for (NeteaseClient.TogetherUser user : room.users) {
             if (members.length() > 0) members.append("、");
@@ -4713,13 +4775,22 @@ public final class PlayerController {
     }
 
     private void clearTogetherRoom(boolean serverEnded) {
+        final boolean advanceLocally = togetherPendingAutoAdvanceSongId != 0L;
         togetherActive = false;
         togetherRoomId = "";
         togetherUserId = 0L;
+        togetherLeaderUserId = 0L;
         pendingTogetherDesiredPlaying = null;
         pendingTogetherTargetSongId = 0L;
         togetherPendingRemoteCommand = "";
         togetherPendingRemoteSeq = -1L;
+        if (advanceLocally) {
+            onMain(() -> {
+                if (togetherPendingAutoAdvanceSongId == 0L) return;
+                cancelPendingTogetherAutoAdvance();
+                performAutoAdvance();
+            });
+        }
         post(() -> {
             listenTogetherInRoom.set(false);
             listenTogetherRoomId.set("");
@@ -4782,6 +4853,11 @@ public final class PlayerController {
             // initial room creation still uses the overload below to share the
             // already-playing song's real position.
             reportTogetherCommandNow("GOTO", togetherLastSongId, songId, 0L);
+            // Transfer only after the server accepted GOTO. On a network failure the
+            // next tick retries instead of leaving the two clients with conflicting
+            // private ideas of who owns natural advance. Remote-applied changes call
+            // baselineTogetherLocal(), so they cannot steal ownership from sender.
+            togetherLeaderUserId = togetherUserId;
         } else if (seek != togetherLastSeekRevision) {
             reportTogetherCommandNow("PROGRESS", songId, songId);
         } else if (playingIntent != togetherLastPlaying) {
@@ -4910,6 +4986,8 @@ public final class PlayerController {
                     String message = togetherCommandToast(remote.commandType);
                     if (!message.isEmpty()) showToast(message);
                 }
+                togetherLeaderUserId = togetherLeaderAfterRemoteCommand(
+                        togetherLeaderUserId, remote);
             }
 
             // A PROGRESS report describes only a seek. NetEase still attaches the
@@ -4922,7 +5000,16 @@ public final class PlayerController {
                     ? playingIntent : remote.shouldPlay();
             boolean changedTrack = currentBeforeReplacement == null
                     || currentBeforeReplacement.neteaseId != targetId;
-            long progress = togetherAppliedProgress(remote, initial, changedTrack,
+            // Repeat-one and a one-song queue produce a GOTO to the same id. If this
+            // follower is sitting at EOF waiting for the leader, seeking the exhausted
+            // decoder is insufficient (and playingIntent is already true, so resume is
+            // skipped); reopen the source through playAt just like a real track change.
+            boolean replayCompletedTrack = !changedTrack && remote != null
+                    && isTogetherTrackSwitch(remote.commandType)
+                    && togetherPendingAutoAdvanceSongId == targetId
+                    && togetherPendingAutoAdvanceIndex == targetIndex;
+            long progress = togetherAppliedProgress(remote, initial,
+                    changedTrack || replayCompletedTrack,
                     backend.position());
             // A queue-only reorder can move the current song without changing the
             // audible source. Keep playback running and only rebind its index.
@@ -4931,7 +5018,7 @@ public final class PlayerController {
                 final int reboundIndex = targetIndex;
                 post(() -> index.set(reboundIndex));
             }
-            if (changedTrack) {
+            if (changedTrack || replayCompletedTrack) {
                 pendingTogetherDesiredPlaying = desiredPlaying;
                 pendingTogetherTargetSongId = targetId;
                 pendingResumeMs = progress;
@@ -4973,6 +5060,38 @@ public final class PlayerController {
         return "GOTO".equalsIgnoreCase(commandType)
                 || "NEXT".equalsIgnoreCase(commandType)
                 || "PREV".equalsIgnoreCase(commandType);
+    }
+
+    /** Room creator wins when the API supplies it. Older/partial responses may omit
+     *  creatorId, so all clients deterministically fall back to the smallest known
+     *  participant id (including themselves) rather than each electing itself. */
+    static long togetherLeaderId(NeteaseClient.TogetherRoom room, long localUserId) {
+        if (room != null && room.creatorId > 0L) return room.creatorId;
+        long leader = localUserId > 0L ? localUserId : Long.MAX_VALUE;
+        if (room != null) {
+            for (NeteaseClient.TogetherUser user : room.users) {
+                if (user != null && user.userId > 0L && user.userId < leader) {
+                    leader = user.userId;
+                }
+            }
+        }
+        return leader == Long.MAX_VALUE ? 0L : leader;
+    }
+
+    static boolean shouldWaitForTogetherLeader(boolean active, long localUserId,
+            long leaderUserId) {
+        return active && localUserId > 0L && leaderUserId > 0L
+                && localUserId != leaderUserId;
+    }
+
+    /** Track selection transfers authority; transport-only commands do not. */
+    static long togetherLeaderAfterRemoteCommand(long currentLeaderUserId,
+            NeteaseClient.TogetherCommand command) {
+        if (command != null && command.userId > 0L
+                && isTogetherTrackSwitch(command.commandType)) {
+            return command.userId;
+        }
+        return currentLeaderUserId;
     }
 
     /** Selects a stable target when a remote playlist is observed. A non-zero
