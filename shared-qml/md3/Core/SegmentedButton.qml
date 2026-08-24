@@ -14,6 +14,10 @@ Item {
     ] 
     property bool enabled: true
     property bool multiSelect: false
+    // >= 0 makes this a controlled single-select component. The parent remains
+    // the source of truth, so reopening a dialog cannot leave the tab highlight
+    // on an index that no longer matches the displayed content.
+    property int selectedIndex: -1
     
     signal clicked(int index)
 
@@ -23,6 +27,10 @@ Item {
     }
 
     function _handleClicked(index) {
+        if (!multiSelect && selectedIndex >= 0) {
+            clicked(index)
+            return
+        }
         var newButtons = []
         for (var i = 0; i < buttons.length; i++) {
             var item = buttons[i]
@@ -71,7 +79,8 @@ Item {
                     // resulting width change instead of snapping.
                     Behavior on implicitWidth { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     
-                    property bool isSelected: modelData.selected === true
+                    property bool isSelected: control.selectedIndex >= 0
+                        ? index === control.selectedIndex : modelData.selected === true
                     property bool isSegmentEnabled: (modelData.enabled !== undefined ? modelData.enabled : true) && control.enabled
                     property bool isFirst: index === 0
                     property bool isLast: index === control.buttons.length - 1
@@ -178,4 +187,3 @@ Item {
         z: 2
     }
 }
-

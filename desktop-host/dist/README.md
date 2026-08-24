@@ -30,7 +30,9 @@ pwsh -File desktop-host/dist/package-windows.ps1  # → target/QPlayer/ + QPlaye
 
 Each script runs `jpackage` over `target/app`, then wraps the result in the
 platform's usual container. `QPLAYER_VERSION` (or the latest git tag) sets the
-version baked into the bundle metadata.
+version baked into the bundle metadata. They also read the shared
+[`jvm-options.txt`](jvm-options.txt), which bounds heap/address-space growth and
+keeps G1/JIT worker counts independent of the host's CPU count.
 
 ### Platform notes
 
@@ -44,6 +46,9 @@ version baked into the bundle metadata.
   shows no console; `WinConsole` re-attaches to a parent terminal's console when
   started from a shell. CI additionally builds an Inno Setup installer
   (`qplayer.iss`) over the packaged `QPlayer/` folder.
+- **Linux** additionally strips the symbol table that Temurin leaves in
+  `libjvm.so` after `jlink --strip-debug`; this does not affect exported JNI/VM
+  symbols and saves roughly 4 MiB in the uncompressed runtime.
 - **Building with a GraalVM JDK** works, but its `jvmcicompiler.dll`/`.so` adds
   ~48 MB to the runtime. CI uses Temurin.
 - The jpackage launcher passes the command line to `main()` rather than the JVM,
@@ -52,9 +57,10 @@ version baked into the bundle metadata.
 
 ## Runtime modules
 
-`jre-modules.txt` is the single source of truth, read by all three scripts. Most
-of it comes from `jdeps --print-module-deps` over `target/app`; the rest is the
-runtime-only set jdeps can't see. Regenerate the first part with:
+`jre-modules.txt` is the common source of truth read by all three scripts;
+Windows adds `jdk.httpserver` for its SMTC cover endpoint. Raw `jdeps` output
+also reports optional Gson SQL adapters and the Windows-only class on every OS,
+so review its output rather than copying it wholesale. Inspect it with:
 
 ```sh
 jdeps --multi-release 21 --ignore-missing-deps --print-module-deps \
