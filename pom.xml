@@ -24,8 +24,8 @@
         <gson.version>2.10.1</gson.version>
         <jaudiotagger.version>3.0.1</jaudiotagger.version>
         <xz.version>1.12</xz.version>
-        <!-- Fork commit 49aba3f; CI-built for all six desktop OS/arch targets. -->
-        <swingwebview.version>1.4.0-qplayer.1</swingwebview.version>
+        <!-- Fork commit cffe3f8; CI-built for all six desktop OS/arch targets. -->
+        <swingwebview.version>1.4.0-qplayer.2</swingwebview.version>
     </properties>
 
     <repositories>
