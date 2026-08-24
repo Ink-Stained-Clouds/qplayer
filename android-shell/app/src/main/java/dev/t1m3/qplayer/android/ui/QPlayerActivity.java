@@ -71,6 +71,7 @@ public final class QPlayerActivity extends Activity {
     private static final int REQ_AUDIO = 1;
     private static final int REQ_NOTIF = 2;
     private static final int REQ_COVER_PICK = 3;
+    private static final int REQ_WEB_LOGIN = 4;
 
     /** Playlist id awaiting a picked cover image, set right before launching the
      *  gallery picker and consumed in {@link #onActivityResult}. */
@@ -144,6 +145,7 @@ public final class QPlayerActivity extends Activity {
         }));
         controller.setInstaller(this::downloadAndInstallUpdate);
         controller.setCoverPicker(this::pickPlaylistCover);
+        controller.setWebLoginLauncher(this::openNeteaseWebLogin);
 
         // Playback control runs on the main thread (alive in the background, unlike
         // the GL render thread); the service mirrors state to the media session and
@@ -493,9 +495,29 @@ public final class QPlayerActivity extends Activity {
         }
     }
 
+    private void openNeteaseWebLogin() {
+        runOnUiThread(() -> {
+            try {
+                startActivityForResult(
+                        new Intent(this, NeteaseWebLoginActivity.class), REQ_WEB_LOGIN);
+            } catch (Throwable e) {
+                controller.failWebLogin("无法打开系统 WebView，请使用粘贴 Cookie 登录");
+            }
+        });
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_WEB_LOGIN) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                controller.completeWebLogin(data.getStringExtra(
+                        NeteaseWebLoginActivity.EXTRA_COOKIE_HEADER));
+            } else {
+                controller.cancelWebLogin();
+            }
+            return;
+        }
         if (requestCode != REQ_COVER_PICK || resultCode != Activity.RESULT_OK || data == null) return;
         android.net.Uri uri = data.getData();
         if (uri == null) return;

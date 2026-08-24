@@ -33,6 +33,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name="dev.t1m3.qplayer.android.ui.NeteaseWebLoginActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/AppTheme" />
+
         <service
             android:name="dev.t1m3.qplayer.android.playback.PlaybackService"
             android:exported="false"

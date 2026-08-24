@@ -82,6 +82,7 @@ public final class PlayerController {
     private final NeteaseClient netease;
     private volatile ColorExtractor colorExtractor;
     private volatile java.util.function.Consumer<String> clipboard;
+    private volatile Runnable webLoginLauncher;
     private volatile boolean monetEnabled = true;
     private static final String DEFAULT_SEED = "#6750A4";
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -825,6 +826,12 @@ public final class PlayerController {
      *  The shell is responsible for putting the write on the right thread. */
     public void setClipboard(java.util.function.Consumer<String> sink) {
         this.clipboard = sink;
+    }
+
+    /** Install the shell's in-process system WebView login launcher. */
+    public void setWebLoginLauncher(Runnable launcher) {
+        this.webLoginLauncher = launcher;
+        webLoginAvailable.set(launcher != null);
     }
 
     /** Copy a shareable netease link for the song to the system clipboard. */
@@ -5238,6 +5245,92 @@ public final class PlayerController {
             new Property<>(Collections.<List<Boolean>>emptyList());
     /** 0 loading / 800 expired / 801 waiting / 802 scanned / 803 success. */
     public final Property<Integer> qrStatus = new Property<>(0);
+    /** Whether this shell can embed the official website in a system WebView. */
+    public final Property<Boolean> webLoginAvailable = new Property<>(false);
+    /** True while the browser is open or a pasted/browser Cookie is being checked. */
+    public final Property<Boolean> webLoginBusy = new Property<>(false);
+    /** Safe user-facing failure reason; never contains the submitted Cookie. */
+    public final Property<String> webLoginError = new Property<>("");
+    /** Incremented only after server validation and encrypted persistence succeed. */
+    public final Property<Long> webLoginSuccessRevision = new Property<>(0L);
+
+    /** Open the shell-owned official-site login window. */
+    public void startWebLogin() {
+        Runnable launcher = webLoginLauncher;
+        if (launcher == null) {
+            webLoginError.set("当前平台不支持内嵌网页登录，请粘贴 Cookie 登录");
+            return;
+        }
+        if (Boolean.TRUE.equals(webLoginBusy.peek())) return;
+        webLoginError.set("");
+        webLoginBusy.set(true);
+        try {
+            launcher.run();
+        } catch (Throwable e) {
+            Logger.warn("web login launcher failed: {}", safeMessage(e));
+            webLoginBusy.set(false);
+            webLoginError.set("无法打开网易云登录页面");
+        }
+    }
+
+    /** Called by a shell after reading the official WebView cookie store. */
+    public void completeWebLogin(String cookieHeader) {
+        importLoginCookie(cookieHeader);
+    }
+
+    /** Paste-login fallback invoked directly by QML. */
+    public void submitCookieLogin(String cookieHeader) {
+        if (Boolean.TRUE.equals(webLoginBusy.peek())) return;
+        webLoginBusy.set(true);
+        webLoginError.set("");
+        importLoginCookie(cookieHeader);
+    }
+
+    /** Shell callback when its browser window is closed before obtaining MUSIC_U. */
+    public void cancelWebLogin() {
+        post(() -> webLoginBusy.set(false));
+    }
+
+    /** Shell callback for browser creation/native-engine failures. */
+    public void failWebLogin(String message) {
+        final String safe = message == null || message.trim().isEmpty()
+                ? "无法打开网易云登录页面" : message.trim();
+        post(() -> {
+            webLoginBusy.set(false);
+            webLoginError.set(safe);
+        });
+    }
+
+    public void clearWebLoginError() {
+        webLoginError.set("");
+    }
+
+    private void importLoginCookie(String cookieHeader) {
+        final String candidate = cookieHeader == null ? "" : cookieHeader;
+        worker.submit(() -> {
+            try {
+                long accountId = netease.importLoginCookies(candidate);
+                uid = accountId;
+                post(() -> {
+                    webLoginBusy.set(false);
+                    webLoginError.set("");
+                    webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
+                    showToast("登录成功");
+                });
+                refreshLogin();
+            } catch (Throwable e) {
+                // Never log the candidate header. Parser/network errors have safe,
+                // credential-free messages by contract.
+                String reason = safeMessage(e);
+                Logger.warn("cookie login failed: {}", reason);
+                post(() -> {
+                    webLoginBusy.set(false);
+                    webLoginError.set(reason == null || reason.trim().isEmpty()
+                            ? "Cookie 登录失败" : reason);
+                });
+            }
+        });
+    }
 
     /** Mint a login key + matrix off-thread; publishes to {@link #qrImage}/{@link #qrStatus}. */
     public void startQrLogin() {

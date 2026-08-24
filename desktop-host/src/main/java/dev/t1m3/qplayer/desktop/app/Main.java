@@ -111,6 +111,10 @@ public final class Main {
         PlayerController controller = new PlayerController(audio, reader);
         controller.setColorExtractor(new DesktopColorExtractor());
         controller.setCurrentVersion(appVersion());
+        controller.setWebLoginLauncher(() -> DesktopWebLogin.open(
+                controller::completeWebLogin,
+                controller::failWebLogin,
+                controller::cancelWebLogin));
 
         // A downloaded update installer (see downloadAndInstallUpdate below) has
         // served its purpose once the app restarts -- it's never deleted right
