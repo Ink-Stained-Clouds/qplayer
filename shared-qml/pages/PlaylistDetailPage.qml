@@ -36,12 +36,21 @@ Rectangle {
                 onClicked: page.back()
             }
             Text {
+                property bool compactLayout: page.width < 600
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
+                Layout.preferredHeight: compactLayout ? 48 : 32
                 text: player.playlistTitle
                 color: Theme.color.onSurfaceColor
-                font.family: Theme.typography.titleLarge.family
-                font.pixelSize: Theme.typography.titleLarge.size
+                font.family: compactLayout
+                             ? Theme.typography.titleMedium.family
+                             : Theme.typography.titleLarge.family
+                font.pixelSize: compactLayout
+                                ? Theme.typography.titleMedium.size
+                                : Theme.typography.titleLarge.size
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: compactLayout ? Text.Wrap : Text.NoWrap
+                maximumLineCount: compactLayout ? 2 : 1
                 elide: Text.ElideRight
             }
             Button {

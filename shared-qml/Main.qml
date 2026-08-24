@@ -267,9 +267,12 @@ Rectangle {
 
         // Secondary destinations live at the bottom of the wide rail instead of
         // competing with page-level actions in the top bar. Labels fade with the
-        // extended rail; the compact rail keeps the same three icon targets.
+        // extended rail; the compact rail keeps the same icon targets.
         footer: Item {
-            implicitHeight: 164
+            // Logged-in users get the listen-together action next to the account
+            // entry on both the compact rail (tablets) and the extended rail
+            // (desktop). Collapse the extra row entirely while signed out.
+            implicitHeight: player.loggedIn ? 212 : 164
 
             Rectangle {
                 x: 12
@@ -280,12 +283,18 @@ Rectangle {
             }
 
             Repeater {
-                model: [
-                    { icon: "download", text: "已下载" },
-                    { icon: player.loggedIn ? "account_circle" : "login",
-                      text: player.loggedIn ? "账户" : "登录" },
-                    { icon: "settings", text: "设置" }
-                ]
+                model: player.loggedIn
+                    ? [
+                        { action: "download", icon: "download", text: "已下载" },
+                        { action: "together", icon: "group", text: "一起听" },
+                        { action: "account", icon: "account_circle", text: "账户" },
+                        { action: "settings", icon: "settings", text: "设置" }
+                      ]
+                    : [
+                        { action: "download", icon: "download", text: "已下载" },
+                        { action: "account", icon: "login", text: "登录" },
+                        { action: "settings", icon: "settings", text: "设置" }
+                      ]
 
                 Item {
                     id: footerAction
@@ -314,7 +323,8 @@ Rectangle {
                         text: modelData.icon
                         font.family: Theme.iconFont.name
                         font.pixelSize: 22
-                        color: Theme.color.onSurfaceVariantColor
+                        color: modelData.action === "together" && player.listenTogetherInRoom
+                               ? Theme.color.primary : Theme.color.onSurfaceVariantColor
                         Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     }
 
@@ -341,10 +351,12 @@ Rectangle {
                         clipRadius: footerState.radius
                         rippleColor: Theme.color.onSurfaceColor
                         onClicked: {
-                            if (index === 0) {
+                            if (modelData.action === "download") {
                                 player.refreshCachedSongs()
                                 app.openOverlay("cachedSongs")
-                            } else if (index === 1) {
+                            } else if (modelData.action === "together") {
+                                togetherDialog.open()
+                            } else if (modelData.action === "account") {
                                 if (player.loggedIn) app.openOverlay("account")
                                 else app.loginOpen = true
                             } else {
@@ -383,18 +395,18 @@ Rectangle {
             }
         }
         IconButton {
-            visible: !app.wide
-            type: "standard"
-            icon: player.loggedIn ? "account_circle" : "login"
-            onClicked: if (player.loggedIn) app.openOverlay("account"); else app.loginOpen = true
-        }
-        IconButton {
             visible: !app.wide && player.loggedIn
             type: "standard"
             icon: "group"
             contentColor: player.listenTogetherInRoom
                           ? Theme.color.primary : Theme.color.onSurfaceVariantColor
             onClicked: togetherDialog.open()
+        }
+        IconButton {
+            visible: !app.wide
+            type: "standard"
+            icon: player.loggedIn ? "account_circle" : "login"
+            onClicked: if (player.loggedIn) app.openOverlay("account"); else app.loginOpen = true
         }
         IconButton {
             visible: !app.wide
