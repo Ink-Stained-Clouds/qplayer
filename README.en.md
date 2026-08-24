@@ -60,6 +60,15 @@ The UI uses no native Views. Every control is described in QML and rendered by q
 - Responsive layout: the UI adapts to the window/screen width (MD3 breakpoints 600 / 840) — a bottom bar when narrow, a left `NavigationRail` when wide, and a playlist grid whose column count grows with width. It's width-driven, so Android landscape and tablets get it too.
 - Desktop (LWJGL3): the same QML and `player-core` logic run on the desktop, windowed with GLFW and rendered with Skija. The **OpenGL / Vulkan graphics backend is switchable** at startup; a taskbar icon plus a system tray whose menu mirrors the transport; **minimizing to the tray destroys the render thread and GPU resources and rebuilds them on restore** (playback and UI state are preserved).
 
+## Credential storage and security boundary
+
+QPlayer encrypts NetEase login cookies with authenticated AES-GCM and, whenever available, protects the random data key with Android Keystore, macOS Keychain, Windows DPAPI, or Linux Secret Service/KWallet. If the system credential store is unavailable, the user may explicitly fall back to a local key restricted to the current user.
+
+This feature provides **data-at-rest protection**, not protection against malware already running locally. It reduces the risk of restoring a login from copied credential files, configuration directories, backups, or old drives, and prevents other unprivileged operating-system accounts from directly reading the credentials.
+
+> [!IMPORTANT]
+> Windows DPAPI and Linux Secret Service/KWallet primarily use the current user or login session as their security boundary; they do not guarantee exclusive access by QPlayer. Another process running as the same user may be able to call the same system interfaces, especially while the credential store is unlocked. On desktop, owner-only fallback encryption mainly relies on file permissions and likewise cannot defend against same-user processes. Android's application sandbox and macOS Keychain application access controls provide stronger app-level isolation, but root/administrator access, process injection, debugging, and reading QPlayer's live process memory remain outside the protection boundary.
+
 ## Layout
 
 | Module | Description |
