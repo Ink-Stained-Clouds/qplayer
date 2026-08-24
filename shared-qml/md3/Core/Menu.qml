@@ -17,6 +17,11 @@ Item {
     // the scene-wide active-menu slot.
     property var ownerMenu: null
     property var activeSubMenu: null
+    // Opt-in surface variant (surfaceContainerLow + a smaller corner radius,
+    // same drop shadow as the default) that reads closer to the outlined
+    // playlist card the playlist context menu opens from. Off by default so
+    // every other Menu consumer (song rows, ComboBox) is unaffected.
+    property bool outlined: false
 
     // Anchor for the popup, in menuRoot coordinates. open() records the raw desired
     // position; popupContainer.x/y then CLAMP it against menuRoot reactively, so the
@@ -26,6 +31,14 @@ Item {
     property var menuRoot: null
     property real targetX: 0
     property real targetY: 0
+    // The item the popup is anchored to + the fixed offset from it, re-read every
+    // followTimer tick so a wheel/flick scroll underneath moves the popup along
+    // with its anchor instead of leaving it stranded over content that scrolled
+    // away. mapFromItem walks plain (non-reactive) property reads internally, so
+    // this can only track via polling, not a binding.
+    property var _anchorItem: null
+    property real _anchorXOffset: 0
+    property real _anchorYOffset: 0
     
     // Theme Colors
     property var _colors: Theme.color
@@ -122,14 +135,14 @@ Item {
                 z: 0
                 // Opacity is inherited from parent (popupContainer), no need to double apply
             }
-            
+
             // Menu Background & Content
             Rectangle {
                 id: menuBackground
                 z: 1
                 anchors.fill: parent
-                color: _colors.surfaceContainer
-                radius: _shape.cornerExtraSmall
+                color: control.outlined ? _colors.surfaceContainerLow : _colors.surfaceContainer
+                radius: control.outlined ? _shape.cornerSmall : _shape.cornerExtraSmall
                 clip: true
                 
                 Flickable {
@@ -163,7 +176,51 @@ Item {
             }
         }
     }
-    
+
+    // Whether the anchor is still genuinely on screen: reachable from menuRoot
+    // through an unbroken chain of visible ancestors. A page swap (StackLayout,
+    // a tab switch) commonly hides the anchor's whole page without moving it --
+    // its scene position stays a valid on-screen coordinate, so the bounds check
+    // in the timer below can't catch that alone; a hidden ancestor anywhere up
+    // the chain means the anchor (and the popup floating over whatever replaced
+    // it) needs to go too.
+    function _anchorReachable(item) {
+        var n = item
+        while (n) {
+            if (n.visible === false) return false
+            if (n === control.menuRoot) return true
+            n = n.parent
+        }
+        return false
+    }
+
+    // Closes the popup the moment its anchor moves at all -- a wheel scroll
+    // underneath included, which the scrim's press-to-dismiss below never
+    // sees (a wheel notch is not a press). Simpler than trying to carry the
+    // popup along with the scroll: it just goes away, like a click outside it.
+    Timer {
+        id: followTimer
+        interval: 16
+        repeat: true
+        running: overlayLayer.visible && control._anchorItem !== null
+        onTriggered: {
+            // Already closing (its own exit animation is running): stop recomputing
+            // -- calling close() again here would restart that animation every
+            // tick and it would never actually finish.
+            if (!control._anchorItem || !control.menuRoot || exitAnim.running) return
+            if (!control._anchorReachable(control._anchorItem)) {
+                control.close()
+                return
+            }
+            var pos = control.menuRoot.mapFromItem(control._anchorItem, 0, 0)
+            var nx = pos.x + control._anchorXOffset
+            var ny = pos.y + control._anchorYOffset
+            if (Math.abs(nx - control.targetX) > 1 || Math.abs(ny - control.targetY) > 1) {
+                control.close()
+            }
+        }
+    }
+
     // Animation Helpers
     function startEntranceAnimation() {
         exitAnim.stop()
@@ -350,6 +407,11 @@ Item {
             control.menuRoot = root
             control.targetX = targetPos.x + (xOffset !== undefined ? xOffset : 0)
             control.targetY = targetPos.y + (yOffset !== undefined ? yOffset : 0)
+            // followTimer re-derives targetX/Y from these every tick so a scroll
+            // underneath carries the popup along (see its own comment).
+            control._anchorItem = target
+            control._anchorXOffset = xOffset !== undefined ? xOffset : 0
+            control._anchorYOffset = yOffset !== undefined ? yOffset : 0
 
             overlayLayer.visible = true
             startEntranceAnimation()
@@ -371,6 +433,7 @@ Item {
             control.activeSubMenu.dismissImmediately()
             control.activeSubMenu = null
         }
+        control._anchorItem = null
         overlayLayer.forceClose()
         if (control.ownerMenu) {
             if (control.ownerMenu.activeSubMenu === control)

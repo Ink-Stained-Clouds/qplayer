@@ -8,6 +8,7 @@ import "."
 Menu {
     id: menu
 
+    outlined: true
     property var playlistId: 0
     signal openRequested()
 
