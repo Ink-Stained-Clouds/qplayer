@@ -239,6 +239,15 @@
             <classifier>no-natives</classifier>
         </dependency>
 
+        <!-- MIT-licensed fork of swingwebview. It embeds the installed system
+             browser engine in the existing JVM and exposes native CookieManager
+             access so HttpOnly MUSIC_U can be handed to player-core securely. -->
+        <dependency>
+            <groupId>io.github.timer-err</groupId>
+            <artifactId>swingwebview</artifactId>
+            <version>${swingwebview.version}</version>
+        </dependency>
+
         <!-- Desktop audio decoders. We drive these libraries directly (no
              javax.sound SPI / AudioSystem) so each can seek for real instead of
              decode-and-discard from zero: jlayer (mp3) frame-walks headers,

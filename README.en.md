@@ -149,7 +149,8 @@ Commit, then tag and push `v<versionName>` (e.g. `v0.8.4`) to trigger `release.y
 - [AMLL](https://github.com/amll-dev/amll-player) — design reference for Apple Music-style lyrics and fluid backdrops.
 - [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) — syllable-level lyrics.
 - [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) — reference for the NetEase request-encryption schemes (weapi/eapi/xeapi).
-- Lyric rendering adapted from the Haedus renderer; icons are Material Symbols Rounded.
+- [swingwebview](https://github.com/webliteca/swingwebview) — uses the system WebView for website login on desktop.
+- Icons are Material Symbols Rounded.
 
 > Personal/educational project. NetEase Cloud Music is a trademark of its respective owner; this app is an unofficial client and is not affiliated with NetEase.
 

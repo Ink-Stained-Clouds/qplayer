@@ -2,13 +2,17 @@ import QtQuick
 import QtQuick.Layouts
 import md3.Core
 
-// Netease QR login. All network work is async on the controller: startQrLogin()
-// mints the key + matrix off-thread into player.qrImage, and pollQrLogin() polls
-// the scan status into player.qrStatus — nothing blocks the render thread.
+// Three login paths share the same transactional Cookie importer in
+// PlayerController: QR, the official site in a system WebView, and a manual
+// Cookie-header fallback. Network and credential persistence stay off-render.
 Rectangle {
     id: dialog
 
     property bool active: false
+    property int loginMode: 0 // 0 QR, 1 official website, 2 pasted Cookie
+    property bool ready: false
+    property string cookieText: ""
+    property var successRevision: player.webLoginSuccessRevision
     signal closed()
 
     anchors.fill: parent
@@ -17,18 +21,25 @@ Rectangle {
     color: "#99000000"
     Behavior on opacity { NumberAnimation { duration: 150 } }
 
-    // Defer drawing the QR until the open animation finishes, so the one-off
-    // matrix paint can't hitch the scale/fade. Until then only the loading
-    // indicator shows.
-    property bool ready: false
     onActiveChanged: {
-        if (active) { ready = false; player.startQrLogin(); revealTimer.restart(); }
+        if (active) {
+            player.clearWebLoginError();
+            loginMode = 0;
+            cookieText = "";
+            ready = false;
+            player.startQrLogin();
+            revealTimer.restart();
+        }
     }
-    Timer {
-        id: revealTimer
-        interval: 280
-        onTriggered: { dialog.ready = true; canvas.requestPaint(); }
+    onLoginModeChanged: {
+        player.clearWebLoginError();
+        if (active && loginMode === 0) {
+            ready = false;
+            player.startQrLogin();
+            revealTimer.restart();
+        }
     }
+    onSuccessRevisionChanged: if (active) dialog.closed()
 
     function statusText(code) {
         if (code === 0) return "正在获取二维码…";
@@ -38,99 +49,204 @@ Rectangle {
         return "请用网易云音乐 App 扫码";
     }
 
-    // redraw when the matrix arrives (only once revealed); close on success
+    Timer {
+        id: revealTimer
+        interval: 280
+        onTriggered: { dialog.ready = true; qrCanvas.requestPaint(); }
+    }
     property var qr: player.qrImage
-    onQrChanged: if (ready) canvas.requestPaint()
+    onQrChanged: if (ready) qrCanvas.requestPaint()
     property int st: player.qrStatus
     onStChanged: if (st === 803) dialog.closed()
 
-    MouseArea { anchors.fill: parent }   // swallow scrim taps
+    MouseArea { anchors.fill: parent }
 
     Timer {
         interval: 800
         repeat: true
-        running: dialog.active
+        running: dialog.active && dialog.loginMode === 0
         onTriggered: player.pollQrLogin()
     }
 
     Rectangle {
         anchors.centerIn: parent
-        width: 300
-        height: 400
+        width: Math.min(420, parent.width - 32)
+        height: Math.min(480, parent.height - 32)
         radius: 24
         color: Theme.color.surfaceContainerHigh
+        clip: true
         scale: dialog.active ? 1 : 0.9
         Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
-            spacing: 16
+            spacing: 14
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: "扫码登录网易云"
+                text: "登录网易云音乐"
                 color: Theme.color.onSurfaceColor
                 fontSize: 20
             }
 
-            Rectangle {
-                Layout.alignment: Qt.AlignHCenter
-                width: 220; height: 220; radius: 12
-                color: "#ffffff"
+            SegmentedButton {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                buttons: [
+                    { text: "扫码", selected: dialog.loginMode === 0 },
+                    { text: "网页登录", selected: dialog.loginMode === 1,
+                      enabled: player.webLoginAvailable },
+                    { text: "Cookie", selected: dialog.loginMode === 2 }
+                ]
+                onClicked: (index) => dialog.loginMode = index
+            }
 
-                // Loading spinner while the QR isn't shown yet. Now crisp: the
-                // engine backs canvases at device resolution.
-                CircularProgress {
-                    anchors.centerIn: parent
-                    width: 48; height: 48
-                    indeterminate: true
-                    visible: dialog.active && !canvas.visible
-                }
-                Canvas {
-                    id: canvas
-                    anchors.centerIn: parent
-                    width: 200; height: 200
-                    visible: dialog.ready && dialog.qr.length > 0
-                    onPaint: {
-                        var ctx = getContext("2d");
-                        // Stay transparent until the QR is ready so the spinner
-                        // beneath shows through (the white box is the Rectangle).
-                        if (!dialog.ready) return;
-                        var m = dialog.qr;
-                        if (!m || m.length <= 0) return;
-                        ctx.fillStyle = "#ffffff";
-                        ctx.fillRect(0, 0, width, height);
-                        var n = m.length;
-                        var cell = width / n;
-                        ctx.fillStyle = "#000000";
-                        for (var y = 0; y < n; y++) {
-                            var row = m[y];
-                            for (var x = 0; x < n; x++) {
-                                if (row[x])
-                                    ctx.fillRect(Math.floor(x * cell), Math.floor(y * cell),
-                                                 Math.ceil(cell), Math.ceil(cell));
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: dialog.loginMode === 0
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 12
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignHCenter
+                        width: 220
+                        height: 220
+                        radius: 12
+                        color: "#ffffff"
+
+                        CircularProgress {
+                            anchors.centerIn: parent
+                            width: 48; height: 48
+                            indeterminate: true
+                            visible: dialog.active && !qrCanvas.visible
+                        }
+                        Canvas {
+                            id: qrCanvas
+                            anchors.centerIn: parent
+                            width: 200; height: 200
+                            visible: dialog.ready && dialog.qr.length > 0
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                if (!dialog.ready) return;
+                                var matrix = dialog.qr;
+                                if (!matrix || matrix.length <= 0) return;
+                                ctx.fillStyle = "#ffffff";
+                                ctx.fillRect(0, 0, width, height);
+                                var size = matrix.length;
+                                var cell = width / size;
+                                ctx.fillStyle = "#000000";
+                                for (var y = 0; y < size; y++) {
+                                    var row = matrix[y];
+                                    for (var x = 0; x < size; x++) {
+                                        if (row[x]) ctx.fillRect(
+                                            Math.floor(x * cell), Math.floor(y * cell),
+                                            Math.ceil(cell), Math.ceil(cell));
+                                    }
+                                }
                             }
                         }
                     }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: dialog.statusText(player.qrStatus)
+                        horizontalAlignment: Text.AlignHCenter
+                        color: Theme.color.onSurfaceVariantColor
+                        fontSize: 14
+                    }
+                    Item { Layout.fillHeight: true }
                 }
             }
 
-            Text {
-                Layout.alignment: Qt.AlignHCenter
+            Item {
                 Layout.fillWidth: true
-                text: dialog.statusText(player.qrStatus)
-                horizontalAlignment: Text.AlignHCenter
-                color: Theme.color.onSurfaceVariantColor
-                fontSize: 14
+                Layout.fillHeight: true
+                visible: dialog.loginMode === 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 16
+                    Item { Layout.fillHeight: true }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "将在系统 WebView 中打开网易云官网。登录成功后，QPlayer 会自动读取登录 Cookie、验证账号并加密保存。"
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        color: Theme.color.onSurfaceVariantColor
+                        fontSize: 14
+                    }
+                    Button {
+                        Layout.alignment: Qt.AlignHCenter
+                        type: "filled"
+                        icon: "open_in_new"
+                        text: player.webLoginBusy ? "正在等待登录…" : "打开网易云官网"
+                        enabled: !player.webLoginBusy
+                        onClicked: player.startWebLogin()
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: player.webLoginError.length > 0
+                        text: player.webLoginError
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        color: Theme.color.error
+                        fontSize: 13
+                    }
+                    Item { Layout.fillHeight: true }
+                }
             }
 
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: dialog.loginMode === 2
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 12
+                    Item { Layout.fillHeight: true }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "在 music.163.com 登录后按 F12，复制请求头中的 Cookie 值并粘贴到下方。Cookie 仅用于验证，成功后会按凭据保护设置加密保存。"
+                        wrapMode: Text.WordWrap
+                        color: Theme.color.onSurfaceVariantColor
+                        fontSize: 13
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        type: "outlined"
+                        label: "Cookie 请求头"
+                        isPassword: true
+                        text: dialog.cookieText
+                        errorText: player.webLoginError
+                        onTextChanged: dialog.cookieText = text
+                        onAccepted: if (text.length > 0 && !player.webLoginBusy)
+                            player.submitCookieLogin(text)
+                    }
+                    Button {
+                        Layout.fillWidth: true
+                        type: "filled"
+                        text: player.webLoginBusy ? "正在验证…" : "验证并登录"
+                        enabled: dialog.cookieText.trim().length > 0 && !player.webLoginBusy
+                        onClicked: player.submitCookieLogin(dialog.cookieText)
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+            }
 
             Button {
                 Layout.alignment: Qt.AlignHCenter
-                type: "text"; text: "取消"
-                onClicked: dialog.closed()
+                type: "text"
+                text: "取消"
+                enabled: !player.webLoginBusy
+                onClicked: {
+                    player.cancelWebLogin();
+                    dialog.closed();
+                }
             }
         }
     }

@@ -23,7 +23,19 @@
         <skija.version>0.143.17</skija.version>
         <gson.version>2.10.1</gson.version>
         <jaudiotagger.version>3.0.1</jaudiotagger.version>
+        <!-- Fork commit 49aba3f; CI-built for all six desktop OS/arch targets. -->
+        <swingwebview.version>1.4.0-qplayer.1</swingwebview.version>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>qplayer-swingwebview-fork</id>
+            <name>QPlayer Swing WebView fork</name>
+            <url>https://raw.githubusercontent.com/TIMER-err/swingwebview/maven-repo</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
 
     <dependencyManagement>
         <dependencies>

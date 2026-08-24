@@ -20,10 +20,14 @@ $ver = "$ver" -replace '^v', ''
 if (-not $ver) { $ver = '0.0.0' }
 Write-Host "packaging QPlayer $ver"
 
-# Shared module list (see jre-modules.txt), comments stripped.
-$mods = (Get-Content "$PSScriptRoot\jre-modules.txt" |
+# Shared module list (see jre-modules.txt), comments stripped. The Windows-only
+# SMTC implementation serves cover art from a loopback HttpServer, so only this
+# package carries jdk.httpserver.
+$moduleList = @(Get-Content "$PSScriptRoot\jre-modules.txt" |
     ForEach-Object { ($_ -replace '#.*', '').Trim() } |
-    Where-Object { $_ }) -join ','
+    Where-Object { $_ })
+$moduleList += 'jdk.httpserver'
+$mods = $moduleList -join ','
 
 $out = "$T\pkg"
 $dir = "$T\QPlayer"
@@ -37,7 +41,7 @@ Remove-Item -Recurse -Force $out, $dir -ErrorAction SilentlyContinue
     --input $app --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main `
     --dest $out --icon "$PSScriptRoot\..\src\main\resources\app-icon.ico" `
     --add-modules $mods `
-    --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"
+    --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 if ($LASTEXITCODE -ne 0) { throw "jpackage failed ($LASTEXITCODE)" }
 
 Move-Item "$out\qplayer" $dir

@@ -34,7 +34,7 @@ jpackage --type app-image \
   --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main \
   --dest "$T/pkg" \
   --add-modules "$MODS" \
-  --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"
+  --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 
 # AppDir = the jpackage image + the three things appimagetool insists on at the
 # root: AppRun, a .desktop entry and a matching icon.

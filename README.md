@@ -149,7 +149,8 @@ bash       desktop-host/dist/package-macos.sh      # macOS   → target/QPlayer.
 - [AMLL](https://github.com/amll-dev/amll-player) —— Apple Music 风格歌词与流体背景的设计参考。
 - [AMLL TTML DB](https://github.com/Steve-xmh/amll-ttml-db) —— 逐字歌词。
 - [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) —— 网易云请求加密方案(weapi/eapi/xeapi)的算法参照。
-- 歌词渲染改编自 Haedus renderer;图标使用 Material Symbols Rounded。
+- [swingwebview](https://github.com/webliteca/swingwebview) —— 桌面端调用系统 WebView 完成网页登录。
+- 图标使用 Material Symbols Rounded。
 
 > 个人与学习项目。网易云音乐是其各自所有者的商标
 > 本应用为非官方客户端,与网易云无关联。

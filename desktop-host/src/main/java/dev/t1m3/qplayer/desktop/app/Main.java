@@ -111,6 +111,10 @@ public final class Main {
         PlayerController controller = new PlayerController(audio, reader);
         controller.setColorExtractor(new DesktopColorExtractor());
         controller.setCurrentVersion(appVersion());
+        controller.setWebLoginLauncher(() -> DesktopWebLogin.open(
+                controller::completeWebLogin,
+                controller::failWebLogin,
+                controller::cancelWebLogin));
 
         // A downloaded update installer (see downloadAndInstallUpdate below) has
         // served its purpose once the app restarts -- it's never deleted right
@@ -288,7 +292,6 @@ public final class Main {
         }
         window.shutdown();
         Logger.info("QPlayer desktop exited");
-        killSelf();
     }
 
     /** Best-effort desktop dark-theme probe: a GTK theme-name hint, else light.
@@ -499,21 +502,4 @@ public final class Main {
         t.start();
     }
 
-    // The desktop GL drivers (notably NVIDIA's) can SIGSEGV a worker thread the
-    // instant the process begins to exit, and the AWT EDT (clipboard / tray) is
-    // non-daemon and would keep the JVM alive past main(). SIGKILL terminates the
-    // whole process atomically before either can bite. Mirrors the qml4j demo host.
-    private static void killSelf() {
-        try {
-            // Java 8: derive the pid from the "pid@host" runtime name.
-            String name = java.lang.management.ManagementFactory.getRuntimeMXBean().getName();
-            String pid = name.contains("@") ? name.substring(0, name.indexOf('@')) : null;
-            if (pid != null) {
-                new ProcessBuilder("kill", "-9", pid).start();
-                Thread.sleep(10_000);
-            }
-        } catch (Exception ignored) {
-        }
-        Runtime.getRuntime().halt(0);
-    }
 }

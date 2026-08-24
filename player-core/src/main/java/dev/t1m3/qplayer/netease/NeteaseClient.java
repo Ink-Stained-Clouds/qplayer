@@ -206,7 +206,17 @@ public final class NeteaseClient {
      * one. Returns the raw response body as UTF-8 text — caller parses.
      */
     private synchronized String weapiCall(String path, Map<String, Object> json) throws IOException {
-        String csrf = cookies.getOrDefault("__csrf", "");
+        return weapiCall(path, json, cookies, true);
+    }
+
+    /**
+     * WEAPI transport against an explicit cookie jar. Login imports use a
+     * private candidate jar so an invalid browser cookie can never replace the
+     * currently working session before the server has accepted it.
+     */
+    private String weapiCall(String path, Map<String, Object> json,
+            Map<String, String> cookieJar, boolean persistSetCookies) throws IOException {
+        String csrf = cookieJar.getOrDefault("__csrf", "");
         Map<String, Object> body = json == null ? new HashMap<String, Object>() : new HashMap<String, Object>(json);
         if (!body.containsKey("csrf_token")) body.put("csrf_token", csrf);
 
@@ -236,7 +246,7 @@ public final class NeteaseClient {
             // 异常" / 524 rejection on sensitive ops like favoriting).
             conn.setRequestProperty("X-Real-IP", REAL_IP);
             conn.setRequestProperty("X-Forwarded-For", REAL_IP);
-            String cookieHeader = cookieHeader();
+            String cookieHeader = cookieHeader(cookieJar);
             if (!cookieHeader.isEmpty()) conn.setRequestProperty("Cookie", cookieHeader);
 
             try (OutputStream os = conn.getOutputStream()) {
@@ -251,7 +261,9 @@ public final class NeteaseClient {
             } finally {
                 if (is != null) { try { is.close(); } catch (IOException ignored) {} }
             }
-            captureSetCookies(conn.getHeaderFields().get("Set-Cookie"));
+            boolean cookieChanged = captureSetCookiesInto(
+                    cookieJar, conn.getHeaderFields().get("Set-Cookie"));
+            if (cookieChanged && persistSetCookies) saveCookies();
 
             if (code >= 400) {
                 Logger.warn("Netease HTTP {} on /weapi/{}: {}", code, path, truncate(resp, 200));
@@ -989,10 +1001,149 @@ public final class NeteaseClient {
     public long loginUid() throws IOException {
         if (!isLoggedIn()) return 0L;
         JsonObject obj = apiJson(NeteaseApi.LOGIN_STATUS, new HashMap<String, Object>());
-        if (!obj.has("profile") || obj.get("profile").isJsonNull()) return 0L;
-        JsonObject p = obj.getAsJsonObject("profile");
-        if (!p.has("userId") || p.get("userId").isJsonNull()) return 0L;
-        return p.get("userId").getAsLong();
+        return profileUid(obj);
+    }
+
+    /**
+     * Validate and persist a Cookie header copied from the official NetEase
+     * website (or exported by an embedded system WebView).
+     *
+     * <p>The import is transactional: validation runs against a private cookie
+     * jar, the current session remains untouched on any parsing/network/login
+     * failure, and the in-memory jar is rolled back if encrypted persistence
+     * fails. The cookie value itself is never included in logs or exceptions.
+     *
+     * @return the authenticated account uid
+     * @throws IllegalArgumentException when the header is malformed or lacks
+     *         the {@code MUSIC_U} login credential
+     * @throws IOException when the credential is expired, rejected, or cannot
+     *         be persisted securely
+     */
+    public synchronized long importLoginCookies(String rawCookieHeader) throws IOException {
+        Map<String, String> imported = parseCookieHeader(rawCookieHeader);
+        String musicU = imported.get("MUSIC_U");
+        if (musicU == null || musicU.trim().isEmpty()) {
+            throw new IllegalArgumentException("Cookie 中缺少 MUSIC_U 登录凭据");
+        }
+
+        Map<String, String> previous = new LinkedHashMap<>(cookies);
+        Map<String, String> candidate = new LinkedHashMap<>();
+        preserveDeviceCookie(previous, candidate, "_ntes_nuid");
+        preserveDeviceCookie(previous, candidate, "deviceId");
+        candidate.putAll(imported);
+        if (!candidate.containsKey("_ntes_nuid")) {
+            candidate.put("_ntes_nuid", randomHex(32));
+        }
+        if (!candidate.containsKey("deviceId")) {
+            candidate.put("deviceId", randomHex(16));
+        }
+
+        String response = weapiCall(NeteaseApi.LOGIN_STATUS.weapiPath(),
+                new HashMap<String, Object>(), candidate, false);
+        JsonElement element = new JsonParser().parse(response);
+        if (!element.isJsonObject()) {
+            throw new IOException("登录验证返回了无效响应");
+        }
+        long uid = profileUid(element.getAsJsonObject());
+        if (uid <= 0L) {
+            throw new IOException("Cookie 已失效或未完成登录");
+        }
+
+        cookies.clear();
+        cookies.putAll(candidate);
+        if (!saveCookies()) {
+            cookies.clear();
+            cookies.putAll(previous);
+            throw new IOException("无法安全保存登录凭据");
+        }
+        return uid;
+    }
+
+    private static void preserveDeviceCookie(Map<String, String> source,
+            Map<String, String> target, String name) {
+        String value = source.get(name);
+        if (value != null && !value.isEmpty()) target.put(name, value);
+    }
+
+    private static long profileUid(JsonObject obj) {
+        if (obj == null || !obj.has("profile") || obj.get("profile").isJsonNull()
+                || !obj.get("profile").isJsonObject()) return 0L;
+        JsonObject profile = obj.getAsJsonObject("profile");
+        if (!profile.has("userId") || profile.get("userId").isJsonNull()) return 0L;
+        return profile.get("userId").getAsLong();
+    }
+
+    /** Package-visible for parser tests; returned map preserves header order. */
+    static Map<String, String> parseCookieHeader(String rawCookieHeader) {
+        if (rawCookieHeader == null) {
+            throw new IllegalArgumentException("Cookie 不能为空");
+        }
+        if (rawCookieHeader.length() > 65_536) {
+            throw new IllegalArgumentException("Cookie 内容过长");
+        }
+        String raw = rawCookieHeader.trim();
+        if (raw.isEmpty()) throw new IllegalArgumentException("Cookie 不能为空");
+
+        // Also accept a complete request-header block copied from browser devtools,
+        // but deliberately extract only its Cookie line.
+        if (raw.indexOf('\n') >= 0 || raw.indexOf('\r') >= 0) {
+            String found = null;
+            for (String line : raw.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
+                String trimmed = line.trim();
+                if (trimmed.regionMatches(true, 0, "Cookie:", 0, 7)) {
+                    if (found != null) {
+                        throw new IllegalArgumentException("检测到多个 Cookie 请求头");
+                    }
+                    found = trimmed.substring(7).trim();
+                }
+            }
+            if (found == null) {
+                throw new IllegalArgumentException("未找到 Cookie 请求头");
+            }
+            raw = found;
+        } else if (raw.regionMatches(true, 0, "Cookie:", 0, 7)) {
+            raw = raw.substring(7).trim();
+        }
+
+        Map<String, String> parsed = new LinkedHashMap<>();
+        for (String part : raw.split(";")) {
+            String pair = part.trim();
+            if (pair.isEmpty()) continue;
+            int equals = pair.indexOf('=');
+            if (equals <= 0) {
+                if (pair.equalsIgnoreCase("Secure") || pair.equalsIgnoreCase("HttpOnly")) {
+                    continue;
+                }
+                throw new IllegalArgumentException("Cookie 格式无效");
+            }
+            String name = pair.substring(0, equals).trim();
+            String value = pair.substring(equals + 1).trim();
+            if (!isCookieName(name) || containsControlCharacter(value)) {
+                throw new IllegalArgumentException("Cookie 格式无效");
+            }
+            parsed.put(name, value);
+        }
+        if (parsed.isEmpty()) throw new IllegalArgumentException("Cookie 不能为空");
+        return parsed;
+    }
+
+    private static boolean isCookieName(String value) {
+        if (value == null || value.isEmpty()) return false;
+        for (int i = 0; i < value.length(); ++i) {
+            char c = value.charAt(i);
+            if (c <= 0x20 || c >= 0x7f || "()<>@,;:\\\"/[]?={}".indexOf(c) >= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean containsControlCharacter(String value) {
+        for (int i = 0; i < value.length(); ++i) {
+            char c = value.charAt(i);
+            if (c < 0x20 || c == 0x7f) return true;
+        }
+        return false;
     }
 
     /**
@@ -1912,7 +2063,11 @@ public final class NeteaseClient {
 
     private String cookieHeader() {
         ensureDeviceCookies();
-        Map<String, String> all = new LinkedHashMap<>(cookies);
+        return cookieHeader(cookies);
+    }
+
+    private String cookieHeader(Map<String, String> sourceCookies) {
+        Map<String, String> all = new LinkedHashMap<>(sourceCookies);
         // Device-identity flags a real client sends. Without them Netease's risk
         // control rejects sensitive ops (favoriting) with code 524 "当前环境异常".
         all.put("__remember_me", "true");
@@ -1969,7 +2124,12 @@ public final class NeteaseClient {
     }
 
     private void captureSetCookies(List<String> setCookies) {
-        if (setCookies == null || setCookies.isEmpty()) return;
+        if (captureSetCookiesInto(cookies, setCookies)) saveCookies();
+    }
+
+    private static boolean captureSetCookiesInto(Map<String, String> target,
+            List<String> setCookies) {
+        if (setCookies == null || setCookies.isEmpty()) return false;
         boolean changed = false;
         for (String sc : setCookies) {
             int eq = sc.indexOf('=');
@@ -1981,10 +2141,10 @@ public final class NeteaseClient {
             if (name.equalsIgnoreCase("domain") || name.equalsIgnoreCase("path")
                     || name.equalsIgnoreCase("expires") || name.equalsIgnoreCase("max-age")
                     || name.equalsIgnoreCase("samesite")) continue;
-            String prev = cookies.put(name, val);
+            String prev = target.put(name, val);
             if (prev == null || !prev.equals(val)) changed = true;
         }
-        if (changed) saveCookies();
+        return changed;
     }
 
     private synchronized boolean loadCookies(boolean interactive) {

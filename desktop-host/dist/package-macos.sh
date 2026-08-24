@@ -62,7 +62,7 @@ jpackage --type dmg \
   --mac-package-identifier dev.t1m3.qplayer --mac-package-name QPlayer \
   --java-options -XstartOnFirstThread \
   --add-modules "$MODS" \
-  --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6"
+  --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 
 # jpackage names it QPlayer-<version>.dmg; the release asset is plain QPlayer.dmg.
 mv "$T"/pkg/QPlayer-*.dmg "$T/QPlayer.dmg"

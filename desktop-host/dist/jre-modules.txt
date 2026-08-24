@@ -1,25 +1,17 @@
 # JDK modules jlink puts into the bundled runtime (--add-modules), shared by all
 # three packaging scripts. One module per line; # starts a comment.
 #
-# The first block is what `jdeps --print-module-deps` reports over the staged
-# target/app tree; the second is the runtime-only set jdeps can't see (service
-# providers and reflective lookups), so don't drop those just because nothing
-# references them at compile time.
+# This is the common, cross-platform runtime. Optional classes in dependencies
+# (notably Gson's java.sql adapters and Log4j's JNDI lookup) do not require their
+# modules for QPlayer's code paths, so keep this list narrower than raw jdeps
+# output. Platform-only additions belong in the corresponding package script;
+# Windows appends jdk.httpserver for its SMTC cover endpoint.
 
 java.base
-java.compiler          # Rhino's optional compiler hooks (qml4j JS expressions)
 java.desktop           # AWT/Swing tray, ImageIO (cover colour extraction), clipboard
 java.logging
-java.management        # ManagementFactory, used to get our own pid on exit
-java.naming
-java.rmi
-java.scripting
-java.sql
 
 jdk.charsets           # GBK/Cp1252 fallbacks for netease payloads and local filenames
 jdk.crypto.ec          # EC cipher suites — without it every netease HTTPS call fails
 jdk.dynalink
-jdk.httpserver         # com.sun.net.httpserver: SMTC local cover endpoint (127.0.0.1)
-jdk.localedata         # non-US locales (zh date/number formatting)
 jdk.unsupported        # sun.misc.Unsafe: LWJGL, Skija, gson
-jdk.zipfs
