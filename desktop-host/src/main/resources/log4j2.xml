@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="WARN">
+<!-- The trimmed desktop runtime intentionally omits java.naming. Log4j treats
+     JNDI lookup support as optional; keep its benign absence out of startup logs
+     while still surfacing actual configuration errors. -->
+<Configuration status="ERROR">
     <Appenders>
         <Console name="SysOut" target="SYSTEM_OUT">
             <PatternLayout
@@ -8,10 +11,8 @@
         <RollingRandomAccessFile name="File" fileName="${sys:qplayer.logs:-logs}/latest.log" filePattern="${sys:qplayer.logs:-logs}/%d{yyyy-MM-dd}-%i.log.gz">
             <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] %msg%n"/>
             <Policies>
-                <!-- OnStartupTriggeringPolicy is omitted on purpose: in the native
-                     image it reflectively loads java.lang.management.ManagementFactory
-                     (absent from the image) and logs a startup ERROR. Time-based daily
-                     rollover is enough. -->
+                <!-- Time-based daily rollover is enough; avoiding the startup
+                     policy also keeps process-management internals out of logging. -->
                 <TimeBasedTriggeringPolicy/>
             </Policies>
         </RollingRandomAccessFile>
