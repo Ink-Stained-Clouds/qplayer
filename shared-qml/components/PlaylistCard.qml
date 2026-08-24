@@ -17,10 +17,16 @@ Item {
     property string coverThumbPath: ""
     property real tile: 160
     property bool _menuArmed: false
+    // A name that wouldn't fit one line at the normal size shrinks and wraps to
+    // two instead of eliding away -- the "..." made a lot of these unreadable at
+    // a glance on phone-width grids. Measured against nameProbe's real (unwrapped)
+    // painted width rather than guessed from character count -- a char-count
+    // heuristic under/overshoots badly between CJK and Latin glyph widths.
+    property bool longName: nameProbe.contentWidth > card.width - 24
     signal clicked()
 
     implicitWidth: tile
-    implicitHeight: tile + 60
+    implicitHeight: tile + 72
 
     Rectangle {
         id: container
@@ -61,25 +67,41 @@ Item {
         source: card.coverThumbPath || card.coverUrl
     }
 
+    // Invisible measuring probe: its contentWidth is the name's real, unwrapped
+    // painted width at the normal font size -- what decides whether nameLabel
+    // below needs the long-name (smaller font, two lines) treatment.
+    Text {
+        id: nameProbe
+        visible: false
+        text: card.name
+        fontSize: 14
+        font.weight: Font.Medium
+    }
+
+    // Reserved height covers two lines at all times -- even for a short name --
+    // so every card in a row keeps the count label at the same y and the grid
+    // never reflows around a long neighbour.
     Text {
         id: nameLabel
         x: 12
         y: card.width - 2
         width: card.width - 24
-        height: 24
-        verticalAlignment: Text.AlignVCenter
+        height: 36
+        verticalAlignment: Text.AlignTop
         text: card.name
         color: Theme.color.onSurfaceColor
-        fontSize: 14
+        fontSize: card.longName ? 12 : 14
         font.weight: Font.Medium
+        wrapMode: card.longName ? Text.WordWrap : Text.NoWrap
+        maximumLineCount: card.longName ? 2 : 1
         elide: Text.ElideRight
     }
 
-    // Count is kept in a fixed second row (including the zero case) so cards do
-    // not reflow when an asynchronously refreshed playlist gains its first song.
+    // Count is kept in a fixed row (including the zero case) so cards do not
+    // reflow when an asynchronously refreshed playlist gains its first song.
     Text {
         x: 12
-        y: card.width + 23
+        y: card.width + 35
         width: card.width - 24
         height: 20
         verticalAlignment: Text.AlignVCenter

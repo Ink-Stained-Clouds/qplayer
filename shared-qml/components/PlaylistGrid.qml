@@ -22,7 +22,7 @@ Flickable {
     property real minTile: 200
     property int cols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minTile + gap)))
     property real tile: (width - 2 * pad - (cols - 1) * gap) / cols
-    property real cardH: tile + 60
+    property real cardH: tile + 72
 
     clip: true
     contentWidth: width
