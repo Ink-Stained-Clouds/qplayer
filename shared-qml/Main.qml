@@ -72,6 +72,12 @@ Rectangle {
     onBackTickChanged: app.handleBack()
 
     function handleBack() {
+        // An unreadable credential envelope requires an explicit decision. Letting
+        // outside click / Android back dismiss it would leave the app in an unclear
+        // half-logged-in state with no path to retry or start over.
+        if ((credentialNoticeDialog.opened && player.credentialNoticeType === 3)
+                || credentialFallbackConfirmDialog.opened
+                || credentialReloginUnavailableDialog.opened) return;
         // Order = top-most layer first. The lyric page (host-drawn) and the queue
         // sit above the QML overlays, so they must close before settings/login/log.
         if (player.lyricsOpen)      { player.setLyricsOpen(false); return; }
@@ -598,6 +604,110 @@ Rectangle {
         Component.onCompleted: {
             if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
         }
+    }
+
+    Dialog {
+        id: credentialNoticeDialog
+        title: player.credentialNoticeType === 1
+            ? "登录凭据保护已启用"
+            : (player.credentialNoticeType === 2
+                ? "系统密钥库不可用" : "无法读取登录凭据")
+        icon: player.credentialNoticeType === 1 ? "verified_user" : "warning"
+        text: player.credentialNoticeType === 1
+            ? "您的登录凭据已加密，并由系统密钥库保护。"
+            : (player.credentialNoticeType === 2
+                ? "无法使用系统密钥库，登录凭据已回退到仅当前用户可读的本地密钥保护。此模式的安全性低于系统密钥库，请确保本机账户和文件权限安全。"
+                : "系统密钥库未能及时返回解密密钥，可能尚未解锁。QPlayer 已中断凭据恢复以避免阻塞启动，现有密文和密钥均未被重置。请先解锁系统密钥库（Linux 上为 KWallet/Keyring）后重试；也可以清除旧凭据后重新登录并继续使用系统加密，或回退普通加密。")
+        rejectText: "回退普通加密"
+        rejectIcon: player.credentialNoticeType === 3 ? "warning" : ""
+        showRejectButton: player.credentialNoticeType === 3
+        neutralText: "重新登录并加密"
+        showNeutralButton: player.credentialNoticeType === 3
+        closeOnScrim: player.credentialNoticeType !== 3
+        acceptText: player.credentialNoticeType === 3 ? "重试" : "知道了"
+        onAccepted: {
+            if (player.credentialNoticeType === 3) player.retryCredentialUnlock()
+        }
+        onRejected: {
+            if (player.credentialNoticeType === 3) {
+                fallbackConfirmOpenTimer.restart()
+            }
+        }
+        onNeutral: {
+            if (player.credentialNoticeType === 3) player.prepareEncryptedRelogin()
+        }
+    }
+
+    Dialog {
+        id: credentialReloginUnavailableDialog
+        title: "系统密钥库仍不可用"
+        icon: "warning"
+        text: "QPlayer 无法在登录前访问系统密钥库，因此没有清除现有登录凭据，也没有进入登录界面。请先解锁系统密钥库（Linux 上为 KWallet/Keyring），返回后再重试。"
+        acceptText: "返回"
+        showRejectButton: false
+        closeOnScrim: false
+        onAccepted: credentialNoticeRestoreTimer.restart()
+    }
+
+    Dialog {
+        id: credentialFallbackConfirmDialog
+        title: "确认回退普通加密"
+        icon: "warning"
+        text: "系统密钥库当前无法解锁现有登录凭据。继续后，这份不可解密的登录凭据将被清除，QPlayer 会永久切换为仅当前用户可读的本地密钥保护；其安全性低于系统密钥库。"
+        acceptText: "继续回退"
+        rejectText: "取消"
+        closeOnScrim: false
+        onAccepted: {
+            if (player.fallbackCredentialsToOwnerOnly()) {
+                fallbackLoginOpenTimer.restart()
+            }
+        }
+        onRejected: credentialNoticeRestoreTimer.restart()
+    }
+
+    // Dialog emits accepted/rejected before its 100 ms exit animation finishes.
+    // Delay the next modal so two full-screen scrims never race for the same root.
+    Timer {
+        id: fallbackConfirmOpenTimer
+        interval: 130
+        repeat: false
+        onTriggered: credentialFallbackConfirmDialog.open()
+    }
+    Timer {
+        id: credentialNoticeRestoreTimer
+        interval: 130
+        repeat: false
+        onTriggered: credentialNoticeDialog.open()
+    }
+    Timer {
+        id: fallbackLoginOpenTimer
+        interval: 130
+        repeat: false
+        onTriggered: app.loginOpen = true
+    }
+    Timer {
+        id: encryptedReloginOpenTimer
+        interval: 130
+        repeat: false
+        onTriggered: app.loginOpen = true
+    }
+    Timer {
+        id: encryptedReloginUnavailableOpenTimer
+        interval: 130
+        repeat: false
+        onTriggered: credentialReloginUnavailableDialog.open()
+    }
+
+    property real credentialReloginWatch: player.credentialReloginRevision
+    onCredentialReloginWatchChanged: {
+        if (player.credentialReloginRevision <= 0) return
+        if (player.credentialReloginResult === 1) encryptedReloginOpenTimer.restart()
+        else encryptedReloginUnavailableOpenTimer.restart()
+    }
+
+    property real credentialNoticeWatch: player.credentialNoticeRevision
+    onCredentialNoticeWatchChanged: {
+        if (player.credentialNoticeRevision > 0) credentialNoticeDialog.open()
     }
 
     property bool graphicsFallbackWatch: settings.graphicsFallbackNotice

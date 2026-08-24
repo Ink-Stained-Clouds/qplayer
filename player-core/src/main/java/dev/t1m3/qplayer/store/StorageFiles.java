@@ -30,17 +30,25 @@ public final class StorageFiles {
     /** Write UTF-8 atomically, optionally restricting the final file to its owner. */
     public static synchronized void writeUtf8Atomic(
             Path target, String content, boolean ownerOnly) throws IOException {
-        writeBytesAtomic(target, content.getBytes(StandardCharsets.UTF_8));
-        if (ownerOnly) restrictToOwner(target);
+        writeBytesAtomic(target, content.getBytes(StandardCharsets.UTF_8), ownerOnly);
     }
 
     public static synchronized void writeBytesAtomic(Path target, byte[] content) throws IOException {
+        writeBytesAtomic(target, content, false);
+    }
+
+    static synchronized void writeBytesAtomic(Path target, byte[] content, boolean ownerOnly)
+            throws IOException {
         Path parent = target.getParent();
         if (parent != null) Files.createDirectories(parent);
         Path pending = pendingPath(target);
         try {
             Files.write(pending, content);
+            // Credential writes must never expose their complete pending file with
+            // default umask permissions, even for the brief interval before rename.
+            if (ownerOnly) restrictToOwner(pending);
             replace(pending, target);
+            if (ownerOnly) restrictToOwner(target);
         } finally {
             Files.deleteIfExists(pending);
         }

@@ -157,6 +157,29 @@ Rectangle {
                     Layout.alignment: Qt.AlignTop
                     spacing: 14
 
+                    SettingCard {
+                        Layout.fillWidth: true
+                        visible: page.currentCategory === "关于"
+                                 && player.credentialOwnerOnlyFallback
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            SettingTitle { text: "登录凭据保护" }
+                            Button {
+                                type: "filledTonal"
+                                icon: "enhanced_encryption"
+                                enabled: !player.credentialProtectionBusy
+                                text: player.credentialProtectionBusy
+                                      ? "正在启用…" : "重新开启系统加密"
+                                onClicked: player.reenableSystemCredentialProtection()
+                            }
+                        }
+                        SettingDesc {
+                            text: "当前使用仅本机用户可读的普通加密。重新开启后，登录凭据密钥将由系统密钥库保护。"
+                        }
+                    }
+
                     Repeater {
                         model: page.leftGroups
                         delegate: SettingCard {

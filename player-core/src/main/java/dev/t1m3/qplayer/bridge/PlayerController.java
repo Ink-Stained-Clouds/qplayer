@@ -598,6 +598,17 @@ public final class PlayerController {
     public final Property<String> logText = new Property<>("");
     /** Transient user-facing message; the UI shows a Snackbar when it changes. */
     public final Property<String> toast = new Property<>("");
+    /** 1 encrypted, 2 platform-store fallback, 3 platform-store read failure. */
+    public final Property<Integer> credentialNoticeType = new Property<>(0);
+    /** Monotonic trigger so the same notice can be shown again after a later login. */
+    public final Property<Long> credentialNoticeRevision = new Property<>(0L);
+    /** True while credentials use the weaker owner-readable local key. */
+    public final Property<Boolean> credentialOwnerOnlyFallback = new Property<>(false);
+    public final Property<Boolean> credentialProtectionBusy = new Property<>(false);
+    /** 1 = encrypted relogin may proceed, 2 = platform store still unavailable. */
+    public final Property<Integer> credentialReloginResult = new Property<>(0);
+    public final Property<Long> credentialReloginRevision = new Property<>(0L);
+    private volatile boolean credentialReloginBusy;
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
      *  exact same text as last time. qml4j's property-changed notification
@@ -634,6 +645,8 @@ public final class PlayerController {
         // toast, same Snackbar the auto-source notice uses. Fires on a worker thread, so
         // hop to the render thread to touch the Property.
         netease.setErrorListener(msg -> post(() -> toast.set(msg)));
+        netease.setCredentialListener(this::showCredentialNotice);
+        credentialOwnerOnlyFallback.set(netease.usesOwnerOnlyCredentialProtection());
         backend.setVolume(volume.peek());
         backend.setOnComplete(() -> onMain(this::autoAdvance));
         // Re-baseline the media session's position once audio actually starts (the
@@ -696,6 +709,91 @@ public final class PlayerController {
             loggedIn.set(true);
             refreshLogin();
         }
+    }
+
+    private void showCredentialNotice(NeteaseClient.CredentialEvent event) {
+        final int type;
+        if (event == NeteaseClient.CredentialEvent.ENCRYPTED) type = 1;
+        else if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) type = 2;
+        else type = 3;
+        post(() -> {
+            if (event == NeteaseClient.CredentialEvent.ENCRYPTED) {
+                credentialOwnerOnlyFallback.set(false);
+            } else if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) {
+                credentialOwnerOnlyFallback.set(true);
+            }
+            credentialNoticeType.set(type);
+            credentialNoticeRevision.set(credentialNoticeRevision.peek() + 1L);
+        });
+    }
+
+    /** Retry a potentially interactive key-store unlock without blocking rendering. */
+    public void retryCredentialUnlock() {
+        showToast("正在等待系统密钥库解锁…");
+        worker.submit(() -> {
+            if (netease.retryCredentialLoad() && netease.isLoggedIn()) {
+                refreshLogin();
+            }
+        });
+    }
+
+    /** Abandon the inaccessible envelope and persistently use owner-only encryption. */
+    public boolean fallbackCredentialsToOwnerOnly() {
+        if (!netease.fallbackUnreadableCredentials()) return false;
+        credentialOwnerOnlyFallback.set(true);
+        clearAccountStateAfterCredentialReset();
+        return true;
+    }
+
+    /** Discard unreadable credentials and retry system-store encryption on login. */
+    public void prepareEncryptedRelogin() {
+        if (credentialReloginBusy) return;
+        credentialReloginBusy = true;
+        showToast("正在检查系统密钥库…");
+        worker.submit(() -> {
+            boolean ready = netease.resetUnreadableCredentialsForPlatformLogin();
+            post(() -> {
+                credentialReloginBusy = false;
+                if (ready) {
+                    credentialOwnerOnlyFallback.set(false);
+                    clearAccountStateAfterCredentialReset();
+                }
+                credentialReloginResult.set(ready ? 1 : 2);
+                credentialReloginRevision.set(credentialReloginRevision.peek() + 1L);
+            });
+        });
+    }
+
+    private void clearAccountStateAfterCredentialReset() {
+        uid = 0L;
+        loggedIn.set(false);
+        userName.set("");
+        userAvatar.set("");
+        userVipType.set(0);
+        userLevel.set(0);
+        userSignature.set("");
+        likedSet.clear();
+        likedCount.set(0);
+        playlistCount.set(0);
+        myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
+        recommendations.set(Collections.<NeteaseSong>emptyList());
+        recentSongs.set(Collections.<NeteaseSong>emptyList());
+    }
+
+    /** User-triggered migration from owner-only storage back to the system store. */
+    public void reenableSystemCredentialProtection() {
+        if (Boolean.TRUE.equals(credentialProtectionBusy.peek())) return;
+        credentialProtectionBusy.set(true);
+        showToast("正在等待系统密钥库…");
+        worker.submit(() -> {
+            boolean enabled = netease.enableSystemCredentialProtection();
+            post(() -> {
+                credentialOwnerOnlyFallback.set(
+                        netease.usesOwnerOnlyCredentialProtection());
+                credentialProtectionBusy.set(false);
+                if (!enabled) showToast("未能启用系统加密，已保留普通加密");
+            });
+        });
     }
 
     /** Platform color extractor for Monet seeds; set once at startup. */
@@ -5063,6 +5161,9 @@ public final class PlayerController {
                     userSignature.set(sig);
                 });
                 if (in) {
+                    if (id > 0 && netease.consumeCredentialUnlock()) {
+                        showToast("已从系统密钥库安全恢复登录凭据");
+                    }
                     loadHome();
                     loadMyPlaylists();
                     refreshLiked();

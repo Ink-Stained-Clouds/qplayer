@@ -12,12 +12,19 @@ Item {
     
     property string acceptText: "OK"
     property string rejectText: "Cancel"
+    property string rejectIcon: ""
+    property string neutralText: ""
     property bool showAcceptButton: true
     property bool showRejectButton: true
+    property bool showNeutralButton: false
+    property bool closeOnScrim: true
+    readonly property bool opened: overlayLayer.visible
+    readonly property bool compactActionLayout: overlayLayer.width < 600
     
     // Signals
     signal accepted()
     signal rejected()
+    signal neutral()
     signal closed()
     
     // Custom content support
@@ -143,7 +150,7 @@ Item {
             
             MouseArea {
                 anchors.fill: parent
-                onClicked: control.close()
+                onClicked: if (control.closeOnScrim) control.close()
                 onWheel: (wheel) => {} // Block scroll propagation
             }
         }
@@ -226,18 +233,65 @@ Item {
                     }
                     
                     // Actions
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
                         Layout.topMargin: 8
-                        spacing: 8
-                        Layout.alignment: Qt.AlignRight
+                        spacing: 4
 
-                        Item { Layout.fillWidth: true } // Spacer
+                        // Three-action dialogs use two full-width rows: the two
+                        // alternative recovery paths share the first row, while
+                        // the recommended retry action owns the second row.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: control.showNeutralButton
+                                     && !control.compactActionLayout
+                            spacing: 8
+
+                            Button {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                text: control.neutralText
+                                type: "outlined"
+                                onClicked: {
+                                    control.neutral()
+                                    control.close()
+                                }
+                            }
+
+                            Button {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                visible: control.showRejectButton
+                                text: control.rejectText
+                                icon: control.rejectIcon
+                                type: "outlined"
+                                onClicked: {
+                                    control.rejected()
+                                    control.close()
+                                }
+                            }
+                        }
 
                         Button {
-                            visible: control.showRejectButton
+                            Layout.fillWidth: true
+                            visible: control.showNeutralButton
+                                     && control.compactActionLayout
+                            text: control.neutralText
+                            type: "outlined"
+                            onClicked: {
+                                control.neutral()
+                                control.close()
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            visible: control.showNeutralButton
+                                     && control.showRejectButton
+                                     && control.compactActionLayout
                             text: control.rejectText
-                            type: "text"
+                            icon: control.rejectIcon
+                            type: "outlined"
                             onClicked: {
                                 control.rejected()
                                 control.close()
@@ -245,12 +299,43 @@ Item {
                         }
 
                         Button {
-                            visible: control.showAcceptButton
+                            Layout.fillWidth: true
+                            visible: control.showNeutralButton
+                                     && control.showAcceptButton
                             text: control.acceptText
-                            type: "filled" // Changed to filled as requested
+                            type: "filled"
                             onClicked: {
                                 control.accepted()
                                 control.close()
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: !control.showNeutralButton
+                            spacing: 8
+
+                            Item { Layout.fillWidth: true } // Spacer
+
+                            Button {
+                                visible: control.showRejectButton
+                                text: control.rejectText
+                                icon: control.rejectIcon
+                                type: "text"
+                                onClicked: {
+                                    control.rejected()
+                                    control.close()
+                                }
+                            }
+
+                            Button {
+                                visible: control.showAcceptButton
+                                text: control.acceptText
+                                type: "filled" // Changed to filled as requested
+                                onClicked: {
+                                    control.accepted()
+                                    control.close()
+                                }
                             }
                         }
                     }
@@ -271,4 +356,3 @@ Item {
         }
     }
 }
-

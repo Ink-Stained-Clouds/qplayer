@@ -29,7 +29,6 @@ import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.settings.SettingsCatalog;
 import dev.t1m3.qplayer.settings.SettingsCore;
-import dev.t1m3.qplayer.store.AppDirs;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -94,10 +93,6 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // Cookies / config live in app-private storage on Android.
-        AppDirs.setBase(getFilesDir().getAbsolutePath());
-        AppDirs.migrateLegacyLayout();
 
         // A downloaded update APK (see downloadAndInstallUpdate below) has served its
         // purpose once the app relaunches -- it's never deleted right after handing it

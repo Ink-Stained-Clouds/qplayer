@@ -11,6 +11,8 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.CredentialCipher;
+import dev.t1m3.qplayer.store.CredentialKeyProtection;
 import dev.t1m3.qplayer.store.StorageFiles;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
@@ -29,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -81,6 +84,8 @@ public final class NeteaseClient {
     private final Gson gson = new Gson();
     private final Map<String, String> cookies = new ConcurrentHashMap<>();
     private final Path cookieFile;
+    private final Path legacyCookieFile;
+    private final CredentialCipher cookieCipher;
 
     /** Registered xeapi session (anti-crawler key exchange). Lazily fetched,
      *  cached for the process: publicKey (base64 X25519), version, sk. */
@@ -94,12 +99,71 @@ public final class NeteaseClient {
         void onError(String message);
     }
 
+    public enum CredentialEvent {
+        ENCRYPTED,
+        KEYSTORE_FALLBACK,
+        KEYSTORE_READ_FAILED
+    }
+
+    public interface CredentialListener {
+        void onCredentialEvent(CredentialEvent event);
+    }
+
     private volatile ErrorListener errorListener;
+    private final Object credentialEventLock = new Object();
+    private final List<CredentialEvent> pendingCredentialEvents = new ArrayList<>();
+    private volatile CredentialListener credentialListener;
+    private boolean credentialUnlockPending;
+    private boolean persistedLoginCredential;
+    private boolean fallbackNoticeSent;
     private volatile String lastErrorMsg;
     private volatile long lastErrorAt;
 
     public void setErrorListener(ErrorListener l) {
         this.errorListener = l;
+    }
+
+    /**
+     * Credential loading happens in this singleton's constructor, before the UI
+     * controller exists. Preserve those startup notices and flush them when the
+     * controller attaches instead of losing a key-store failure in early startup.
+     */
+    public void setCredentialListener(CredentialListener listener) {
+        List<CredentialEvent> queued;
+        synchronized (credentialEventLock) {
+            credentialListener = listener;
+            if (listener == null || pendingCredentialEvents.isEmpty()) return;
+            queued = new ArrayList<>(pendingCredentialEvents);
+            pendingCredentialEvents.clear();
+        }
+        for (CredentialEvent event : queued) listener.onCredentialEvent(event);
+    }
+
+    /** Consume only after the server has confirmed that restored cookies logged in. */
+    public boolean consumeCredentialUnlock() {
+        synchronized (credentialEventLock) {
+            boolean value = credentialUnlockPending;
+            credentialUnlockPending = false;
+            return value;
+        }
+    }
+
+    private void markCredentialUnlockPending() {
+        synchronized (credentialEventLock) {
+            credentialUnlockPending = true;
+        }
+    }
+
+    private void emitCredentialEvent(CredentialEvent event) {
+        CredentialListener listener;
+        synchronized (credentialEventLock) {
+            listener = credentialListener;
+            if (listener == null) {
+                pendingCredentialEvents.add(event);
+                return;
+            }
+        }
+        listener.onCredentialEvent(event);
     }
 
     // Forward a server failure reason, collapsing duplicates fired within a short window
@@ -127,8 +191,12 @@ public final class NeteaseClient {
     }
 
     private NeteaseClient() {
-        cookieFile = AppDirs.credentialsFile("netease-cookies.json");
-        loadCookies();
+        cookieFile = AppDirs.credentialsFile("netease-cookies.enc");
+        legacyCookieFile = AppDirs.credentialsFile("netease-cookies.json");
+        cookieCipher = new CredentialCipher(
+                AppDirs.credentialsFile("credential-encryption.key"),
+                CredentialKeyProtection.current());
+        loadCookies(false);
     }
 
     /**
@@ -1774,11 +1842,72 @@ public final class NeteaseClient {
         return cookies.containsKey("MUSIC_U");
     }
 
-    public void clearCookies() {
+    public synchronized void clearCookies() {
         cookies.clear();
+        persistedLoginCredential = false;
+        fallbackNoticeSent = false;
+        synchronized (credentialEventLock) {
+            credentialUnlockPending = false;
+        }
+        try { Files.deleteIfExists(cookieFile); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(legacyCookieFile); } catch (IOException ignored) {}
+    }
+
+    /** Retry a locked system credential store from a worker thread. */
+    public boolean retryCredentialLoad() {
+        return loadCookies(true);
+    }
+
+    /** Permanently switch this profile to owner-only key storage after unlock failed. */
+    public synchronized boolean fallbackUnreadableCredentials() {
         try {
-            if (Files.exists(cookieFile)) Files.delete(cookieFile);
-        } catch (IOException ignored) {}
+            cookieCipher.forceOwnerOnlyFallback();
+            clearCookies();
+            fallbackNoticeSent = true;
+            return true;
+        } catch (IOException e) {
+            Logger.warn("Netease: credential fallback failed: {}", e.getMessage());
+            emitCredentialEvent(CredentialEvent.KEYSTORE_READ_FAILED);
+            return false;
+        }
+    }
+
+    /** Discard unreadable credentials but keep system-store protection for a new login. */
+    public synchronized boolean resetUnreadableCredentialsForPlatformLogin() {
+        try {
+            // Never discard the old encrypted login until its platform store has
+            // answered successfully. A locked KWallet therefore returns the user
+            // to the choice dialog with every file still intact.
+            cookieCipher.verifyPlatformProtectionAvailable();
+            cookieCipher.resetForPlatformProtection();
+            clearCookies();
+            fallbackNoticeSent = false;
+            return true;
+        } catch (Exception e) {
+            Logger.warn("Netease: credential reset for encrypted login failed: {}",
+                    e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean usesOwnerOnlyCredentialProtection() {
+        return cookieCipher.usesOwnerOnlyProtection();
+    }
+
+    /** Migrate the current local data key back into the system credential store. */
+    public synchronized boolean enableSystemCredentialProtection() {
+        try {
+            cookieCipher.enablePlatformProtectionInteractively();
+            fallbackNoticeSent = false;
+            emitCredentialEvent(CredentialEvent.ENCRYPTED);
+            return true;
+        } catch (Exception e) {
+            Logger.warn("Netease: enabling system credential protection failed: {}",
+                    e.getMessage());
+            fallbackNoticeSent = true;
+            emitCredentialEvent(CredentialEvent.KEYSTORE_FALLBACK);
+            return false;
+        }
     }
 
     private String cookieHeader() {
@@ -1858,31 +1987,104 @@ public final class NeteaseClient {
         if (changed) saveCookies();
     }
 
-    private void loadCookies() {
-        if (!Files.exists(cookieFile)) return;
+    private synchronized boolean loadCookies(boolean interactive) {
+        boolean encrypted = Files.exists(cookieFile);
+        Path source = encrypted ? cookieFile : legacyCookieFile;
+        if (!Files.exists(source)) return false;
+        cookies.clear();
+        persistedLoginCredential = false;
+        synchronized (credentialEventLock) {
+            credentialUnlockPending = false;
+        }
         try {
-            String txt = StorageFiles.readUtf8(cookieFile);
-            if (txt == null || txt.trim().isEmpty()) return;
+            String txt = encrypted
+                    ? new String(interactive
+                            ? cookieCipher.decryptInteractively(Files.readAllBytes(cookieFile))
+                            : cookieCipher.decrypt(Files.readAllBytes(cookieFile)),
+                            StandardCharsets.UTF_8)
+                    : StorageFiles.readUtf8(legacyCookieFile);
+            if (txt == null || txt.trim().isEmpty()) return false;
             JsonElement el = new JsonParser().parse(txt);
-            if (!el.isJsonObject()) return;
+            if (!el.isJsonObject()) throw new IOException("cookie payload is not an object");
             for (Map.Entry<String, JsonElement> e : el.getAsJsonObject().entrySet()) {
                 if (e.getValue().isJsonPrimitive()) {
                     cookies.put(e.getKey(), e.getValue().getAsString());
                 }
             }
-            Logger.info("Netease: loaded {} cookies from disk", cookies.size());
+            if (!encrypted) {
+                // Write and authenticate the encrypted copy before removing the only
+                // plaintext source. A failed migration therefore remains recoverable.
+                if (!saveCookies()) {
+                    Logger.warn("Netease: encrypted cookie migration failed; plaintext retained");
+                    return false;
+                }
+                Files.deleteIfExists(legacyCookieFile);
+                Logger.info("Netease: migrated plaintext cookie store to encrypted storage");
+            } else {
+                persistedLoginCredential = hasLoginCredential();
+                if (persistedLoginCredential) {
+                    CredentialCipher.KeyAccess access = cookieCipher.lastKeyAccess();
+                    if (access == CredentialCipher.KeyAccess.PLATFORM_READ) {
+                        markCredentialUnlockPending();
+                    } else if (access == CredentialCipher.KeyAccess.PLATFORM_MIGRATED) {
+                        emitCredentialEvent(CredentialEvent.ENCRYPTED);
+                    } else if (access == CredentialCipher.KeyAccess.OWNER_ONLY_FALLBACK) {
+                        fallbackNoticeSent = true;
+                        emitCredentialEvent(CredentialEvent.KEYSTORE_FALLBACK);
+                    }
+                }
+            }
+            Logger.info("Netease: loaded {} cookies from encrypted storage", cookies.size());
+            return true;
         } catch (Exception e) {
+            cookies.clear();
             Logger.warn("Netease: cookie load failed: {}", e.getMessage());
+            if (encrypted) emitCredentialEvent(CredentialEvent.KEYSTORE_READ_FAILED);
+            return false;
         }
     }
 
-    private void saveCookies() {
+    private synchronized boolean saveCookies() {
         try {
             Map<String, Object> out = new LinkedHashMap<>(cookies);
-            StorageFiles.writeUtf8Atomic(cookieFile, gson.toJson(out), true);
-        } catch (IOException e) {
+            byte[] plaintext = gson.toJson(out).getBytes(StandardCharsets.UTF_8);
+            final byte[] encrypted;
+            try {
+                encrypted = cookieCipher.encrypt(plaintext);
+            } finally {
+                Arrays.fill(plaintext, (byte) 0);
+            }
+            StorageFiles.writeBytesAtomic(cookieFile, encrypted);
+            StorageFiles.restrictOwnerOnly(cookieFile);
+            boolean hasCredential = hasLoginCredential();
+            if (hasCredential) {
+                boolean newlyPersisted = !persistedLoginCredential;
+                persistedLoginCredential = true;
+                CredentialCipher.KeyAccess access = cookieCipher.lastKeyAccess();
+                if (access == CredentialCipher.KeyAccess.OWNER_ONLY_FALLBACK) {
+                    if (!fallbackNoticeSent) {
+                        fallbackNoticeSent = true;
+                        emitCredentialEvent(CredentialEvent.KEYSTORE_FALLBACK);
+                    }
+                } else if (newlyPersisted) {
+                    emitCredentialEvent(CredentialEvent.ENCRYPTED);
+                }
+            } else {
+                persistedLoginCredential = false;
+            }
+            return true;
+        } catch (Exception e) {
             Logger.warn("Netease: cookie save failed: {}", e.getMessage());
+            if (hasLoginCredential()) {
+                emitCredentialEvent(CredentialEvent.KEYSTORE_READ_FAILED);
+            }
+            return false;
         }
+    }
+
+    private boolean hasLoginCredential() {
+        String musicU = cookies.get("MUSIC_U");
+        return musicU != null && !musicU.isEmpty();
     }
 
     // ---- HTTP helpers ----

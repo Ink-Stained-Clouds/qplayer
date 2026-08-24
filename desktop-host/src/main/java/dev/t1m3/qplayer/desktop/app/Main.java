@@ -15,6 +15,7 @@ import dev.t1m3.qplayer.desktop.media.MacMediaControls;
 import dev.t1m3.qplayer.desktop.media.MprisControls;
 import dev.t1m3.qplayer.desktop.media.WindowsMediaControls;
 import dev.t1m3.qplayer.desktop.resources.ClasspathResourceLoader;
+import dev.t1m3.qplayer.desktop.security.DesktopCredentialProtection;
 import dev.t1m3.qplayer.desktop.settings.JsonSettingsStore;
 import dev.t1m3.qplayer.desktop.tray.TrayController;
 import dev.t1m3.qplayer.desktop.window.DesktopWindow;
@@ -99,6 +100,7 @@ public final class Main {
         // the configured format.
         Logger.setSink(new Log4j2Sink());
         configureWindowsAppIdentity();
+        DesktopCredentialProtection.install();
 
         ResourceLoader resources = new ClasspathResourceLoader();
 

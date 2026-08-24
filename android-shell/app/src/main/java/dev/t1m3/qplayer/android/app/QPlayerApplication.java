@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.android.app;
 
 import dev.t1m3.qplayer.android.playback.PlaybackService;
+import dev.t1m3.qplayer.android.security.AndroidKeystoreKeyProtector;
 
 import android.app.Application;
 import android.app.NotificationManager;
@@ -8,6 +9,8 @@ import android.content.Context;
 import android.os.Process;
 
 import dev.t1m3.qplayer.util.Logger;
+import dev.t1m3.qplayer.store.AppDirs;
+import dev.t1m3.qplayer.store.CredentialKeyProtection;
 
 /**
  * Installs a process-wide uncaught-exception handler whose only job is to
@@ -23,6 +26,12 @@ public final class QPlayerApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Install credential protection at process start, before an Activity or a
+        // restarted service can initialize NeteaseClient's singleton cookie jar.
+        AppDirs.setBase(getFilesDir().getAbsolutePath());
+        AppDirs.migrateLegacyLayout();
+        CredentialKeyProtection.install(new AndroidKeystoreKeyProtector());
+
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, ex) -> {
             try {
