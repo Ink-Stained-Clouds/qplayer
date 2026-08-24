@@ -2948,13 +2948,17 @@ public class LyricRenderer {
 
         java.util.Arrays.fill(wordLiftUniformBuf, 0f);
         int wordLiftCount = 0;
-        if (wordGlowSupported && glowOn) {
+        // The ribbon lift stays gated behind shadowOn + the duration floor even
+        // though the glow highlight itself (drawWordGlows below) doesn't, when
+        // shadow is off: applying it to every word regardless of duration reads
+        // as each character fluttering up like loose paper, not a highlight.
+        if (wordGlowSupported && glowOn && shadowOn) {
             for (WordSpan word : row.words) {
                 if (wordLiftCount >= MAX_WORD_LIFT_SEGMENTS) break;
                 Syllable first = syllables.get(row.from + word.firstSyllable);
                 Syllable last = syllables.get(row.from + word.lastSyllable);
                 long end = last.startMs + Math.max(0L, last.durationMs);
-                if (shadowOn && end - first.startMs < WORD_GLOW_MIN_DURATION_MS) continue;
+                if (end - first.startMs < WORD_GLOW_MIN_DURATION_MS) continue;
                 if (pos < first.startMs || pos > end) continue;
                 int p = wordLiftCount * 4;
                 float wordX0 = startX + Math.min(word.x0, word.x1);
