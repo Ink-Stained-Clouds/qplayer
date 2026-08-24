@@ -29,6 +29,7 @@ import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.settings.SettingsCatalog;
 import dev.t1m3.qplayer.settings.SettingsCore;
+import dev.t1m3.qplayer.resources.CompressedResources;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -198,8 +199,9 @@ public final class QPlayerActivity extends Activity {
 
         // Lyric renderer fonts: the bundled PingFang SC weights from shared-qml
         // (the lyric face must itself cover CJK + Latin — no automatic fallback).
+        FileResourceLoader resources = new FileResourceLoader(getAssets());
         try {
-            dev.t1m3.qplayer.lyric.skia.Fonts.init(weight -> readAssetBytes(
+            dev.t1m3.qplayer.lyric.skia.Fonts.init(weight -> CompressedResources.load(resources,
                     "fonts/PingFangSC-" + bundledFontWeightName(weight) + ".otf"));
             // Material Symbols for the host-drawn lyric transport icons (drawn by
             // shaped ligature name, same as the QML scene's icons).
@@ -215,8 +217,7 @@ public final class QPlayerActivity extends Activity {
         QmlEngine engine = new QmlEngine(
                 new DexClassLoaderBackend(getClass().getClassLoader(), 26, dexCache));
         float density = getResources().getDisplayMetrics().density;
-        glView = new QmlGLSurfaceView(this, engine, qml,
-                new FileResourceLoader(getAssets()), density);
+        glView = new QmlGLSurfaceView(this, engine, qml, resources, density);
         glView.setController(controller);
         glView.setSettings(settings);
         glView.setErrorListener(trace -> runOnUiThread(() -> showError(trace)));

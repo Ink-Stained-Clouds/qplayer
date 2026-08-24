@@ -34,6 +34,13 @@ version baked into the bundle metadata. They also read the shared
 [`jvm-options.txt`](jvm-options.txt), which bounds heap/address-space growth and
 keeps G1/JIT worker counts independent of the host's CPU count.
 
+The four large PingFang weights in `shared-qml/fonts` are stored as XZ assets
+(8 MiB dictionary) and decompressed only when a host asks for that weight. This
+keeps the packaged JAR small without retaining the compressed or raw font bytes
+after Skija has created its cached typeface. Always compare package size from a
+clean build: Maven's resource-copy step does not remove stale resources from an
+existing `target/classes` directory.
+
 ### Platform notes
 
 - **macOS** needs `-XstartOnFirstThread` (GLFW must own thread 0; the java
