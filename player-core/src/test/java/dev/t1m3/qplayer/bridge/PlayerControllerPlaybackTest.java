@@ -64,6 +64,29 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void togetherLiveTrackSwitchCannotReuseTheOutgoingPosition() {
+        NeteaseClient.TogetherCommand command = new NeteaseClient.TogetherCommand();
+        command.commandType = "GOTO";
+        command.progressMs = 198000L;
+
+        // A live remote switch starts the replacement at zero even if the server
+        // snapshot still carries the previous track's 3:18 play head.
+        assertEquals(0L, PlayerController.togetherAppliedProgress(
+                command, false, true, 197500L));
+
+        // Joining an existing room must still synchronize to its current position.
+        assertEquals(198000L, PlayerController.togetherAppliedProgress(
+                command, true, true, 0L));
+
+        // Same-track GOTO and explicit PROGRESS commands retain seek semantics.
+        assertEquals(198000L, PlayerController.togetherAppliedProgress(
+                command, false, false, 0L));
+        command.commandType = "PROGRESS";
+        assertEquals(198000L, PlayerController.togetherAppliedProgress(
+                command, false, true, 0L));
+    }
+
+    @Test
     public void selectingTrackAfterSessionRestoreDoesNotReplayItOnResume() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();

@@ -4774,7 +4774,14 @@ public final class PlayerController {
         long seek = seekRevision.get();
         if (songId == 0L) return;
         if (songId != togetherLastSongId) {
-            reportTogetherCommandNow("GOTO", togetherLastSongId, songId);
+            // playAt() replaces the logical track before an uncached source has
+            // finished resolving. During that gap backend.position() still belongs
+            // to the outgoing source (especially while the render pump is stopped),
+            // so publishing it as GOTO.progress makes the peer open the next song at
+            // the previous song's timestamp. A live song switch always starts at 0;
+            // initial room creation still uses the overload below to share the
+            // already-playing song's real position.
+            reportTogetherCommandNow("GOTO", togetherLastSongId, songId, 0L);
         } else if (seek != togetherLastSeekRevision) {
             reportTogetherCommandNow("PROGRESS", songId, songId);
         } else if (playingIntent != togetherLastPlaying) {
@@ -4792,8 +4799,13 @@ public final class PlayerController {
 
     private void reportTogetherCommandNow(String type, long former, long target)
             throws java.io.IOException {
+        reportTogetherCommandNow(type, former, target, backend.position());
+    }
+
+    private void reportTogetherCommandNow(String type, long former, long target, long progressMs)
+            throws java.io.IOException {
         netease.reportTogetherCommand(togetherRoomId, type,
-                Math.max(0L, backend.position()), playingIntent, former, target,
+                Math.max(0L, progressMs), playingIntent, former, target,
                 ++togetherClientSeq);
     }
 
@@ -4908,10 +4920,10 @@ public final class PlayerController {
             boolean desiredPlaying = keepLocalPlaybackState || remote == null
                     || "PROGRESS".equalsIgnoreCase(remote.commandType)
                     ? playingIntent : remote.shouldPlay();
-            long progress = remote == null ? Math.max(0L, backend.position())
-                    : Math.max(0L, remote.progressMs);
             boolean changedTrack = currentBeforeReplacement == null
                     || currentBeforeReplacement.neteaseId != targetId;
+            long progress = togetherAppliedProgress(remote, initial, changedTrack,
+                    backend.position());
             // A queue-only reorder can move the current song without changing the
             // audible source. Keep playback running and only rebind its index.
             if (!changedTrack && shouldReplace && playIndex != targetIndex) {
@@ -4939,6 +4951,28 @@ public final class PlayerController {
             }
             baselineTogetherLocal();
         });
+    }
+
+    /** Resolve the start point carried by a room snapshot without letting an old
+     *  track's play head leak into a live switch. NetEase's GOTO/NEXT/PREV command
+     *  can be observed while its sender is still resolving the replacement source,
+     *  in which case {@code progress} is the outgoing song's timestamp. This is
+     *  particularly visible when the receiver's render pump is suspended because its
+     *  UI-side zero baseline cannot be published until rendering resumes. A deliberate
+     *  initial join is different: it must adopt the room's current point rather than
+     *  restart it. */
+    static long togetherAppliedProgress(NeteaseClient.TogetherCommand command,
+            boolean initial, boolean changedTrack, long localPositionMs) {
+        if (command == null) return Math.max(0L, localPositionMs);
+        long reported = Math.max(0L, command.progressMs);
+        if (!initial && changedTrack && isTogetherTrackSwitch(command.commandType)) return 0L;
+        return reported;
+    }
+
+    private static boolean isTogetherTrackSwitch(String commandType) {
+        return "GOTO".equalsIgnoreCase(commandType)
+                || "NEXT".equalsIgnoreCase(commandType)
+                || "PREV".equalsIgnoreCase(commandType);
     }
 
     /** Selects a stable target when a remote playlist is observed. A non-zero
