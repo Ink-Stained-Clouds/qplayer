@@ -21,6 +21,7 @@ import dev.t1m3.qplayer.desktop.tray.TrayController;
 import dev.t1m3.qplayer.desktop.window.DesktopWindow;
 import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
+import dev.t1m3.qplayer.resources.CompressedResources;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.settings.SettingsCatalog;
 import dev.t1m3.qplayer.settings.SettingsCore;
@@ -146,11 +147,13 @@ public final class Main {
 
         // Fonts for the host-drawn lyric renderer (the QML scene fonts are set on the
         // view in DesktopWindow.ensureView).
-        Fonts.init(
-                resources.load("fonts/PingFangSC-Thin.otf"),
-                resources.load("fonts/PingFangSC-Light.otf"),
-                resources.load("fonts/PingFangSC-Regular.otf"),
-                resources.load("fonts/PingFangSC-Medium.otf"));
+        Fonts.init(weight -> CompressedResources.load(resources,
+                "fonts/PingFangSC-" + switch (weight) {
+            case THIN -> "Thin";
+            case LIGHT -> "Light";
+            case REGULAR -> "Regular";
+            case MEDIUM -> "Medium";
+        } + ".otf"));
         Fonts.initIcon(resources.load("fonts/MaterialSymbolsRounded.ttf"));
 
         byte[] qmlBytes = resources.load("Main.qml");
@@ -286,6 +289,7 @@ public final class Main {
         watcher.stop();
         if (systemMedia != null) systemMedia.shutdown();
         tray.shutdown();
+        DesktopWebLogin.shutdown();
         try {
             controller.shutdown();
         } catch (Throwable ignored) {

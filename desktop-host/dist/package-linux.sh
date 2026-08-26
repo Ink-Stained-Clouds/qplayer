@@ -23,6 +23,10 @@ echo "packaging QPlayer $VERSION"
 
 # Shared module list (see jre-modules.txt), comments stripped.
 MODS=$(sed 's/#.*//' "$DIST/jre-modules.txt" | tr -d '[:blank:]' | grep . | paste -sd, -)
+JAVA_OPTION_ARGS=()
+while IFS= read -r option; do
+  JAVA_OPTION_ARGS+=(--java-options "$option")
+done < <(sed 's/#.*//' "$DIST/jvm-options.txt" | awk 'NF')
 
 rm -rf "$T/pkg" "$T/AppDir"
 
@@ -34,12 +38,20 @@ jpackage --type app-image \
   --input "$APP" --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main \
   --dest "$T/pkg" \
   --add-modules "$MODS" \
+  "${JAVA_OPTION_ARGS[@]}" \
   --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 
 # AppDir = the jpackage image + the three things appimagetool insists on at the
 # root: AppRun, a .desktop entry and a matching icon.
 mv "$T/pkg/qplayer" "$T/AppDir"
 rmdir "$T/pkg"
+
+# Temurin's Linux jmods retain the native symbol table in libjvm even with
+# jlink --strip-debug. It is useful to JDK developers but not required to run
+# QPlayer; removing it saves roughly another 4 MiB from the runtime image.
+if command -v strip >/dev/null 2>&1; then
+  strip --strip-unneeded "$T/AppDir/lib/runtime/lib/server/libjvm.so"
+fi
 
 cat > "$T/AppDir/AppRun" <<'EOF'
 #!/bin/sh
@@ -66,5 +78,10 @@ if [ ! -x "$TOOL" ]; then
   chmod +x "$TOOL"
 fi
 # APPIMAGE_EXTRACT_AND_RUN avoids needing FUSE (CI runners lack it).
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$T/AppDir" "$T/QPlayer-x86_64.AppImage"
+OUTPUT="$T/QPlayer-x86_64.AppImage"
+STAGED_OUTPUT="$T/QPlayer-x86_64.new.AppImage"
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$T/AppDir" "$STAGED_OUTPUT"
+# Replacing by rename also works while an older AppImage is running; writing the
+# final executable in place fails with ETXTBSY and leaves no new test artifact.
+mv -f "$STAGED_OUTPUT" "$OUTPUT"
 echo "→ $T/QPlayer-x86_64.AppImage"

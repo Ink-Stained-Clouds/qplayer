@@ -34,6 +34,7 @@ import dev.t1m3.qplayer.bridge.WindowChromeStub;
 import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
+import dev.t1m3.qplayer.resources.CompressedResources;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -525,8 +526,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                     // Provide the app fonts to the engine (it ships none of its own):
                     // bundled PingFang for the whole UI (Latin + CJK) + Material Symbols
                     // for icon glyphs.
-                    byte[] reg = resources.load("fonts/PingFangSC-Regular.otf");
-                    byte[] med = resources.load("fonts/PingFangSC-Medium.otf");
+                    byte[] reg = CompressedResources.load(resources, "fonts/PingFangSC-Regular.otf");
+                    byte[] med = CompressedResources.load(resources, "fonts/PingFangSC-Medium.otf");
                     if (reg != null || med != null) view.uiTypefaces(reg, med);
                     byte[] iconFont = resources.load("fonts/MaterialSymbolsRounded.ttf");
                     if (iconFont != null) view.iconTypeface(iconFont);

@@ -36,6 +36,13 @@
             <artifactId>gson</artifactId>
         </dependency>
 
+        <!-- Large bundled fonts are stored as .xz assets. XZ for Java is pure
+             Java and Android-compatible; loading remains transparent to hosts. -->
+        <dependency>
+            <groupId>org.tukaani</groupId>
+            <artifactId>xz</artifactId>
+        </dependency>
+
         <!-- Pure-Java QR encoding for the netease login dialog. core only —
              no javase/ImageIO module, so it stays Android-dexable. -->
         <dependency>

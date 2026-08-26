@@ -6,6 +6,7 @@ import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
+import dev.t1m3.qplayer.resources.CompressedResources;
 import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.util.Logger;
@@ -244,8 +245,8 @@ public final class DesktopWindow {
             reg = findSystemFontFile(family, false);
             med = findSystemFontFile(family, true);
         }
-        if (reg == null) reg = resources.load("fonts/PingFangSC-Regular.otf");
-        if (med == null) med = resources.load("fonts/PingFangSC-Medium.otf");
+        if (reg == null) reg = CompressedResources.load(resources, "fonts/PingFangSC-Regular.otf");
+        if (med == null) med = CompressedResources.load(resources, "fonts/PingFangSC-Medium.otf");
         if (reg != null || med != null) v.uiTypefaces(reg, med);
         byte[] iconFont = resources.load("fonts/MaterialSymbolsRounded.ttf");
         if (iconFont != null) v.iconTypeface(iconFont);

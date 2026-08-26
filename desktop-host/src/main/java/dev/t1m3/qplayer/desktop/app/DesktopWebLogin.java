@@ -44,6 +44,25 @@ final class DesktopWebLogin {
         });
     }
 
+    /** Close an in-flight login before the desktop host exits. JFrame disposal
+     *  alone does not release swingwebview's native peer/WebKit child processes. */
+    static void shutdown() {
+        Runnable close = () -> {
+            JFrame frame = activeFrame;
+            if (frame != null && frame.isDisplayable()) frame.dispose();
+            activeFrame = null;
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            close.run();
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(close);
+        } catch (Exception ignored) {
+            // The AWT event thread may already be shutting down.
+        }
+    }
+
     private static void createWindow(Consumer<String> onCookie,
             Consumer<String> onFailure, Runnable onCancel) {
         WebViewComponent webView = WebViewComponent.create();
@@ -61,6 +80,7 @@ final class DesktopWebLogin {
 
         final boolean[] submitted = {false};
         final boolean[] queryInFlight = {false};
+        final boolean[] disposed = {false};
         final int[] consecutiveFailures = {0};
         final long openedAt = System.currentTimeMillis();
         Timer cookiePoll = new Timer(650, event -> {
@@ -99,6 +119,13 @@ final class DesktopWebLogin {
 
             @Override public void windowClosed(WindowEvent event) {
                 cookiePoll.stop();
+                if (!disposed[0]) {
+                    disposed[0] = true;
+                    try {
+                        webView.dispose();
+                    } catch (Throwable ignored) {
+                    }
+                }
                 if (activeFrame == frame) activeFrame = null;
                 if (!submitted[0]) onCancel.run();
             }

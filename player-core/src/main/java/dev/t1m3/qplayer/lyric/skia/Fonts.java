@@ -42,10 +42,12 @@ public final class Fonts {
     private static final int[] WEIGHT_VALUES = {100, 300, 400, 500};
 
     private static final Typeface[] faces = new Typeface[Weight.values().length];
-    // The four bundled OTF weights, kept around (not just consumed once by init())
-    // so switching back to the bundled font can restore them without re-reading
-    // resources.
-    private static final byte[][] bundledBytes = new byte[Weight.values().length][];
+    // Bundled faces are separate from the active table so switching to a system
+    // font and back doesn't require keeping the original 52 MiB of OTF byte arrays
+    // alive. Current hosts install a lazy loader: only the lyric weight actually
+    // selected by the user is parsed, instead of all four PingFang files at startup.
+    private static final Typeface[] bundledFaces = new Typeface[Weight.values().length];
+    private static BundledFontLoader bundledLoader;
     // Null/empty = bundled PingFang SC, SYSTEM = the OS default UI font, anything
     // else = that installed family. One value instead of the old
     // useSystemFont + customFamily pair, whose precedence ("custom wins unless it
@@ -59,6 +61,11 @@ public final class Fonts {
     private static Typeface icon;
     private static final Map<Long, Font> cache = new HashMap<>();
     private static final Map<Long, Font> iconCache = new HashMap<>();
+
+    @FunctionalInterface
+    public interface BundledFontLoader {
+        byte[] load(Weight weight) throws Exception;
+    }
 
     // OpenType weight each face in `faces` was resolved for, so a fallback face can
     // be matched to the same weight as the lyric face that needs it. Identity-keyed:
@@ -185,12 +192,28 @@ public final class Fonts {
         }
     }
 
-    /** Load the four bundled PingFang weights (any may be null → falls back to Regular). */
+    /**
+     * Install a lazy bundled-font source. No font file is read until the lyric
+     * renderer asks for that exact weight, and the temporary byte array is released
+     * as soon as Skija has created its native Typeface.
+     */
+    public static void init(BundledFontLoader loader) {
+        bundledLoader = loader;
+        java.util.Arrays.fill(bundledFaces, null);
+        reapply();
+    }
+
+    /** Load already supplied bundled weights without retaining their byte arrays.
+     *  Kept for embedders using the original API; QPlayer's hosts use the lazy form. */
     public static void init(byte[] thin, byte[] light, byte[] regular, byte[] medium) {
-        bundledBytes[Weight.THIN.ordinal()] = thin;
-        bundledBytes[Weight.LIGHT.ordinal()] = light;
-        bundledBytes[Weight.REGULAR.ordinal()] = regular;
-        bundledBytes[Weight.MEDIUM.ordinal()] = medium;
+        bundledLoader = null;
+        FontMgr mgr = FontMgr.getDefault();
+        if (mgr != null) {
+            bundledFaces[Weight.THIN.ordinal()] = make(mgr, thin);
+            bundledFaces[Weight.LIGHT.ordinal()] = make(mgr, light);
+            bundledFaces[Weight.REGULAR.ordinal()] = make(mgr, regular);
+            bundledFaces[Weight.MEDIUM.ordinal()] = make(mgr, medium);
+        }
         reapply();
     }
 
@@ -393,18 +416,28 @@ public final class Fonts {
     };
 
     private static void applyBundledFaces() {
+        System.arraycopy(bundledFaces, 0, faces, 0, faces.length);
+    }
+
+    private static synchronized Typeface bundledFace(Weight weight) {
+        int index = weight.ordinal();
+        Typeface face = bundledFaces[index];
+        if (face != null || bundledLoader == null) return face;
         FontMgr mgr = FontMgr.getDefault();
-        if (mgr == null) return;
-        faces[Weight.THIN.ordinal()] = make(mgr, bundledBytes[Weight.THIN.ordinal()]);
-        faces[Weight.LIGHT.ordinal()] = make(mgr, bundledBytes[Weight.LIGHT.ordinal()]);
-        faces[Weight.REGULAR.ordinal()] = make(mgr, bundledBytes[Weight.REGULAR.ordinal()]);
-        faces[Weight.MEDIUM.ordinal()] = make(mgr, bundledBytes[Weight.MEDIUM.ordinal()]);
+        if (mgr == null) return null;
+        try {
+            face = make(mgr, bundledLoader.load(weight));
+        } catch (Throwable ignored) {
+            face = null;
+        }
+        bundledFaces[index] = face;
+        return face;
     }
 
     private static Typeface make(FontMgr mgr, byte[] bytes) {
         if (bytes == null) return null;
-        try {
-            return mgr.makeFromData(Data.makeFromBytes(bytes));
+        try (Data data = Data.makeFromBytes(bytes)) {
+            return mgr.makeFromData(data);
         } catch (Throwable t) {
             return null;
         }
@@ -435,7 +468,19 @@ public final class Fonts {
         Font f = cache.get(key);
         if (f == null) {
             Typeface tf = faces[w.ordinal()];
-            if (tf == null) tf = faces[Weight.REGULAR.ordinal()];
+            if (tf == null && activeFamily == null) {
+                tf = bundledFace(w);
+                faces[w.ordinal()] = tf;
+                if (tf != null) faceWeights.put(tf, WEIGHT_VALUES[w.ordinal()]);
+            }
+            if (tf == null) {
+                tf = faces[Weight.REGULAR.ordinal()];
+                if (tf == null && activeFamily == null) {
+                    tf = bundledFace(Weight.REGULAR);
+                    faces[Weight.REGULAR.ordinal()] = tf;
+                    if (tf != null) faceWeights.put(tf, WEIGHT_VALUES[Weight.REGULAR.ordinal()]);
+                }
+            }
             f = tf != null ? new Font(tf, size) : new Font().setSize(size);
             f.setSubpixel(true);
             f.setEdging(FontEdging.SUBPIXEL_ANTI_ALIAS);

@@ -50,6 +50,10 @@ fi
 
 # Shared module list (see jre-modules.txt), comments stripped.
 MODS=$(sed 's/#.*//' "$DIST/jre-modules.txt" | tr -d '[:blank:]' | grep . | paste -sd, -)
+JAVA_OPTION_ARGS=()
+while IFS= read -r option; do
+  JAVA_OPTION_ARGS+=(--java-options "$option")
+done < <(sed 's/#.*//' "$DIST/jvm-options.txt" | awk 'NF')
 
 rm -rf "$T/pkg"
 
@@ -61,6 +65,7 @@ jpackage --type dmg \
   --dest "$T/pkg" "${ICON_ARG[@]}" \
   --mac-package-identifier dev.t1m3.qplayer --mac-package-name QPlayer \
   --java-options -XstartOnFirstThread \
+  "${JAVA_OPTION_ARGS[@]}" \
   --add-modules "$MODS" \
   --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 

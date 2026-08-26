@@ -93,6 +93,7 @@ Rectangle {
             SegmentedButton {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40
+                selectedIndex: dialog.loginMode
                 buttons: [
                     { text: "扫码", selected: dialog.loginMode === 0 },
                     { text: "网页登录", selected: dialog.loginMode === 1,

@@ -29,6 +29,17 @@ $moduleList = @(Get-Content "$PSScriptRoot\jre-modules.txt" |
 $moduleList += 'jdk.httpserver'
 $mods = $moduleList -join ','
 
+# Shared low-footprint JVM options, represented as repeated jpackage
+# --java-options arguments.
+$javaOptionArgs = @()
+Get-Content "$PSScriptRoot\jvm-options.txt" |
+    ForEach-Object { ($_ -replace '#.*', '').Trim() } |
+    Where-Object { $_ } |
+    ForEach-Object {
+        $javaOptionArgs += '--java-options'
+        $javaOptionArgs += $_
+    }
+
 $out = "$T\pkg"
 $dir = "$T\QPlayer"
 Remove-Item -Recurse -Force $out, $dir -ErrorAction SilentlyContinue
@@ -41,6 +52,7 @@ Remove-Item -Recurse -Force $out, $dir -ErrorAction SilentlyContinue
     --input $app --main-jar qplayer.jar --main-class dev.t1m3.qplayer.desktop.app.Main `
     --dest $out --icon "$PSScriptRoot\..\src\main\resources\app-icon.ico" `
     --add-modules $mods `
+    @javaOptionArgs `
     --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=zip-6 --dedup-legal-notices=error-if-not-same-content"
 if ($LASTEXITCODE -ne 0) { throw "jpackage failed ($LASTEXITCODE)" }
 
