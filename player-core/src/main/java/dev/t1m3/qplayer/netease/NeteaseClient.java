@@ -783,6 +783,48 @@ public final class NeteaseClient {
         return new SongSearchPage(filterJunkNumericNames(out, keyword), total, consumed);
     }
 
+    /** Album search — cloudsearch {@code type: 10}. Single page, no offset
+     *  support: SearchPage's album filter doesn't paginate (unlike song search). */
+    public List<NeteaseAlbum> searchAlbums(String keyword, int limit) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("s", keyword);
+        body.put("type", 10);
+        body.put("limit", limit);
+        body.put("offset", 0);
+        JsonObject obj = apiJson(NeteaseApi.CLOUD_SEARCH, body);
+        List<NeteaseAlbum> out = new ArrayList<>();
+        if (obj.has("result") && obj.get("result").isJsonObject()) {
+            JsonObject result = obj.getAsJsonObject("result");
+            if (result.has("albums") && result.get("albums").isJsonArray()) {
+                for (JsonElement el : result.getAsJsonArray("albums")) {
+                    if (el.isJsonObject()) out.add(parseAlbum(el.getAsJsonObject()));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Artist search — cloudsearch {@code type: 100}. Single page, same as
+     *  {@link #searchAlbums}. */
+    public List<NeteaseArtist> searchArtists(String keyword, int limit) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("s", keyword);
+        body.put("type", 100);
+        body.put("limit", limit);
+        body.put("offset", 0);
+        JsonObject obj = apiJson(NeteaseApi.CLOUD_SEARCH, body);
+        List<NeteaseArtist> out = new ArrayList<>();
+        if (obj.has("result") && obj.get("result").isJsonObject()) {
+            JsonObject result = obj.getAsJsonObject("result");
+            if (result.has("artists") && result.get("artists").isJsonArray()) {
+                for (JsonElement el : result.getAsJsonArray("artists")) {
+                    if (el.isJsonObject()) out.add(parseArtist(el.getAsJsonObject()));
+                }
+            }
+        }
+        return out;
+    }
+
     public List<NeteaseSong> searchSongs(String keyword, int limit, int offset) throws IOException {
         return searchSongsPage(keyword, limit, offset).songs;
     }

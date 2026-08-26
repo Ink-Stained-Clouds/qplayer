@@ -492,8 +492,17 @@ public final class PlayerController {
     /** Unified view over {@link #searchResults} + {@link #localSearchResults} +
      *  {@link #customSearchResults} (netease, then local, then custom) for
      *  SearchPage.qml's single results list. Rebuilt by {@link #rebuildSearchRows()}
-     *  whenever any of the three source lists changes. */
+     *  whenever any of the three source lists changes. In "album"/"artist"
+     *  {@link #searchMode}, rebuilt from {@link #searchAlbumResults}/
+     *  {@link #searchArtistResults} instead (netease-only -- local/custom have
+     *  no album/artist entities of their own). */
     public final Property<List<SearchRow>> searchRows = new Property<>(Collections.<SearchRow>emptyList());
+    /** SearchPage's type filter: "song" (default) | "album" | "artist". Selects
+     *  which of {@link #search}/{@link #searchAlbums(String)}/{@link #searchArtists(String)}
+     *  drives {@link #searchRows}. */
+    public final Property<String> searchMode = new Property<>("song");
+    public final Property<List<NeteaseAlbum>> searchAlbumResults = new Property<>(Collections.<NeteaseAlbum>emptyList());
+    public final Property<List<NeteaseArtist>> searchArtistResults = new Property<>(Collections.<NeteaseArtist>emptyList());
     /** Local-library matches for the same query text, shown alongside searchResults. */
     public final Property<List<Track>> localSearchResults = new Property<>(Collections.<Track>emptyList());
     /** Hot search keywords shown when search input is empty. */
@@ -1182,6 +1191,19 @@ public final class PlayerController {
 
     public void setAlbumPageOpen(boolean open) {
         albumPageOpen.set(open);
+    }
+
+    /** SearchPage's type dropdown. Only sets the mode + clears the other kinds'
+     *  stale results -- the caller (QML) re-issues the actual search itself so
+     *  this doesn't need to remember the current query text. */
+    public void setSearchMode(String mode) {
+        searchMode.set(mode);
+        searchAlbumResults.set(Collections.<NeteaseAlbum>emptyList());
+        searchArtistResults.set(Collections.<NeteaseArtist>emptyList());
+        searchResults.set(Collections.<NeteaseSong>emptyList());
+        localSearchResults.set(Collections.<Track>emptyList());
+        customSearchResults.set(Collections.<CustomSong>emptyList());
+        rebuildSearchRows();
     }
 
     /** Bumped by the host on a system back press; QML watches it and pops the topmost
@@ -3686,6 +3708,70 @@ public final class PlayerController {
         });
     }
 
+    /** Album-mode counterpart to {@link #search}: cloudsearch type 10, no cache/
+     *  offline-fallback/pagination layer -- SearchPage's album filter is a much
+     *  smaller surface than song search, so it stays a plain single-shot fetch. */
+    public void searchAlbums(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        final String query = keyword.trim();
+        final String key = query.toLowerCase(Locale.ROOT);
+        currentSearchKey = key;
+        currentSearchQuery = query;
+        searchLoading.set(true);
+        searchWorker.submit(() -> {
+            try {
+                List<NeteaseAlbum> r = netease.searchAlbums(query, SEARCH_PAGE_SIZE);
+                if (!key.equals(currentSearchKey)) return;
+                post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    searchAlbumResults.set(r);
+                    resultCount.set(r.size());
+                    searchLoading.set(false);
+                    rebuildSearchRows();
+                });
+            } catch (Throwable e) {
+                Logger.warn("album search failed: {}", e.getMessage());
+                if (!key.equals(currentSearchKey)) return;
+                post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    searchLoading.set(false);
+                    showToast("专辑搜索失败，请检查网络");
+                });
+            }
+        });
+    }
+
+    /** Artist-mode counterpart to {@link #search}; see {@link #searchAlbums}. */
+    public void searchArtists(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        final String query = keyword.trim();
+        final String key = query.toLowerCase(Locale.ROOT);
+        currentSearchKey = key;
+        currentSearchQuery = query;
+        searchLoading.set(true);
+        searchWorker.submit(() -> {
+            try {
+                List<NeteaseArtist> r = netease.searchArtists(query, SEARCH_PAGE_SIZE);
+                if (!key.equals(currentSearchKey)) return;
+                post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    searchArtistResults.set(r);
+                    resultCount.set(r.size());
+                    searchLoading.set(false);
+                    rebuildSearchRows();
+                });
+            } catch (Throwable e) {
+                Logger.warn("artist search failed: {}", e.getMessage());
+                if (!key.equals(currentSearchKey)) return;
+                post(() -> {
+                    if (!key.equals(currentSearchKey)) return;
+                    searchLoading.set(false);
+                    showToast("歌手搜索失败，请检查网络");
+                });
+            }
+        });
+    }
+
     /** Fetch the next cloudsearch page when SearchPage's virtual list nears its end. */
     public void loadMoreSearch() {
         if (searchPageInFlight || !Boolean.TRUE.equals(searchHasMore.peek())) return;
@@ -3769,6 +3855,8 @@ public final class PlayerController {
         searchResults.set(Collections.<NeteaseSong>emptyList());
         localSearchResults.set(Collections.<Track>emptyList());
         customSearchResults.set(Collections.<CustomSong>emptyList());
+        searchAlbumResults.set(Collections.<NeteaseAlbum>emptyList());
+        searchArtistResults.set(Collections.<NeteaseArtist>emptyList());
         resultCount.set(0);
         searchLoading.set(false);
         searchHasMore.set(false);
@@ -3834,8 +3922,21 @@ public final class PlayerController {
      *  {@link #customSearchResults} into {@link #searchRows}, in that display
      *  order — SearchPage.qml renders one unified list instead of three
      *  independently-scrolling ones (which fought over layout space; see
-     *  SearchPage.qml). Must run on the render thread (Property write). */
+     *  SearchPage.qml). Must run on the render thread (Property write).
+     *
+     * <p>In "album"/"artist" {@link #searchMode}, builds from {@link
+     * #searchAlbumResults}/{@link #searchArtistResults} instead — those
+     * entities only exist on netease, so there's nothing to merge with. */
     void rebuildSearchRows() {
+        String mode = searchMode.peek();
+        if ("album".equals(mode)) {
+            searchRows.set(buildAlbumSearchRows());
+            return;
+        }
+        if ("artist".equals(mode)) {
+            searchRows.set(buildArtistSearchRows());
+            return;
+        }
         List<SearchRow> rows = new ArrayList<>();
         List<NeteaseSong> ns = searchResults.peek();
         if (ns != null) {
@@ -3889,6 +3990,53 @@ public final class PlayerController {
         searchRows.set(rows);
     }
 
+    /** {@code searchAlbumResults} as SearchRow rows: secondary line is the
+     *  album's artist (clickable via SongRow's rowArtistId, same as any other
+     *  album display), {@code id} repurposed to carry the album id so {@link
+     *  #playSearchRow} can route the tap to {@link #openAlbum}. */
+    private List<SearchRow> buildAlbumSearchRows() {
+        List<SearchRow> rows = new ArrayList<>();
+        List<NeteaseAlbum> albums = searchAlbumResults.peek();
+        if (albums == null) return rows;
+        for (int i = 0; i < albums.size(); i++) {
+            NeteaseAlbum a = albums.get(i);
+            SearchRow row = new SearchRow();
+            row.kind = "album";
+            row.index = i;
+            row.name = a.name;
+            row.artist = a.artistName;
+            row.artistId = a.artistId;
+            row.coverThumbPath = a.coverThumbPath;
+            row.id = a.id;
+            row.menuEnabled = false;
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /** {@code searchArtistResults} as SearchRow rows: secondary line is a
+     *  precomputed "N 张专辑 · N 首歌曲" stat (QML has no reason to reach into
+     *  a separate NeteaseArtist shape just for this). {@code id} repurposed to
+     *  carry the artist id, same pattern as {@link #buildAlbumSearchRows}. */
+    private List<SearchRow> buildArtistSearchRows() {
+        List<SearchRow> rows = new ArrayList<>();
+        List<NeteaseArtist> artists = searchArtistResults.peek();
+        if (artists == null) return rows;
+        for (int i = 0; i < artists.size(); i++) {
+            NeteaseArtist a = artists.get(i);
+            SearchRow row = new SearchRow();
+            row.kind = "artist";
+            row.index = i;
+            row.name = a.name;
+            row.artist = a.albumSize + " 张专辑 · " + a.musicSize + " 首歌曲";
+            row.coverThumbPath = a.coverThumbPath;
+            row.id = a.id;
+            row.menuEnabled = false;
+            rows.add(row);
+        }
+        return rows;
+    }
+
     /** Route a click on the unified search list (SearchPage.qml) back to the
      *  right source-specific play method by {@link SearchRow#kind}. */
     public void playSearchRow(int rowIndex) {
@@ -3899,6 +4047,8 @@ public final class PlayerController {
             case "netease": playSearchResult(row.index); break;
             case "local": playLocalSearchResult(row.index); break;
             case "custom": playCustomSearchResult(row.index); break;
+            case "album": openAlbum(row.id); break;
+            case "artist": openArtist(row.id); break;
             default: break;
         }
     }

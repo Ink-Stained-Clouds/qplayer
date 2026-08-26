@@ -24,9 +24,15 @@ Item {
     function runSearch(addHistory) {
         var text = query.text
         if (text.length === 0) return
-        player.search(text)
-        player.searchLocal(text)
-        player.searchCustom(text)
+        if (player.searchMode === "album") {
+            player.searchAlbums(text)
+        } else if (player.searchMode === "artist") {
+            player.searchArtists(text)
+        } else {
+            player.search(text)
+            player.searchLocal(text)
+            player.searchCustom(text)
+        }
         if (addHistory) player.addSearchHistory(text)
     }
 
@@ -46,13 +52,32 @@ Item {
             Layout.margins: 12
             spacing: 4
 
+            // Search-type filter: song (default) / album / artist. Switching it
+            // re-runs the current query (if any) under the new type -- results
+            // for each type come from a different netease search call/Property,
+            // routed through page.runSearch()/player.searchMode.
+            ComboBox {
+                id: searchType
+                Layout.preferredWidth: 104
+                Layout.alignment: Qt.AlignVCenter
+                type: "outlined"
+                model: ["歌曲", "专辑", "歌手"]
+                currentIndex: 0
+                onActivated: {
+                    var modes = ["song", "album", "artist"]
+                    player.setSearchMode(modes[index])
+                    if (query.text.length > 0) page.runSearchNow(false)
+                }
+            }
+
             TextField {
                 id: query
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
                 type: "filled"
                 leadingIcon: "search"
-                label: "搜索歌曲"
+                label: searchType.currentIndex === 1 ? "搜索专辑"
+                       : (searchType.currentIndex === 2 ? "搜索歌手" : "搜索歌曲")
                 // Real-time search on every keystroke. searchLocal is a synchronous
                 // in-memory filter, but large libraries still make it expensive enough
                 // to debounce together with the two network sources.
