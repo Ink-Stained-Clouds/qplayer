@@ -14,6 +14,8 @@ import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.store.CredentialCipher;
 import dev.t1m3.qplayer.store.CredentialKeyProtection;
 import dev.t1m3.qplayer.store.StorageFiles;
+import dev.t1m3.qplayer.netease.dto.NeteaseAlbum;
+import dev.t1m3.qplayer.netease.dto.NeteaseArtist;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.util.Logger;
@@ -892,6 +894,11 @@ public final class NeteaseClient {
                 names.append(ao.get("name").getAsString());
             }
             if (names.length() > 0) out.artist = names.toString();
+            // First-listed artist's id, so the UI can open their artist page.
+            if (ar.size() > 0 && ar.get(0).isJsonObject()) {
+                JsonObject fo = ar.get(0).getAsJsonObject();
+                if (fo.has("id") && !fo.get("id").isJsonNull()) out.artistId = fo.get("id").getAsLong();
+            }
         }
         // Album object: "al" (new schema) or "album" (old).
         JsonObject al = s.has("al") && s.get("al").isJsonObject()
@@ -900,6 +907,7 @@ public final class NeteaseClient {
         if (al != null) {
             if (al.has("name") && !al.get("name").isJsonNull()) out.album = al.get("name").getAsString();
             if (al.has("picUrl") && !al.get("picUrl").isJsonNull()) out.coverUrl = al.get("picUrl").getAsString();
+            if (al.has("id") && !al.get("id").isJsonNull()) out.albumId = al.get("id").getAsLong();
         }
         out.coverThumbPath = thumbUrl(out.coverUrl);
         return out;
@@ -931,6 +939,108 @@ public final class NeteaseClient {
         }
         if (p.has("subscribed") && !p.get("subscribed").isJsonNull())
             out.subscribed = p.get("subscribed").getAsBoolean();
+        return out;
+    }
+
+    /** An artist's profile plus a snapshot of their most-played tracks, both
+     *  returned in a single {@code /artists} response. */
+    public static final class ArtistPage {
+        public final NeteaseArtist artist;
+        public final List<NeteaseSong> hotSongs;
+
+        ArtistPage(NeteaseArtist artist, List<NeteaseSong> hotSongs) {
+            this.artist = artist;
+            this.hotSongs = hotSongs;
+        }
+    }
+
+    /** Artist profile (name/avatar/bio) + their hot songs. */
+    public ArtistPage artistDetail(long artistId) throws IOException {
+        JsonObject obj = apiJson(NeteaseApi.artistDetail(artistId), new HashMap<String, Object>());
+        NeteaseArtist artist =
+                obj.has("artist") && obj.get("artist").isJsonObject()
+                        ? parseArtist(obj.getAsJsonObject("artist")) : null;
+        List<NeteaseSong> hotSongs = new ArrayList<>();
+        if (obj.has("hotSongs") && obj.get("hotSongs").isJsonArray()) {
+            for (JsonElement el : obj.getAsJsonArray("hotSongs")) {
+                if (el.isJsonObject()) hotSongs.add(parseSong(el.getAsJsonObject()));
+            }
+        }
+        return new ArtistPage(artist, hotSongs);
+    }
+
+    /** An artist's albums (newest first, as the server orders them). */
+    public List<NeteaseAlbum> artistAlbums(long artistId, int limit) throws IOException {
+        Map<String, Object> body = new HashMap<>();
+        body.put("limit", limit);
+        body.put("offset", 0);
+        body.put("total", true);
+        JsonObject obj = apiJson(NeteaseApi.artistAlbums(artistId), body);
+        List<NeteaseAlbum> out = new ArrayList<>();
+        if (obj.has("hotAlbums") && obj.get("hotAlbums").isJsonArray()) {
+            for (JsonElement el : obj.getAsJsonArray("hotAlbums")) {
+                if (el.isJsonObject()) out.add(parseAlbum(el.getAsJsonObject()));
+            }
+        }
+        return out;
+    }
+
+    /** An album's profile (name/cover/artist) plus its full tracklist, both
+     *  returned in a single {@code /album} response. */
+    public static final class AlbumPage {
+        public final NeteaseAlbum album;
+        public final List<NeteaseSong> songs;
+
+        AlbumPage(NeteaseAlbum album, List<NeteaseSong> songs) {
+            this.album = album;
+            this.songs = songs;
+        }
+    }
+
+    public AlbumPage albumDetail(long albumId) throws IOException {
+        JsonObject obj = apiJson(NeteaseApi.albumDetail(albumId), new HashMap<String, Object>());
+        NeteaseAlbum album =
+                obj.has("album") && obj.get("album").isJsonObject()
+                        ? parseAlbum(obj.getAsJsonObject("album")) : null;
+        List<NeteaseSong> songs = new ArrayList<>();
+        if (obj.has("songs") && obj.get("songs").isJsonArray()) {
+            for (JsonElement el : obj.getAsJsonArray("songs")) {
+                if (el.isJsonObject()) songs.add(parseSong(el.getAsJsonObject()));
+            }
+        }
+        return new AlbumPage(album, songs);
+    }
+
+    private static NeteaseArtist parseArtist(JsonObject a) {
+        NeteaseArtist out = new NeteaseArtist();
+        if (a.has("id") && !a.get("id").isJsonNull()) out.id = a.get("id").getAsLong();
+        if (a.has("name") && !a.get("name").isJsonNull()) out.name = a.get("name").getAsString();
+        if (a.has("picUrl") && !a.get("picUrl").isJsonNull()) out.coverUrl = a.get("picUrl").getAsString();
+        else if (a.has("img1v1Url") && !a.get("img1v1Url").isJsonNull())
+            out.coverUrl = a.get("img1v1Url").getAsString();
+        out.coverThumbPath = thumbUrl(out.coverUrl);
+        if (a.has("briefDesc") && !a.get("briefDesc").isJsonNull()) out.briefDesc = a.get("briefDesc").getAsString();
+        if (a.has("albumSize") && !a.get("albumSize").isJsonNull()) out.albumSize = a.get("albumSize").getAsInt();
+        if (a.has("musicSize") && !a.get("musicSize").isJsonNull()) out.musicSize = a.get("musicSize").getAsInt();
+        return out;
+    }
+
+    private static NeteaseAlbum parseAlbum(JsonObject a) {
+        NeteaseAlbum out = new NeteaseAlbum();
+        if (a.has("id") && !a.get("id").isJsonNull()) out.id = a.get("id").getAsLong();
+        if (a.has("name") && !a.get("name").isJsonNull()) out.name = a.get("name").getAsString();
+        if (a.has("picUrl") && !a.get("picUrl").isJsonNull()) out.coverUrl = a.get("picUrl").getAsString();
+        out.coverThumbPath = thumbUrl(out.coverUrl);
+        if (a.has("publishTime") && !a.get("publishTime").isJsonNull())
+            out.publishTime = a.get("publishTime").getAsLong();
+        if (a.has("description") && !a.get("description").isJsonNull())
+            out.description = a.get("description").getAsString();
+        if (a.has("size") && !a.get("size").isJsonNull()) out.trackCount = a.get("size").getAsInt();
+        if (a.has("artist") && a.get("artist").isJsonObject()) {
+            JsonObject ar = a.getAsJsonObject("artist");
+            if (ar.has("id") && !ar.get("id").isJsonNull()) out.artistId = ar.get("id").getAsLong();
+            if (ar.has("name") && !ar.get("name").isJsonNull()) out.artistName = ar.get("name").getAsString();
+        }
         return out;
     }
 

@@ -61,6 +61,12 @@ public class NeteaseApiTest {
         assertTrue(NeteaseApi.QR_LOGIN_KEY.loginFlow);
         assertTrue(NeteaseApi.QR_LOGIN_CHECK.loginFlow);
         assertEquals("/api/v1/user/detail/1234", NeteaseApi.userDetail(1234L).path);
+        assertEquals("/api/v1/artist/6452", NeteaseApi.artistDetail(6452L).path);
+        assertEquals(NeteaseApi.Transport.WEAPI, NeteaseApi.artistDetail(6452L).transport);
+        assertEquals("/api/artist/albums/6452", NeteaseApi.artistAlbums(6452L).path);
+        assertEquals(NeteaseApi.Transport.WEAPI, NeteaseApi.artistAlbums(6452L).transport);
+        assertEquals("/api/v1/album/32311", NeteaseApi.albumDetail(32311L).path);
+        assertEquals(NeteaseApi.Transport.WEAPI, NeteaseApi.albumDetail(32311L).transport);
     }
 
     private static void assertEndpoint(NeteaseApi.Endpoint endpoint, String path,

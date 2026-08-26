@@ -15,6 +15,9 @@ public final class SearchRow {
     public int index;
     public String name;
     public String artist;
+    /** Id of the artist (netease rows only; 0 for local/custom) — lets the row
+     *  open the artist's page. */
+    public long artistId;
     public String coverThumbPath;
     /** Menu identity. Exactly one is populated for each source kind. Keeping these
      *  on the flattened row lets SongContextMenu work without reaching back into a

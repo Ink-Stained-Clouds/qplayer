@@ -87,6 +87,10 @@ Rectangle {
         if (app.accountOpen)        { app.accountOpen = false; return; }
         if (app.cacheListOpen)      { app.cacheListOpen = false; return; }
         if (app.settingsOpen)       { app.settingsOpen = false; return; }
+        // Artist/album drill-ins sit above the playlist detail (an album opened
+        // from an artist page opened from a playlist), so they close first.
+        if (player.albumPageOpen)   { player.setAlbumPageOpen(false); return; }
+        if (player.artistPageOpen)  { player.setArtistPageOpen(false); return; }
         if (app.detailOpen)         { app.detailOpen = false; return; }
         if (app.page !== 0)         { app.switchTo(0); return; }
         player.requestExit();
@@ -103,6 +107,10 @@ Rectangle {
         app.accountOpen = which === "account"
         app.cacheListOpen = which === "cachedSongs"
         player.setQueueOpen(which === "queue")
+        // Artist/album pages are opened directly by player.openArtist/openAlbum
+        // (not routed through here), but any OTHER destination replaces them.
+        player.setArtistPageOpen(false)
+        player.setAlbumPageOpen(false)
     }
 
     // MD3 fade-through page switch: fade the content out, swap, fade it back in.
@@ -112,6 +120,8 @@ Rectangle {
         app.accountOpen = false;         // and the account overlay
         app.cacheListOpen = false;       // and the cached-songs overlay
         player.setQueueOpen(false);      // and the queue overlay
+        player.setArtistPageOpen(false); // and any open artist page
+        player.setAlbumPageOpen(false);  // and any open album page
         if (idx === app.page) return;
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
@@ -476,6 +486,28 @@ Rectangle {
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 onBack: app.detailOpen = false
+            }
+
+            ArtistDetailPage {
+                width: parent.width
+                height: parent.height
+                visible: opacity > 0.001
+                opacity: player.artistPageOpen ? 1 : 0
+                x: player.artistPageOpen ? 0 : 36
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                onBack: player.setArtistPageOpen(false)
+            }
+
+            AlbumDetailPage {
+                width: parent.width
+                height: parent.height
+                visible: opacity > 0.001
+                opacity: player.albumPageOpen ? 1 : 0
+                x: player.albumPageOpen ? 0 : 36
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                onBack: player.setAlbumPageOpen(false)
             }
 
             QueuePage {

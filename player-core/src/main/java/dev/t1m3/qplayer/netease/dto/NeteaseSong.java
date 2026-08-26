@@ -10,7 +10,11 @@ public class NeteaseSong {
     public String name;
     /** All artists joined with " / ". Null if absent. */
     public String artist;
+    /** Id of the first-listed artist -- lets the UI open that artist's page. 0 if absent. */
+    public long artistId;
     public String album;
+    /** Id of the album -- lets the UI open the album page. 0 if absent. */
+    public long albumId;
     /** Album cover URL (CDN, jpg/png). Renderer fetches bytes lazily. */
     public String coverUrl;
     /** CDN thumbnail URL (coverUrl + ?param=128y128) for QML Image.source.

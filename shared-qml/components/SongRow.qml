@@ -17,6 +17,9 @@ Rectangle {
 
     property string rowTitle: ""
     property string rowArtist: ""
+    // Id of rowArtist's (first-listed) artist -- 0 for local tracks / unknown,
+    // which disables the artist-name tap target below.
+    property double rowArtistId: 0
     property string coverThumbPath: ""
     // Small per-row source badge (e.g. "网易云"/"本地"/"自定义源") for lists that
     // mix rows from more than one source — see SearchPage.qml. Empty (default)
@@ -164,6 +167,7 @@ Rectangle {
     }
 
     Text {
+        id: artistText
         anchors.left: leading.right
         anchors.leftMargin: 14
         anchors.right: parent.right
@@ -172,7 +176,8 @@ Rectangle {
         anchors.topMargin: 2
         text: row.rowArtist
         elide: Text.ElideRight
-        color: Theme.color.onSurfaceVariantColor
+        color: (row.rowArtistId !== 0 && artistArea.containsMouse)
+               ? Theme.color.primary : Theme.color.onSurfaceVariantColor
         fontSize: 12
     }
 
@@ -228,6 +233,22 @@ Rectangle {
             row.activated()
         }
         onLongPressed: { row._menuArmed = true; row._openMenu() }
+    }
+
+    // Tap the artist name to open their page -- a separate, smaller MouseArea
+    // stacked above the row-wide Ripple (declared after it) so it intercepts
+    // taps only over the artist line; rowArtistId 0 (local tracks / unknown)
+    // disables it and lets the tap fall through to the row-wide Ripple.
+    MouseArea {
+        id: artistArea
+        anchors.left: artistText.left
+        anchors.right: artistText.right
+        anchors.verticalCenter: artistText.verticalCenter
+        height: 20
+        enabled: row.rowArtistId !== 0
+        hoverEnabled: enabled
+        cursorShape: Qt.PointingHandCursor
+        onClicked: player.openArtist(row.rowArtistId)
     }
 
     // Context menu, built only for rows that opt in (menuEnabled). Loaded eagerly

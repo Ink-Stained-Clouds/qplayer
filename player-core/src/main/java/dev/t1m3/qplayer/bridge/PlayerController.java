@@ -16,6 +16,8 @@ import dev.t1m3.qplayer.lyric.WordTimeLrcParser;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.netease.NeteaseClient;
+import dev.t1m3.qplayer.netease.dto.NeteaseAlbum;
+import dev.t1m3.qplayer.netease.dto.NeteaseArtist;
 import dev.t1m3.qplayer.netease.dto.NeteaseLyric;
 import dev.t1m3.qplayer.unblock.SongUnblocker;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
@@ -544,6 +546,36 @@ public final class PlayerController {
     /** Id of the open playlist, mirrored to QML (the volatile above isn't exposed).
      *  Lets the detail page pass the id back for delete / remove-track actions. */
     public final Property<Long> openPlaylistId = new Property<>(0L);
+    /** Currently opened artist (drill-in from a song row's artist name / an
+     *  album's artist credit). Mirrors the openPlaylist* family above.
+     *  artistPageOpen/albumPageOpen drive Main.qml's overlay visibility directly
+     *  (same pattern as queueOpen) -- they can each be true independently of
+     *  detailOpen/the current tab, so opening an artist from inside a playlist
+     *  layers the artist page on top instead of closing the playlist behind it. */
+    public final Property<Long> openArtistId = new Property<>(0L);
+    public final Property<Boolean> artistPageOpen = new Property<>(false);
+    public final Property<Boolean> albumPageOpen = new Property<>(false);
+    public final Property<String> artistName = new Property<>("");
+    public final Property<String> artistCoverPath = new Property<>("");
+    public final Property<String> artistBriefDesc = new Property<>("");
+    public final Property<Boolean> artistLoading = new Property<>(false);
+    public final Property<List<NeteaseSong>> artistSongs = new Property<>(Collections.<NeteaseSong>emptyList());
+    public final Property<List<NeteaseAlbum>> artistAlbums = new Property<>(Collections.<NeteaseAlbum>emptyList());
+    /** Guards against a slower, superseded fetch overwriting a newer {@link #openArtist} call. */
+    private volatile long currentArtistId;
+    /** Currently opened album (drill-in from a song row's album name / an
+     *  artist's album list). */
+    public final Property<Long> openAlbumId = new Property<>(0L);
+    public final Property<String> albumName = new Property<>("");
+    public final Property<String> albumCoverPath = new Property<>("");
+    public final Property<String> albumArtistName = new Property<>("");
+    public final Property<Long> albumArtistId = new Property<>(0L);
+    /** Release year, pre-formatted ("2019年") so QML doesn't need Date parsing; empty if unknown. */
+    public final Property<String> albumPublishYear = new Property<>("");
+    public final Property<Boolean> albumLoading = new Property<>(false);
+    public final Property<List<NeteaseSong>> albumTracks = new Property<>(Collections.<NeteaseSong>emptyList());
+    /** Guards against a slower, superseded fetch overwriting a newer {@link #openAlbum} call. */
+    private volatile long currentAlbumId;
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
     public final Property<List<Track>> queueTracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Boolean> queueOpen = new Property<>(false);
@@ -1139,6 +1171,17 @@ public final class PlayerController {
 
     public void setQueueOpen(boolean open) {
         queueOpen.set(open);
+    }
+
+    /** Closes the artist/album drill-in pages (Main.qml's back handling and its
+     *  "opening something else replaces the current overlay" resets); opening
+     *  them back up is {@link #openArtist}/{@link #openAlbum} themselves. */
+    public void setArtistPageOpen(boolean open) {
+        artistPageOpen.set(open);
+    }
+
+    public void setAlbumPageOpen(boolean open) {
+        albumPageOpen.set(open);
     }
 
     /** Bumped by the host on a system back press; QML watches it and pops the topmost
@@ -3804,6 +3847,7 @@ public final class PlayerController {
                 row.index = i;
                 row.name = s.name;
                 row.artist = s.artist;
+                row.artistId = s.artistId;
                 row.coverThumbPath = s.coverThumbPath;
                 row.id = s.id;
                 row.menuEnabled = s.id != 0;
@@ -3995,6 +4039,102 @@ public final class PlayerController {
     }
 
     /** Open a playlist: detail (name) + its tracks. */
+    /** Open an artist page: profile (name/avatar/bio) + hot songs + albums. */
+    public void openArtist(long artistId) {
+        if (artistId == 0L) return;
+        currentArtistId = artistId;
+        openArtistId.set(artistId);
+        artistPageOpen.set(true);
+        artistLoading.set(true);
+        artistName.set("");
+        artistCoverPath.set("");
+        artistBriefDesc.set("");
+        artistSongs.set(Collections.<NeteaseSong>emptyList());
+        artistAlbums.set(Collections.<NeteaseAlbum>emptyList());
+        worker.submit(() -> {
+            try {
+                NeteaseClient.ArtistPage page = netease.artistDetail(artistId);
+                List<NeteaseAlbum> albums = netease.artistAlbums(artistId, 50);
+                List<NeteaseSong> hotSongs = page != null ? page.hotSongs : Collections.<NeteaseSong>emptyList();
+                fillMissingCovers(hotSongs);
+                buildSongThumbs(hotSongs, "128");
+                NeteaseArtist artist = page != null ? page.artist : null;
+                post(() -> {
+                    if (currentArtistId != artistId) return;   // a newer open won
+                    artistName.set(artist != null && artist.name != null ? artist.name : "");
+                    artistCoverPath.set(artist != null && artist.coverUrl != null
+                            ? thumbUrl(artist.coverUrl, "256") : "");
+                    artistBriefDesc.set(artist != null && artist.briefDesc != null ? artist.briefDesc : "");
+                    artistSongs.set(hotSongs);
+                    artistAlbums.set(albums);
+                    artistLoading.set(false);
+                });
+            } catch (Throwable e) {
+                Logger.warn("open artist {} failed: {}", artistId, e.getMessage());
+                post(() -> {
+                    if (currentArtistId != artistId) return;
+                    artistLoading.set(false);
+                    showToast("加载歌手信息失败，请检查网络");
+                });
+            }
+        });
+    }
+
+    /** Play a song from the open artist's hot-songs list. */
+    public void playArtistSong(int i) {
+        playSongList(artistSongs.peek(), i);
+    }
+
+    /** Open an album page: profile (name/cover/artist) + full tracklist. */
+    public void openAlbum(long albumId) {
+        if (albumId == 0L) return;
+        currentAlbumId = albumId;
+        openAlbumId.set(albumId);
+        albumPageOpen.set(true);
+        albumLoading.set(true);
+        albumName.set("");
+        albumCoverPath.set("");
+        albumArtistName.set("");
+        albumArtistId.set(0L);
+        albumPublishYear.set("");
+        albumTracks.set(Collections.<NeteaseSong>emptyList());
+        worker.submit(() -> {
+            try {
+                NeteaseClient.AlbumPage page = netease.albumDetail(albumId);
+                List<NeteaseSong> songs = page != null ? page.songs : Collections.<NeteaseSong>emptyList();
+                fillMissingCovers(songs);
+                buildSongThumbs(songs, "128");
+                NeteaseAlbum album = page != null ? page.album : null;
+                post(() -> {
+                    if (currentAlbumId != albumId) return;   // a newer open won
+                    albumName.set(album != null && album.name != null ? album.name : "");
+                    albumCoverPath.set(album != null && album.coverUrl != null
+                            ? thumbUrl(album.coverUrl, "256") : "");
+                    albumArtistName.set(album != null && album.artistName != null ? album.artistName : "");
+                    albumArtistId.set(album != null ? album.artistId : 0L);
+                    albumPublishYear.set(album != null && album.publishTime > 0
+                            ? new java.text.SimpleDateFormat("yyyy年", java.util.Locale.CHINA)
+                                    .format(new java.util.Date(album.publishTime))
+                            : "");
+                    albumTracks.set(songs);
+                    albumLoading.set(false);
+                });
+            } catch (Throwable e) {
+                Logger.warn("open album {} failed: {}", albumId, e.getMessage());
+                post(() -> {
+                    if (currentAlbumId != albumId) return;
+                    albumLoading.set(false);
+                    showToast("加载专辑信息失败，请检查网络");
+                });
+            }
+        });
+    }
+
+    /** Play a song from the open album's tracklist. */
+    public void playAlbumTrack(int i) {
+        playSongList(albumTracks.peek(), i);
+    }
+
     public void openPlaylist(long playlistId) {
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.

@@ -111,6 +111,9 @@ Flickable {
                 y: index * view.rowH
                 rowTitle: view.isLocal ? modelData.title : modelData.name
                 rowArtist: modelData.artist
+                // isLocal rows are Track (queue/cached/local library) -- no artistId
+                // field, so leave the artist name non-clickable there.
+                rowArtistId: view.isLocal ? 0 : (modelData.artistId || 0)
                 coverThumbPath: modelData.coverThumbPath || ""
                 // Only present on SearchPage.qml's unified list (SearchRow.kindLabel);
                 // every other model shape leaves this "" so no tag renders.

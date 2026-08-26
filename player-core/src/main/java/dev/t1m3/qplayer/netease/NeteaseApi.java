@@ -127,5 +127,17 @@ final class NeteaseApi {
         return endpoint("/api/v1/user/detail/" + uid, Transport.WEAPI);
     }
 
+    static Endpoint artistDetail(long artistId) {
+        return endpoint("/api/v1/artist/" + artistId, Transport.WEAPI);
+    }
+
+    static Endpoint artistAlbums(long artistId) {
+        return endpoint("/api/artist/albums/" + artistId, Transport.WEAPI);
+    }
+
+    static Endpoint albumDetail(long albumId) {
+        return endpoint("/api/v1/album/" + albumId, Transport.WEAPI);
+    }
+
     private NeteaseApi() {}
 }
