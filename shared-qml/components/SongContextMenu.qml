@@ -50,6 +50,13 @@ Menu {
         // custom-playlist rows hand over a Track (".neteaseId") instead.
         var songId = s.id !== undefined ? s.id : s.neteaseId
         if (!songId) { menu.model = items; return }
+        // Jump to the credited (first-listed) artist's page. artistId is only
+        // populated on a real NeteaseSong (search/playlist/album/artist rows),
+        // not the Track shape queue/custom-playlist rows use -- guarded so the
+        // entry silently disappears rather than opening a blank/id-0 page.
+        if (s.artistId) {
+            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistAction(s.artistId) })
+        }
         if (player.loggedIn) {
             var pls = player.myPlaylists
             var n = pls ? pls.length : 0
@@ -118,6 +125,9 @@ Menu {
     }
     function _copyAction(songId) {
         return function() { player.copySongLink(songId) }
+    }
+    function _openArtistAction(artistId) {
+        return function() { player.openArtist(artistId) }
     }
     function _cacheAction(songId) {
         return function() { player.cacheSong(songId) }

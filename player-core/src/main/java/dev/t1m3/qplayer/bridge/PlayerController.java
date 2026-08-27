@@ -3924,19 +3924,10 @@ public final class PlayerController {
      *  independently-scrolling ones (which fought over layout space; see
      *  SearchPage.qml). Must run on the render thread (Property write).
      *
-     * <p>In "album"/"artist" {@link #searchMode}, builds from {@link
-     * #searchAlbumResults}/{@link #searchArtistResults} instead — those
-     * entities only exist on netease, so there's nothing to merge with. */
+     * <p>Only meaningful in "song" {@link #searchMode} — SearchPage.qml shows
+     * album/artist results as their own card grids straight off {@link
+     * #searchAlbumResults}/{@link #searchArtistResults}, bypassing this list. */
     void rebuildSearchRows() {
-        String mode = searchMode.peek();
-        if ("album".equals(mode)) {
-            searchRows.set(buildAlbumSearchRows());
-            return;
-        }
-        if ("artist".equals(mode)) {
-            searchRows.set(buildArtistSearchRows());
-            return;
-        }
         List<SearchRow> rows = new ArrayList<>();
         List<NeteaseSong> ns = searchResults.peek();
         if (ns != null) {
@@ -3990,53 +3981,6 @@ public final class PlayerController {
         searchRows.set(rows);
     }
 
-    /** {@code searchAlbumResults} as SearchRow rows: secondary line is the
-     *  album's artist (clickable via SongRow's rowArtistId, same as any other
-     *  album display), {@code id} repurposed to carry the album id so {@link
-     *  #playSearchRow} can route the tap to {@link #openAlbum}. */
-    private List<SearchRow> buildAlbumSearchRows() {
-        List<SearchRow> rows = new ArrayList<>();
-        List<NeteaseAlbum> albums = searchAlbumResults.peek();
-        if (albums == null) return rows;
-        for (int i = 0; i < albums.size(); i++) {
-            NeteaseAlbum a = albums.get(i);
-            SearchRow row = new SearchRow();
-            row.kind = "album";
-            row.index = i;
-            row.name = a.name;
-            row.artist = a.artistName;
-            row.artistId = a.artistId;
-            row.coverThumbPath = a.coverThumbPath;
-            row.id = a.id;
-            row.menuEnabled = false;
-            rows.add(row);
-        }
-        return rows;
-    }
-
-    /** {@code searchArtistResults} as SearchRow rows: secondary line is a
-     *  precomputed "N 张专辑 · N 首歌曲" stat (QML has no reason to reach into
-     *  a separate NeteaseArtist shape just for this). {@code id} repurposed to
-     *  carry the artist id, same pattern as {@link #buildAlbumSearchRows}. */
-    private List<SearchRow> buildArtistSearchRows() {
-        List<SearchRow> rows = new ArrayList<>();
-        List<NeteaseArtist> artists = searchArtistResults.peek();
-        if (artists == null) return rows;
-        for (int i = 0; i < artists.size(); i++) {
-            NeteaseArtist a = artists.get(i);
-            SearchRow row = new SearchRow();
-            row.kind = "artist";
-            row.index = i;
-            row.name = a.name;
-            row.artist = a.albumSize + " 张专辑 · " + a.musicSize + " 首歌曲";
-            row.coverThumbPath = a.coverThumbPath;
-            row.id = a.id;
-            row.menuEnabled = false;
-            rows.add(row);
-        }
-        return rows;
-    }
-
     /** Route a click on the unified search list (SearchPage.qml) back to the
      *  right source-specific play method by {@link SearchRow#kind}. */
     public void playSearchRow(int rowIndex) {
@@ -4047,8 +3991,6 @@ public final class PlayerController {
             case "netease": playSearchResult(row.index); break;
             case "local": playLocalSearchResult(row.index); break;
             case "custom": playCustomSearchResult(row.index); break;
-            case "album": openAlbum(row.id); break;
-            case "artist": openArtist(row.id); break;
             default: break;
         }
     }

@@ -14,7 +14,7 @@ Rectangle {
     color: Theme.color.surface
 
     property bool loadingWatch: player.artistLoading
-    onLoadingWatchChanged: if (player.artistLoading) scroller.contentY = 0
+    onLoadingWatchChanged: if (player.artistLoading) { scroller.contentY = 0; page.bioExpanded = false }
 
     // Swallow taps on empty areas so they don't reach the page beneath.
     MouseArea { anchors.fill: parent }
@@ -23,8 +23,18 @@ Rectangle {
     property real gap: 12
     property real avatarSize: 72
     property real profileTop: 12
-    // Room reserved under the avatar for up to a 3-line bio.
-    property real descReserve: 56
+    property bool bioExpanded: false
+    // Two invisible measuring probes (same width/font as the real bio Text
+    // below) compare a 3-line-capped render against the unclamped one -- the
+    // same "measure with a hidden Text, don't guess from char count" idiom
+    // AlbumCard's nameProbe uses, just for wrapped height instead of width.
+    property real bioWidth: Math.max(0, width - 2 * pad)
+    property bool bioOverflows: bioFullProbe.contentHeight > bioCappedProbe.contentHeight + 1
+    // Room reserved under the avatar for the bio (collapsed 3 lines, or the
+    // full text once expanded) plus the 展开/收起 toggle when it's needed.
+    property real descReserve: player.artistBriefDesc === "" ? 0
+        : 10 + (bioExpanded ? bioFullProbe.contentHeight : bioCappedProbe.contentHeight)
+              + (bioOverflows ? 28 : 0)
     property real profileH: avatarSize + descReserve
     property int albumCount: player.artistAlbums ? player.artistAlbums.length : 0
     property int songCount: player.artistSongs ? player.artistSongs.length : 0
@@ -110,7 +120,29 @@ Rectangle {
                         elide: Text.ElideRight
                     }
 
+                    // Hidden measuring probes -- never painted, just used to compare
+                    // the capped-vs-full wrapped height (see page.bioOverflows above).
                     Text {
+                        id: bioFullProbe
+                        visible: false
+                        width: page.bioWidth
+                        text: player.artistBriefDesc
+                        wrapMode: Text.WordWrap
+                        fontSize: 12
+                    }
+                    Text {
+                        id: bioCappedProbe
+                        visible: false
+                        width: page.bioWidth
+                        text: player.artistBriefDesc
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 3
+                        elide: Text.ElideRight
+                        fontSize: 12
+                    }
+
+                    Text {
+                        id: bioText
                         anchors.left: parent.left
                         anchors.leftMargin: page.pad
                         anchors.right: parent.right
@@ -120,10 +152,31 @@ Rectangle {
                         visible: player.artistBriefDesc !== ""
                         text: player.artistBriefDesc
                         wrapMode: Text.WordWrap
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
+                        maximumLineCount: page.bioExpanded ? 9999 : 3
+                        elide: page.bioExpanded ? Text.ElideNone : Text.ElideRight
                         color: Theme.color.onSurfaceVariantColor
                         fontSize: 12
+                    }
+
+                    // 展开/收起 -- bottom-right of the bio block, only shown once it
+                    // actually overflows 3 lines.
+                    Text {
+                        id: bioToggle
+                        visible: page.bioOverflows
+                        anchors.right: parent.right
+                        anchors.rightMargin: page.pad
+                        anchors.top: bioText.bottom
+                        anchors.topMargin: 2
+                        height: 24
+                        text: page.bioExpanded ? "收起" : "展开"
+                        color: Theme.color.primary
+                        fontSize: 12
+                        font.weight: Font.Medium
+                    }
+                    MouseArea {
+                        anchors.fill: bioToggle
+                        visible: page.bioOverflows
+                        onClicked: page.bioExpanded = !page.bioExpanded
                     }
 
                     Text {

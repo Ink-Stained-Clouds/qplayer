@@ -10,6 +10,16 @@ Item {
     // 0 = 折叠(5条), 1 = 展开(30条), 2 = 展开(70条), 3 = 展开全部(100条)
     property int historyExpandLevel: 0
 
+    // Album/artist result grid geometry (playlist-card style), shared by both
+    // card grids below -- same responsive-column math as HomePage's playlist
+    // grid / ArtistDetailPage's album grid.
+    property real gridPad: 16
+    property real gridGap: 12
+    property real minCardTile: 130
+    property int gridCols: Math.max(2, Math.floor((width - 2 * gridPad + gridGap) / (minCardTile + gridGap)))
+    property real cardTile: (width - 2 * gridPad - (gridCols - 1) * gridGap) / gridCols
+    property real cardH: cardTile + 56
+
     // Coalesce rapid IME edits into one network/local/custom search. Previously
     // every individual composition update synchronously filtered the full local
     // library and also queued two network searches, which could stall the render
@@ -52,46 +62,204 @@ Item {
             Layout.margins: 12
             spacing: 4
 
-            // Search-type filter: song (default) / album / artist. Switching it
-            // re-runs the current query (if any) under the new type -- results
-            // for each type come from a different netease search call/Property,
-            // routed through page.runSearch()/player.searchMode.
-            ComboBox {
-                id: searchType
-                Layout.preferredWidth: 104
+            // Type selector + search field merged into one rounded bar (same
+            // outlined-pill look as the 一起听 invite-link field), instead of a
+            // separate ComboBox and TextField -- neither component exposes a
+            // "no own background/half-rounded" mode, so this is a small custom
+            // composite (bare TextInput, kept as `id: query` so every other
+            // query.text reference in this file needs no change) rather than a
+            // reskin of the shared components everywhere else in the app uses.
+            // Plain anchors, NOT nested RowLayouts -- same reason SongRow.qml gives
+            // for its own layout (a Layout-in-Layout's height propagation isn't
+            // reliable in qml4j; see CLAUDE.md's qml4j-limits section). Every
+            // segment below is positioned off searchBar's own edges instead.
+            Item {
+                id: searchBar
+                Layout.fillWidth: true
+                Layout.preferredHeight: 52
                 Layout.alignment: Qt.AlignVCenter
-                type: "outlined"
-                model: ["歌曲", "专辑", "歌手"]
-                currentIndex: 0
-                onActivated: {
-                    var modes = ["song", "album", "artist"]
-                    player.setSearchMode(modes[index])
+
+                property int modeIndex: 0
+                readonly property var modeLabels: ["歌曲", "专辑", "歌手"]
+                readonly property var modeKeys: ["song", "album", "artist"]
+                // Reserve room for the clear button's own slot on the right,
+                // whether or not it's currently visible -- avoids a reactive
+                // anchor-TARGET switch (input area anchored to parent.right vs.
+                // clearBtn.left depending on visibility), which is untested here.
+                property real clearSlotW: 36
+
+                function selectMode(i) {
+                    searchBar.modeIndex = i
+                    player.setSearchMode(searchBar.modeKeys[i])
                     if (query.text.length > 0) page.runSearchNow(false)
+                }
+
+                // Real MD3 outlined-field border: a notch cut into the top stroke
+                // for the floating label to sit ON (not just "near the top inside"),
+                // same component TextField.qml's own outlined mode uses -- matches
+                // the 一起听 invite-link field's look exactly (that's a plain
+                // TextField{type:"outlined"}, same OutlinedBorder underneath).
+                OutlinedBorder {
+                    anchors.fill: parent
+                    cornerRadius: height / 2
+                    strokeWidth: 1
+                    strokeColor: Theme.color.outline
+                    notchVisible: inputArea.isFloating
+                    notchX: inputArea.x - 4
+                    notchWidth: floatLabel.width + 8
+                }
+                OutlinedBorder {
+                    anchors.fill: parent
+                    cornerRadius: height / 2
+                    strokeWidth: 2
+                    strokeColor: Theme.color.primary
+                    notchVisible: inputArea.isFloating
+                    notchX: inputArea.x - 4
+                    notchWidth: floatLabel.width + 8
+                    opacity: query.activeFocus ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                }
+
+                // Type selector segment.
+                Item {
+                    id: typeSeg
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.leftMargin: 4
+                    width: 84
+
+                    Text {
+                        id: typeLabel
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 16
+                        text: searchBar.modeLabels[searchBar.modeIndex]
+                        color: Theme.color.onSurfaceVariantColor
+                        fontSize: 14
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: typeLabel.right
+                        anchors.leftMargin: 2
+                        text: "arrow_drop_down"
+                        font.family: Theme.iconFont.name
+                        font.pixelSize: 20
+                        color: Theme.color.onSurfaceVariantColor
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: typeMenu.open(searchBar, 0, searchBar.height)
+                    }
+                }
+
+                Rectangle {
+                    anchors.left: typeSeg.right
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.topMargin: 10
+                    anchors.bottomMargin: 10
+                    width: 1
+                    color: Theme.color.outlineVariant
+                }
+
+                Text {
+                    id: searchIcon
+                    anchors.left: typeSeg.right
+                    anchors.leftMargin: 13
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "search"
+                    font.family: Theme.iconFont.name
+                    font.pixelSize: 20
+                    color: Theme.color.onSurfaceVariantColor
+                }
+
+                Item {
+                    id: inputArea
+                    anchors.left: searchIcon.right
+                    anchors.leftMargin: 8
+                    anchors.right: parent.right
+                    anchors.rightMargin: searchBar.clearSlotW
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+
+                    // MD3 floating label: centered like a placeholder while empty
+                    // and unfocused, floats up to sit ON the outline's top stroke
+                    // (through the OutlinedBorder notch above) once tapped/typed
+                    // into -- the old TextField gave this field that behaviour for
+                    // free; reimplemented by hand since the merged bar no longer
+                    // wraps TextField (mirrors TextField.qml's own outlined-style
+                    // label y/font.pixelSize transition and notch mechanism).
+                    property bool isFloating: query.activeFocus || query.text.length > 0
+
+                    Text {
+                        id: floatLabel
+                        x: 0
+                        // Floating: straddle the top border stroke, like a real
+                        // outlined field's label (-7 ~= half this label's own line
+                        // height, so the 1-2px stroke passes through its middle).
+                        y: inputArea.isFloating ? -7 : (inputArea.height - height) / 2
+                        text: searchBar.modeIndex === 1 ? "搜索专辑"
+                              : (searchBar.modeIndex === 2 ? "搜索歌手" : "搜索歌曲")
+                        color: Theme.color.onSurfaceVariantColor
+                        opacity: inputArea.isFloating ? 0.8 : 0.7
+                        font.family: Theme.typography.bodyLarge.family
+                        font.pixelSize: inputArea.isFloating ? 11 : 15
+                        Behavior on y { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                        Behavior on font.pixelSize { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                    }
+
+                    // Real-time search on every keystroke. searchLocal is a
+                    // synchronous in-memory filter, but large libraries still
+                    // make it expensive enough to debounce together with the
+                    // two network sources.
+                    TextInput {
+                        id: query
+                        anchors.fill: parent
+                        anchors.topMargin: inputArea.isFloating ? 16 : 0
+                        verticalAlignment: inputArea.isFloating ? TextInput.AlignBottom : TextInput.AlignVCenter
+                        color: Theme.color.onSurfaceColor
+                        font.pixelSize: 15
+                        font.family: Theme.typography.bodyLarge.family
+                        selectionColor: Theme.color.primary
+                        selectedTextColor: Theme.color.onPrimaryColor
+                        clip: true
+                        onTextChanged: {
+                            // Clear the previous query's mixed-source rows
+                            // immediately and invalidate its in-flight requests
+                            // before waiting for debounce.
+                            player.prepareSearch(text)
+                            if (text.length > 0) searchDebounce.restart()
+                            else { searchDebounce.stop(); page.historyExpandLevel = 0 }
+                        }
+                        onAccepted: {
+                            if (query.text.length > 0) page.runSearchNow(true)
+                            Qt.inputMethod.hide()
+                            query.focus = false
+                        }
+                    }
+                }
+
+                IconButton {
+                    visible: query.text.length > 0
+                    type: "standard"; icon: "close"
+                    anchors.right: parent.right
+                    anchors.rightMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: { query.text = ""; query.forceActiveFocus() }
+                }
+
+                Menu {
+                    id: typeMenu
+                    model: [
+                        { text: "歌曲", action: function() { searchBar.selectMode(0) } },
+                        { text: "专辑", action: function() { searchBar.selectMode(1) } },
+                        { text: "歌手", action: function() { searchBar.selectMode(2) } }
+                    ]
                 }
             }
 
-            TextField {
-                id: query
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                type: "filled"
-                leadingIcon: "search"
-                label: searchType.currentIndex === 1 ? "搜索专辑"
-                       : (searchType.currentIndex === 2 ? "搜索歌手" : "搜索歌曲")
-                // Real-time search on every keystroke. searchLocal is a synchronous
-                // in-memory filter, but large libraries still make it expensive enough
-                // to debounce together with the two network sources.
-                onTextChanged: {
-                    // Clear the previous query's mixed-source rows immediately and
-                    // invalidate its in-flight requests before waiting for debounce.
-                    player.prepareSearch(text)
-                    if (text.length > 0) searchDebounce.restart()
-                    else { searchDebounce.stop(); page.historyExpandLevel = 0 }
-                }
-                onAccepted: {
-                    if (query.text.length > 0) page.runSearchNow(true)
-                }
-            }
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
                 type: "filled"; icon: "search"
@@ -442,29 +610,100 @@ Item {
         }
 
         // --- Search results (shown when input is not empty) ---
-        // One unified, always-scrollable list (网易云 first, then 本地, then
-        // 自定义源 — player.searchRows is built in that order by
-        // PlayerController.rebuildSearchRows()) instead of three independently
-        // height-managed VirtualSongLists: those fought each other for space in
-        // qml4j's ColumnLayout (which hands a fillHeight child whatever room is
-        // left after already-placed siblings rather than pre-reserving room for
-        // every sibling like real Qt does), squeezing whichever section came
-        // after the fillHeight one down to nothing under a short window.
-        //
-        // SearchRow carries a source-specific menu identity (netease id, local path,
-        // or custom-api id), so the same right-click/long-press interaction remains
-        // available even though all three sources share one visual list.
-        VirtualSongList {
-            id: unifiedResults
+        // Song mode keeps the unified list (network+local+custom); album/artist
+        // mode are their own card grids (playlist-cover style) straight off
+        // player.searchAlbumResults/searchArtistResults -- those entities only
+        // exist on netease, so there's no second/third source to merge in.
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: query.text.length > 0
-            list: player.searchRows
-            songMenu: true
-            menuEligibilityFromModel: true
-            loadMoreEnabled: player.searchHasMore && !player.searchLoading
-            onLoadMoreRequested: player.loadMoreSearch()
-            onActivated: player.playSearchRow(unifiedResults.activatedIndex)
+
+            // One unified, always-scrollable list (网易云 first, then 本地, then
+            // 自定义源 — player.searchRows is built in that order by
+            // PlayerController.rebuildSearchRows()) instead of three independently
+            // height-managed VirtualSongLists: those fought each other for space in
+            // qml4j's ColumnLayout (which hands a fillHeight child whatever room is
+            // left after already-placed siblings rather than pre-reserving room for
+            // every sibling like real Qt does), squeezing whichever section came
+            // after the fillHeight one down to nothing under a short window.
+            //
+            // SearchRow carries a source-specific menu identity (netease id, local path,
+            // or custom-api id), so the same right-click/long-press interaction remains
+            // available even though all three sources share one visual list.
+            VirtualSongList {
+                id: unifiedResults
+                anchors.fill: parent
+                visible: player.searchMode === "song"
+                list: player.searchMode === "song" ? player.searchRows : null
+                songMenu: true
+                menuEligibilityFromModel: true
+                loadMoreEnabled: player.searchHasMore && !player.searchLoading
+                onLoadMoreRequested: player.loadMoreSearch()
+                onActivated: player.playSearchRow(unifiedResults.activatedIndex)
+            }
+
+            Flickable {
+                id: albumGrid
+                anchors.fill: parent
+                visible: player.searchMode === "album"
+                clip: true
+                contentWidth: width
+                property int count: player.searchAlbumResults ? player.searchAlbumResults.length : 0
+                contentHeight: Math.ceil(count / page.gridCols) * (page.cardH + page.gridGap) + page.gridGap
+
+                Item {
+                    width: albumGrid.width
+                    height: albumGrid.contentHeight
+                    cachedLayout: true
+
+                    Repeater {
+                        model: player.searchMode === "album" ? player.searchAlbumResults : null
+                        AlbumCard {
+                            albumId: modelData.id
+                            tile: page.cardTile
+                            x: page.gridPad + (index % page.gridCols) * (page.cardTile + page.gridGap)
+                            y: page.gridGap + Math.floor(index / page.gridCols) * (page.cardH + page.gridGap)
+                            name: modelData.name
+                            count: modelData.trackCount
+                            coverUrl: modelData.coverUrl
+                            coverThumbPath: modelData.coverThumbPath || ""
+                            onClicked: player.openAlbum(modelData.id)
+                        }
+                    }
+                }
+            }
+
+            Flickable {
+                id: artistGrid
+                anchors.fill: parent
+                visible: player.searchMode === "artist"
+                clip: true
+                contentWidth: width
+                property int count: player.searchArtistResults ? player.searchArtistResults.length : 0
+                contentHeight: Math.ceil(count / page.gridCols) * (page.cardH + page.gridGap) + page.gridGap
+
+                Item {
+                    width: artistGrid.width
+                    height: artistGrid.contentHeight
+                    cachedLayout: true
+
+                    Repeater {
+                        model: player.searchMode === "artist" ? player.searchArtistResults : null
+                        ArtistCard {
+                            artistId: modelData.id
+                            tile: page.cardTile
+                            x: page.gridPad + (index % page.gridCols) * (page.cardTile + page.gridGap)
+                            y: page.gridGap + Math.floor(index / page.gridCols) * (page.cardH + page.gridGap)
+                            name: modelData.name
+                            count: modelData.musicSize
+                            coverUrl: modelData.coverUrl
+                            coverThumbPath: modelData.coverThumbPath || ""
+                            onClicked: player.openArtist(modelData.id)
+                        }
+                    }
+                }
+            }
         }
     }
 }
