@@ -257,6 +257,10 @@ Item {
 
                 Menu {
                     id: typeMenu
+                    // Small rounded corner (cornerSmall, 8dp) instead of the
+                    // default menu's cornerExtraSmall -- same variant
+                    // PlaylistContextMenu.qml uses for its card-associated popup.
+                    outlined: true
                     model: [
                         { text: "歌曲", action: function() { searchBar.selectMode(0) } },
                         { text: "专辑", action: function() { searchBar.selectMode(1) } },
