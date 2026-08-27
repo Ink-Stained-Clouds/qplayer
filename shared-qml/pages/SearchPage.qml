@@ -217,8 +217,13 @@ Item {
                     TextInput {
                         id: query
                         anchors.fill: parent
-                        anchors.topMargin: inputArea.isFloating ? 16 : 0
-                        verticalAlignment: inputArea.isFloating ? TextInput.AlignBottom : TextInput.AlignVCenter
+                        // The floating label lives OUTSIDE this box now (on the
+                        // outline's notch, y < 0 -- see floatLabel above), not
+                        // stacked above the input text inside it like a "filled"
+                        // TextField's label does, so typed text always gets the
+                        // full height centered, in both the floating and resting
+                        // states.
+                        verticalAlignment: TextInput.AlignVCenter
                         color: Theme.color.onSurfaceColor
                         font.pixelSize: 15
                         font.family: Theme.typography.bodyLarge.family
