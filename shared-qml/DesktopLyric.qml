@@ -15,8 +15,7 @@ Item {
     Rectangle {
         id: surface
         anchors.fill: parent
-        anchors.margins: 5
-        radius: 28
+        radius: 0
         color: desktopLyric.dark ? "#CC101114" : "#D9F7F7FA"
 
         Text {

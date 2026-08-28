@@ -32,6 +32,7 @@ final class WinFrameless {
     private static final int WM_NCCALCSIZE = 0x0083;
     private static final int WM_NCHITTEST = 0x0084;
     private static final int WM_NCACTIVATE = 0x0086;
+    private static final int WM_DWMCOMPOSITIONCHANGED = 0x031E;
 
     private static final int HTCLIENT = 1;
     private static final int HTCAPTION = 2;
@@ -75,6 +76,20 @@ final class WinFrameless {
         LRESULT callback(HWND hWnd, int msg, WPARAM wParam, LPARAM lParam);
     }
 
+    interface Dwmapi extends StdCallLibrary {
+        Dwmapi I = Native.load("dwmapi", Dwmapi.class, W32APIOptions.DEFAULT_OPTIONS);
+
+        int DwmExtendFrameIntoClientArea(HWND hWnd, MARGINS margins);
+    }
+
+    @Structure.FieldOrder({"cxLeftWidth", "cxRightWidth", "cyTopHeight", "cyBottomHeight"})
+    public static class MARGINS extends Structure {
+        public int cxLeftWidth;
+        public int cxRightWidth;
+        public int cyTopHeight;
+        public int cyBottomHeight;
+    }
+
     @Structure.FieldOrder({"cbSize", "rcMonitor", "rcWork", "dwFlags"})
     public static class MONITORINFO extends Structure {
         public int cbSize = size();
@@ -98,6 +113,7 @@ final class WinFrameless {
 
     private WndProc wndProc;           // strong ref: JNA callbacks must not be GC'd
     private Pointer originalWndProc;   // the GLFW-installed proc, called for anything we don't handle
+    private boolean extendLegacyDwmFrame;
 
     /** Subclass {@code window}'s WNDPROC. Call once per {@code createWindow()} --
      *  safe to call again on a freshly (re)created window (e.g. the Vulkan-
@@ -105,14 +121,19 @@ final class WinFrameless {
      *  caller ({@link DesktopWindow}) holds a fresh {@code WinFrameless}
      *  instance per creation so a stale one can never receive a callback for
      *  an already-destroyed window. */
-    void install(DesktopWindow window, double titleBarHeightLogicalPx) {
+    void install(DesktopWindow window, double titleBarHeightLogicalPx,
+                 boolean extendLegacyDwmFrame) {
         long hwndLong = GLFWNativeWin32.glfwGetWin32Window(window.window());
         HWND hwnd = new HWND(Pointer.createConstant(hwndLong));
+        this.extendLegacyDwmFrame = extendLegacyDwmFrame;
 
         wndProc = (h, msg, wParam, lParam) -> {
             if (msg == WM_NCCALCSIZE) return ncCalcSize(h, wParam, lParam);
             if (msg == WM_NCHITTEST) return hitTest(h, lParam, window, titleBarHeightLogicalPx);
             if (msg == WM_NCACTIVATE) return U32.I.DefWindowProcW(h, msg, wParam, new LPARAM(-1));
+            if (msg == WM_DWMCOMPOSITIONCHANGED && this.extendLegacyDwmFrame) {
+                extendDwmFrame(h);
+            }
             return U32.I.CallWindowProcW(originalWndProc, h, msg, wParam, lParam);
         };
         originalWndProc = U32.I.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, wndProc);
@@ -125,6 +146,27 @@ final class WinFrameless {
         // side effect otherwise.
         U32.I.SetWindowPos(hwnd, null, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        if (extendLegacyDwmFrame) extendDwmFrame(hwnd);
+    }
+
+    /**
+     * Windows 10 shadow fallback. A one-pixel DWM frame keeps composition of the
+     * native shadow alive while WM_NCCALCSIZE gives the visible frame to QML.
+     * Win11 does not need this because its retained native style already receives
+     * the system shadow and rounded-corner treatment.
+     */
+    private void extendDwmFrame(HWND hwnd) {
+        try {
+            MARGINS margins = new MARGINS();
+            margins.cxLeftWidth = 1;
+            margins.cxRightWidth = 1;
+            margins.cyTopHeight = 1;
+            margins.cyBottomHeight = 1;
+            Dwmapi.I.DwmExtendFrameIntoClientArea(hwnd, margins);
+        } catch (Throwable ignored) {
+            // DWM composition is best-effort; the retained native frame styles
+            // still preserve resize/Snap even if frame extension is unavailable.
+        }
     }
 
     /** WM_NCCALCSIZE: claiming the whole window as client area (leave the

@@ -122,9 +122,9 @@ final class DesktopLyricRenderThread extends Thread {
     }
 
     private static void drawProgress(Canvas canvas, Paint paint, DesktopLyricState state) {
-        float width = 694f * state.progress();
+        float width = DesktopLyricWindow.WIDTH * state.progress();
         if (width <= 0f) return;
         paint.setColor(state.darkValue() ? 0x99FFFFFF : 0x9938383C);
-        canvas.drawRect(Rect.makeXYWH(33f, 110f, width, 3f), paint);
+        canvas.drawRect(Rect.makeXYWH(0f, DesktopLyricWindow.HEIGHT - 3f, width, 3f), paint);
     }
 }

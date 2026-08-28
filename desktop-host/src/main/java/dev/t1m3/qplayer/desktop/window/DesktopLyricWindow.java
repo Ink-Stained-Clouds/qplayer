@@ -130,6 +130,7 @@ public final class DesktopLyricWindow {
         }
         boolean transparent = GLFW.glfwGetWindowAttrib(
                 window, GLFW.GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW.GLFW_TRUE;
+        DesktopWindow.applyWindowsRoundedCorners(window);
         Logger.info("desktop lyric window created (backend {}, transparent framebuffer = {})",
                 kind, transparent);
         cacheFramebufferSize();

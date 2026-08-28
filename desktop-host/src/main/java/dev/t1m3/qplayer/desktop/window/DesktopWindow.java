@@ -483,21 +483,16 @@ public final class DesktopWindow {
             // createWindow() runs, or a stale one could receive a callback for an
             // already-destroyed window.
             if (windowChrome == null) windowChrome = new WindowChrome(this);
-            // hostWindow.available drives TitleBar.qml (and NavigationRail's brand
-            // header) -- it must mirror whether the custom title bar is actually
-            // active, not just that we're on Windows. Win10 keeps the system
-            // decoration but would otherwise ALSO show our TitleBar: two title bars.
-            if (isWindows11OrLater()) {
-                // Win11+: use custom frameless title bar with rounded corners
-                frameless = new WinFrameless();
-                frameless.install(this, TITLE_BAR_HEIGHT);
-                settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
-                windowChrome.available.set(true);
-            } else {
-                // Win10 and earlier: use system decoration, no custom title bar
-                settings.setInsets(0, settings.bottomInset.peek());
-                windowChrome.available.set(false);
-            }
+            // Keep GLFW's decorated HWND and replace only its non-client layout.
+            // WS_CAPTION | WS_THICKFRAME therefore continue to provide DWM shadow,
+            // resize, Snap, taskbar preview and Alt-Tab on both Windows 10 and 11.
+            // Win10 receives a 1px extended DWM frame as a shadow fallback; Win11
+            // uses its native shadow and rounded-corner policy directly.
+            boolean windows11 = isWindows11OrLater();
+            frameless = new WinFrameless();
+            frameless.install(this, TITLE_BAR_HEIGHT, !windows11);
+            settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+            windowChrome.available.set(true);
         }
         cacheFramebufferAndScale();
         cacheRefreshRate();
@@ -570,9 +565,8 @@ public final class DesktopWindow {
     }
 
     /** Returns true on Windows 11+ (build 22000+), where DWM corner preference
-     *  and the custom frameless title bar with rounded corners are supported.
-     *  Windows 10 and earlier will use the system-provided window decoration. */
-    private static boolean isWindows11OrLater() {
+     * is supported. All Windows versions use the custom title bar. */
+    static boolean isWindows11OrLater() {
         if (!isWindows()) return false;
         try {
             String ver = System.getProperty("os.version", "");
@@ -621,6 +615,20 @@ public final class DesktopWindow {
             Dwmapi.I.DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, dark, 4);
         } catch (Throwable t) {
             Logger.warn("Windows DWM chrome attributes failed: {}", t.getMessage());
+        }
+    }
+
+    /** Best-effort system clipping for undecorated auxiliary windows. */
+    static void applyWindowsRoundedCorners(long glfwWindow) {
+        if (!isWindows11OrLater()) return;
+        try {
+            long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwWindow);
+            com.sun.jna.Memory corner = new com.sun.jna.Memory(4);
+            corner.setInt(0, DWMWCP_ROUND);
+            Dwmapi.I.DwmSetWindowAttribute(com.sun.jna.Pointer.createConstant(hwnd),
+                    DWMWA_WINDOW_CORNER_PREFERENCE, corner, 4);
+        } catch (Throwable t) {
+            Logger.warn("Windows auxiliary-window corner preference failed: {}", t.getMessage());
         }
     }
 
