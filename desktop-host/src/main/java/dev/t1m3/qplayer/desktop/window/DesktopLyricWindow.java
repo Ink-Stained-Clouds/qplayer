@@ -70,6 +70,7 @@ public final class DesktopLyricWindow {
         this.kind = transparentBackend(kind);
         this.settingsWriter = settingsWriter;
         this.mainPoster = mainPoster;
+        this.enabled = store.getBool(ENABLED_KEY, false);
         byte[] bytes = resources.load("DesktopLyric.qml");
         if (bytes == null) throw new IllegalStateException("DesktopLyric.qml not found on classpath");
         this.qmlSource = new String(bytes, StandardCharsets.UTF_8);
@@ -113,6 +114,7 @@ public final class DesktopLyricWindow {
 
     /** Main thread: creates the native surface using the selected app backend. */
     void create() {
+        if (window != MemoryUtil.NULL) return;
         positioningSupported = GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_WAYLAND;
         GLFW.glfwDefaultWindowHints();
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
@@ -173,11 +175,7 @@ public final class DesktopLyricWindow {
         snapshotPublished = false;
     }
 
-    /**
-     * Starts the independent desktop-lyric GPU/QML owner once. The scene is
-     * prewarmed even while disabled so enabling it later never stalls the main
-     * QML renderer for compilation.
-     */
+    /** Starts the independent desktop-lyric GPU/QML owner once. */
     synchronized void startRenderThread() {
         if (window == MemoryUtil.NULL) return;
         DesktopLyricRenderThread current = renderThread;
@@ -185,21 +183,6 @@ public final class DesktopLyricWindow {
         DesktopLyricRenderThread thread = new DesktopLyricRenderThread(this);
         renderThread = thread;
         thread.start();
-    }
-
-    /** Main startup thread: keep the hidden main window hidden until qml4j's
-     * process-global initialization for the second scene has completed. */
-    void awaitRenderThreadReady() {
-        startRenderThread();
-        DesktopLyricRenderThread thread = renderThread;
-        if (thread == null) return;
-        try {
-            if (!thread.awaitInitialized(30_000L)) {
-                Logger.warn("desktop lyric renderer prewarm timed out");
-            }
-        } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     /** Main render thread: copy all non-thread-safe QML/controller state. */
@@ -237,7 +220,23 @@ public final class DesktopLyricWindow {
 
     /** Main thread: applies a SettingsCore-originated change without echoing it. */
     void applyEnabled(boolean value) {
-        if (window == MemoryUtil.NULL) return;
+        if (value && window == MemoryUtil.NULL) {
+            // Disabled desktop lyrics are completely lazy: create their native
+            // surface and qml4j instance only on the first explicit enable.
+            store.putBool(ENABLED_KEY, true);
+            enabled = true;
+            create();
+            if (window == MemoryUtil.NULL) {
+                enabled = false;
+                store.putBool(ENABLED_KEY, false);
+                return;
+            }
+        }
+        if (window == MemoryUtil.NULL) {
+            enabled = false;
+            store.putBool(ENABLED_KEY, false);
+            return;
+        }
         if (value && !positioningSupported) {
             enabled = false;
             store.putBool(ENABLED_KEY, false);
@@ -267,7 +266,7 @@ public final class DesktopLyricWindow {
         shutdownRenderThread();
         disposeWindow();
         kind = transparentBackend(newKind);
-        create();
+        if (enabled) create();
     }
 
     void onRenderError(Throwable error) {

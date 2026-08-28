@@ -22,6 +22,22 @@ Rectangle {
     property bool accountOpen: false
     property bool cacheListOpen: false
     property bool showLog: false
+    // Build only the initial home page on startup. Once visited, a page remains
+    // loaded so navigation state and close animations are preserved.
+    property bool searchLoaded: false
+    property bool libraryLoaded: false
+    property bool localLoaded: false
+    property bool detailLoaded: false
+    property bool artistLoaded: false
+    property bool albumLoaded: false
+    property bool queueLoaded: false
+    property bool settingsLoaded: false
+    property bool accountLoaded: false
+    property bool cacheListLoaded: false
+    property bool artistOpenWatch: player.artistPageOpen
+    property bool albumOpenWatch: player.albumPageOpen
+    onArtistOpenWatchChanged: if (artistOpenWatch) artistLoaded = true
+    onAlbumOpenWatchChanged: if (albumOpenWatch) albumLoaded = true
     // Menu.open() registers the one top-level popup currently attached to this
     // scene. Song rows each own a lazy menu instance, so without a scene-wide
     // owner repeated right-clicks can leave every row's overlay open at once.
@@ -102,6 +118,11 @@ Rectangle {
     // one visually covered the other. Route every "open X" site through this so
     // opening one always closes the rest first.
     function openOverlay(which) {
+        if (which === "detail") app.detailLoaded = true
+        if (which === "settings") app.settingsLoaded = true
+        if (which === "account") app.accountLoaded = true
+        if (which === "cachedSongs") app.cacheListLoaded = true
+        if (which === "queue") app.queueLoaded = true
         app.detailOpen = which === "detail"
         app.settingsOpen = which === "settings"
         app.accountOpen = which === "account"
@@ -123,6 +144,9 @@ Rectangle {
         player.setArtistPageOpen(false); // and any open artist page
         player.setAlbumPageOpen(false);  // and any open album page
         if (idx === app.page) return;
+        if (idx === 1) app.searchLoaded = true
+        if (idx === 2) app.libraryLoaded = true
+        if (idx === 3) app.localLoaded = true
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
         pageAnim.restart();
@@ -472,100 +496,133 @@ Rectangle {
                 visible: app.page === 0
                 onOpenPlaylist: { player.openPlaylist(home.pendingPlaylist.id); app.openOverlay("detail") }
             }
-            SearchPage {
+            Loader {
                 anchors.fill: parent
+                active: app.searchLoaded
                 visible: app.page === 1
+                sourceComponent: Component { SearchPage {} }
             }
-            LibraryPage {
-                id: library
+            Loader {
                 anchors.fill: parent
+                active: app.libraryLoaded
                 visible: app.page === 2
-                onOpenPlaylist: { player.openPlaylist(library.pendingPlaylist.id); app.openOverlay("detail") }
-                onRequestLogin: app.loginOpen = true
+                sourceComponent: Component {
+                    LibraryPage {
+                        id: libraryPage
+                        onOpenPlaylist: {
+                            player.openPlaylist(libraryPage.pendingPlaylist.id)
+                            app.openOverlay("detail")
+                        }
+                        onRequestLogin: app.loginOpen = true
+                    }
+                }
             }
-            LocalPage {
+            Loader {
                 anchors.fill: parent
+                active: app.localLoaded
                 visible: app.page === 3
+                sourceComponent: Component { LocalPage {} }
             }
 
             // Overlays animate in: detail drills in from the right, queue and
             // settings rise from below. Kept laid out only while opacity > 0 so a
             // closed overlay costs nothing per frame.
-            PlaylistDetailPage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.detailLoaded
                 visible: opacity > 0.001
                 opacity: app.detailOpen ? 1 : 0
                 x: app.detailOpen ? 0 : 36
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: app.detailOpen = false
+                sourceComponent: Component {
+                    PlaylistDetailPage { onBack: app.detailOpen = false }
+                }
             }
 
-            ArtistDetailPage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.artistLoaded
                 visible: opacity > 0.001
                 opacity: player.artistPageOpen ? 1 : 0
                 x: player.artistPageOpen ? 0 : 36
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: player.setArtistPageOpen(false)
+                sourceComponent: Component {
+                    ArtistDetailPage { onBack: player.setArtistPageOpen(false) }
+                }
             }
 
-            AlbumDetailPage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.albumLoaded
                 visible: opacity > 0.001
                 opacity: player.albumPageOpen ? 1 : 0
                 x: player.albumPageOpen ? 0 : 36
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: player.setAlbumPageOpen(false)
+                sourceComponent: Component {
+                    AlbumDetailPage { onBack: player.setAlbumPageOpen(false) }
+                }
             }
 
-            QueuePage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.queueLoaded
                 visible: opacity > 0.001
                 opacity: player.queueOpen ? 1 : 0
                 y: player.queueOpen ? 0 : 32
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: player.setQueueOpen(false)
+                sourceComponent: Component {
+                    QueuePage { onBack: player.setQueueOpen(false) }
+                }
             }
 
-            SettingsPage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.settingsLoaded
                 visible: opacity > 0.001
                 opacity: app.settingsOpen ? 1 : 0
                 y: app.settingsOpen ? 0 : 32
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: app.settingsOpen = false
+                sourceComponent: Component {
+                    SettingsPage { onBack: app.settingsOpen = false }
+                }
             }
 
-            AccountPage {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.accountLoaded
                 visible: opacity > 0.001
                 opacity: app.accountOpen ? 1 : 0
                 y: app.accountOpen ? 0 : 32
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: app.accountOpen = false
+                sourceComponent: Component {
+                    AccountPage { onBack: app.accountOpen = false }
+                }
             }
 
-            CachedSongsDialog {
+            Loader {
                 width: parent.width
                 height: parent.height
+                active: app.cacheListLoaded
                 visible: opacity > 0.001
                 opacity: app.cacheListOpen ? 1 : 0
                 y: app.cacheListOpen ? 0 : 32
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                onBack: app.cacheListOpen = false
+                sourceComponent: Component {
+                    CachedSongsDialog { onBack: app.cacheListOpen = false }
+                }
             }
         }
     }

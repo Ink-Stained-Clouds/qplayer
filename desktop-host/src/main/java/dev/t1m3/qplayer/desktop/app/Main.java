@@ -15,6 +15,7 @@ import dev.t1m3.qplayer.desktop.media.MprisControls;
 import dev.t1m3.qplayer.desktop.media.WindowsMediaControls;
 import dev.t1m3.qplayer.desktop.resources.ClasspathResourceLoader;
 import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
+import dev.t1m3.qplayer.desktop.resources.DiskDecompressedResourceCache;
 import dev.t1m3.qplayer.desktop.security.DesktopCredentialProtection;
 import dev.t1m3.qplayer.desktop.settings.JsonSettingsStore;
 import dev.t1m3.qplayer.desktop.tray.TrayController;
@@ -56,6 +57,7 @@ public final class Main {
     private static final boolean PACKAGED = System.getProperty("jpackage.app-path") != null;
 
     public static void main(String[] args) {
+        long startupStartedNanos = System.nanoTime();
         // The jpackage launcher hands the command line straight to main() instead of
         // to the JVM (and drops -J flags), so pull the -Dkey=value ones back out
         // ourselves. Keeps the packaged app's launch knobs identical to a dev run:
@@ -103,10 +105,13 @@ public final class Main {
         configureWindowsAppIdentity();
         DesktopCredentialProtection.install();
 
-        ClasspathResourceLoader resources = new ClasspathResourceLoader();
+        ClasspathResourceLoader classpathResources = new ClasspathResourceLoader();
+        DiskDecompressedResourceCache resources = new DiskDecompressedResourceCache(
+                classpathResources, AppDirs.cacheDir().resolve("expanded-resources"));
         String currentVersion = appVersion();
         DiskCompiledSceneCache qmlCompilationCache = new DiskCompiledSceneCache(
-                AppDirs.cacheDir().resolve("qml"), resources.qmlFingerprint(currentVersion));
+                AppDirs.cacheDir().resolve("qml"),
+                classpathResources.qmlFingerprint(currentVersion));
 
         // Platform backends (the desktop impls already exist).
         AudioBackend audio = new DesktopAudioBackend();
@@ -119,14 +124,6 @@ public final class Main {
                 controller::completeWebLogin,
                 controller::failWebLogin,
                 controller::cancelWebLogin));
-
-        // A downloaded update installer (see downloadAndInstallUpdate below) has
-        // served its purpose once the app restarts -- it's never deleted right
-        // after launching it (risky to delete a file an installer might still be
-        // reading from), and <cacheBase>/updates is a sibling of DiskCache's own
-        // Installer downloads are transient. Sweep them at every startup after
-        // any legacy updates/ directory has been migrated into cache/updates/.
-        deleteRecursive(AppDirs.updatesDir().toFile());
 
         // Settings: the catalog, the value plumbing and every side effect live in
         // player-core (shared with Android). The host contributes a store, the
@@ -158,8 +155,6 @@ public final class Main {
             case REGULAR -> "Regular";
             case MEDIUM -> "Medium";
         } + ".otf"));
-        Fonts.initIcon(resources.load("fonts/MaterialSymbolsRounded.ttf"));
-
         byte[] qmlBytes = resources.load("Main.qml");
         if (qmlBytes == null) throw new IllegalStateException("Main.qml not found on classpath");
         String qml = new String(qmlBytes, StandardCharsets.UTF_8);
@@ -224,11 +219,6 @@ public final class Main {
                 DesktopFilePicker.pickImage(selected -> window.postRenderTask(() ->
                         controller.setPlaylistCover(playlistId, selected))));
 
-        // Start rendering immediately — the render thread is the core; the tray is
-        // best-effort and may block on GTK init in some environments, so it must
-        // never gate the window coming up.
-        window.spawnRenderThread();
-
         // A second launch now surfaces this window instead of starting a new process.
         onActivate.set(() -> window.postMainTask(window::restoreFromTray));
 
@@ -244,7 +234,7 @@ public final class Main {
         settings.onChange("musicFolder", v -> {
             String folder = String.valueOf(v);
             startLibraryScan(controller, reader, window, folder);
-            watcher.start(folder);
+            startLibraryWatcher(watcher, folder);
         });
 
         // Cache root (local-library covers/lyrics + netease audio/image/lyric cache).
@@ -256,7 +246,6 @@ public final class Main {
         if (!initialCacheFolder.isEmpty()) {
             AppDirs.setCacheBase(initialCacheFolder);
             controller.diskCache.setBaseDir(initialCacheFolder);
-            deleteRecursive(AppDirs.updatesDir().toFile());
         }
         settings.onChange("cacheFolder", v -> {
             String folder = String.valueOf(v);
@@ -265,32 +254,40 @@ public final class Main {
             startLibraryScan(controller, reader, window, settings.str("musicFolder"));
         });
 
-        // Initial content + a background scan of the local music folder.
-        controller.loadHome();
-        startLibraryScan(controller, reader, window, initialFolder);
-        watcher.start(initialFolder);
-
-        // Don't auto-check for updates outside a packaged build — a plain
-        // `mvn exec:exec` dev run would otherwise nag on every launch, mirroring
-        // QPlayerActivity's debug-build skip on Android.
-        if (PACKAGED) {
-            controller.checkForUpdate();
-        }
-
-        // Tray init on a daemon thread so a GTK/AppIndicator hang can't freeze the app.
-        // (-Dqplayer.tray=false disables it, e.g. for headless rendering checks.)
-        if (!"false".equals(System.getProperty("qplayer.tray", "true"))) {
-            Thread trayThread = getTrayThread(tray, window);
-            trayThread.start();
-        }
         boolean systemMediaEnabled =
                 !"false".equals(System.getProperty("qplayer.systemMedia", "true"))
                 // Keep the Linux-specific switch accepted by the first MPRIS build.
                 && (!(systemMedia instanceof MprisControls)
                     || !"false".equals(System.getProperty("qplayer.mpris", "true")));
-        if (systemMedia != null && systemMediaEnabled) {
-            systemMedia.start();
-        }
+
+        // Make the main QML scene the only startup-critical workload. Disk scans,
+        // network requests, native tray/media integrations and the recursive folder
+        // watcher all start after a real frame is visible, avoiding CPU/I/O/JNA
+        // contention while qml4j instantiates Main.qml.
+        window.setFirstFrameListener(() -> {
+            long elapsedMs = (System.nanoTime() - startupStartedNanos) / 1_000_000L;
+            Logger.info("startup first frame ready in {} ms; starting deferred services", elapsedMs);
+            // Neither the host-drawn icon face nor stale installer cleanup is
+            // required to produce the initial QML scene.
+            Fonts.initIcon(resources.load("fonts/MaterialSymbolsRounded.ttf"));
+            Thread cleanup = new Thread(
+                    () -> deleteRecursive(AppDirs.updatesDir().toFile()),
+                    "qplayer-update-cleanup");
+            cleanup.setDaemon(true);
+            cleanup.start();
+            controller.loadHome();
+            startLibraryScan(controller, reader, window, initialFolder);
+            startLibraryWatcher(watcher, initialFolder);
+            if (PACKAGED) controller.checkForUpdate();
+            if (!"false".equals(System.getProperty("qplayer.tray", "true"))) {
+                getTrayThread(tray, window).start();
+            }
+            if (systemMedia != null && systemMediaEnabled) systemMedia.start();
+        });
+
+        // Start rendering only after every callback and persisted cache path is
+        // wired, then enter the native event loop immediately.
+        window.spawnRenderThread();
 
         window.runEventLoop(); // blocks on the main thread until quit
 
@@ -512,6 +509,13 @@ public final class Main {
         }, "qplayer-scan");
         t.setDaemon(true);
         t.start();
+    }
+
+    /** Recursive watch registration can be expensive for a deeply nested library. */
+    private static void startLibraryWatcher(LibraryWatcher watcher, String folder) {
+        Thread thread = new Thread(() -> watcher.start(folder), "qplayer-library-watch-init");
+        thread.setDaemon(true);
+        thread.start();
     }
 
 }

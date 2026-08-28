@@ -109,6 +109,7 @@ public final class DesktopWindow {
     private WinFrameless frameless;
     // 确保nudgeResizeOnce只调用一次，避免从托盘恢复时累积增加窗口尺寸
     private boolean nudgeApplied = false;
+    private static volatile Boolean windows11OrLater;
 
     public DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
                   PlayerController controller, SettingsCore settings,
@@ -431,6 +432,11 @@ public final class DesktopWindow {
                 GLFW.glfwShowWindow(window);
                 GLFW.glfwFocusWindow(window);
             }
+            // Keep the auxiliary qml4j scene off the startup critical path. It is
+            // initialized after real main-window content is visible, and remains
+            // fully lazy when desktop lyrics are disabled.
+            DesktopLyricWindow target = lyricWindow;
+            if (target != null && target.isEnabled()) target.startRenderThread();
         });
         if (windowChrome != null) postMainTask(this::nudgeResizeOnce);
         Runnable r = firstFrameListener;
@@ -468,10 +474,6 @@ public final class DesktopWindow {
             settings.graphicsFallbackNotice.set(Boolean.TRUE);
         }
         createWindow();
-        // Compile the second qml4j scene while the main window is still hidden.
-        // Main.start performs other host initialization in parallel, then
-        // spawnRenderThread() joins this short prewarm before compiling Main.qml.
-        if (lyricWindow != null) lyricWindow.startRenderThread();
     }
 
     private void createWindow() {
@@ -525,15 +527,13 @@ public final class DesktopWindow {
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
 
-        // Created once alongside the main window. Vulkan startup fallback explicitly
-        // recreates this separate surface with GL before rebuilding the main window.
-        if (lyricWindow != null && !lyricWindowCreated) {
+        // Disabled desktop lyrics stay fully lazy. Persistently enabled lyrics need
+        // their native shell now, but their QML renderer still starts after the main
+        // window's first frame.
+        if (lyricWindow != null && lyricWindow.isEnabled()) {
             lyricWindow.create();
-            lyricWindowCreated = true;
         }
     }
-
-    private boolean lyricWindowCreated;
 
     /** dwmapi.dll's DwmSetWindowAttribute, used only for the two chrome attributes
      *  below. Fully-qualified JNA types (matches this file's other rare/localized
@@ -592,8 +592,10 @@ public final class DesktopWindow {
      * is supported. All Windows versions use the custom title bar. */
     static boolean isWindows11OrLater() {
         if (!isWindows()) return false;
+        Boolean cached = windows11OrLater;
+        if (cached != null) return cached;
+        boolean detected = false;
         try {
-            String ver = System.getProperty("os.version", "");
             // Windows 11 starts at build 22000, which reports os.version=10.0
             // but the build number is available via os.version or registry.
             // Actually, Windows 10 and 11 both report "10.0" as os.version.
@@ -606,11 +608,13 @@ public final class DesktopWindow {
                 if (line.startsWith("CurrentBuildNumber")) {
                     String buildStr = line.replaceAll(".*?\\s+(\\d+)", "$1").trim();
                     int build = Integer.parseInt(buildStr);
-                    return build >= 22000;
+                    detected = build >= 22000;
+                    break;
                 }
             }
         } catch (Exception ignored) {}
-        return false;
+        windows11OrLater = detected;
+        return detected;
     }
 
     /** Windows-only chrome polish. GLFW creates a plain top-level window with the
@@ -847,7 +851,6 @@ public final class DesktopWindow {
     public void spawnRenderThread() {
         RenderThread rt = renderThread;
         if (rt != null && rt.isAlive()) return;
-        if (lyricWindow != null) lyricWindow.awaitRenderThreadReady();
         rt = new RenderThread(this);
         renderThread = rt;
         rt.start();

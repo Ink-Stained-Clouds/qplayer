@@ -9,8 +9,6 @@ import io.github.timer_err.qml4j.engine.binding.DirtyQueue;
 import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.Renderer;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /** Owns the floating lyric window's backend, qml4j scene, and frame clock. */
@@ -20,7 +18,6 @@ final class DesktopLyricRenderThread extends Thread {
 
     private final DesktopLyricWindow owner;
     private final GraphicsBackend backend;
-    private final CountDownLatch initialized = new CountDownLatch(1);
     private volatile boolean running = true;
 
     DesktopLyricRenderThread(DesktopLyricWindow owner) {
@@ -32,10 +29,6 @@ final class DesktopLyricRenderThread extends Thread {
     void shutdown() {
         running = false;
         LockSupport.unpark(this);
-    }
-
-    boolean awaitInitialized(long timeoutMillis) throws InterruptedException {
-        return initialized.await(timeoutMillis, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -69,8 +62,6 @@ final class DesktopLyricRenderThread extends Thread {
             }
             progressPaint = new Paint().setAntiAlias(true);
             Logger.info("desktop lyric render thread ready (backend {})", backend.kind());
-            initialized.countDown();
-
             while (running) {
                 if (!owner.isEnabled() || !owner.hasPublishedSnapshot()) {
                     LockSupport.parkNanos(250_000_000L);
@@ -114,7 +105,6 @@ final class DesktopLyricRenderThread extends Thread {
         } catch (Throwable error) {
             if (running) owner.onRenderError(error);
         } finally {
-            initialized.countDown();
             synchronized (QmlRuntimeLock.MONITOR) {
                 try {
                     if (view != null) GpuCaches.invalidate(view.root());

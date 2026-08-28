@@ -27,10 +27,9 @@ final class DesktopFilePicker {
 
     private DesktopFilePicker() {}
 
-    /** Install before any desktop Swing component is created. */
+    /** Remember the theme without loading Swing/FlatLaf on the startup path. */
     static void initializeLookAndFeel(boolean dark) {
         darkTheme = dark;
-        applyLookAndFeel(dark);
     }
 
     /** The next chooser reflects an in-app light/dark-mode change. */
