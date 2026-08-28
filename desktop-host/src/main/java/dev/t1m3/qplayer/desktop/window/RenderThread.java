@@ -108,6 +108,18 @@ final class RenderThread extends Thread {
 
                     backend.present();
 
+                    // Desktop lyrics (issue #25): its own GL context, switched
+                    // to and back on THIS thread right after the main window's
+                    // own present() -- no-op (no context switch at all) unless
+                    // actually enabled. See DesktopLyricWindow's class doc for
+                    // why this can't be a second thread (PlayerController's
+                    // Property reads are only safe from the thread that
+                    // already writes them, which is this one).
+                    DesktopLyricWindow lyricWindow = win.lyricWindow();
+                    if (lyricWindow != null) {
+                        lyricWindow.renderFrame(win.window(), backend.kind() == GraphicsBackend.Kind.GL, controller);
+                    }
+
                     if (!firstFrameDone) {
                         firstFrameDone = true;
                         dev.t1m3.qplayer.util.Logger.info("first frame painted");

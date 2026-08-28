@@ -56,6 +56,9 @@ public final class DesktopWindow {
     private final PlayerController controller;
     private final SettingsCore settings;
     private final LyricCompositor compositor = new LyricCompositor();
+    /** Desktop lyrics floating window (issue #25) -- null until {@link
+     *  #setLyricSettingsStore} is called (before {@link #init}). */
+    private DesktopLyricWindow lyricWindow;
     /** One clipboard bridge shared by QML text editing and controller actions
      *  such as "复制链接" / "复制一起听邀请". */
     private final GlfwClipboard clipboard = new GlfwClipboard(this);
@@ -148,6 +151,22 @@ public final class DesktopWindow {
 
     LyricCompositor compositor() {
         return compositor;
+    }
+
+    /** Public: TrayController (a different package) needs this for its
+     *  toggle menu item. */
+    public DesktopLyricWindow lyricWindow() {
+        return lyricWindow;
+    }
+
+    /** Called once from Main before {@link #init()}, with the same {@code
+     *  SettingsStore} instance backing the shared {@code SettingsCore} — the
+     *  desktop lyric window persists its own few keys (enabled/x/y) straight
+     *  through it rather than via a second JsonSettingsStore instance, which
+     *  would read/write the same file independently and risk one clobbering
+     *  keys the other doesn't know about. */
+    public void setLyricSettingsStore(dev.t1m3.qplayer.settings.SettingsStore store) {
+        this.lyricWindow = new DesktopLyricWindow(store);
     }
 
     public void setFirstFrameListener(Runnable r) {
@@ -483,7 +502,18 @@ public final class DesktopWindow {
         input = new InputBridge(this);
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
+
+        // Created once, alongside the main window (not recreated on a Vulkan-
+        // fallback recreate of it -- lyricWindow is a separate GLFW window/GL
+        // context untouched by that path). Hidden unless the user previously
+        // left it enabled.
+        if (lyricWindow != null && !lyricWindowCreated) {
+            lyricWindow.create();
+            lyricWindowCreated = true;
+        }
     }
+
+    private boolean lyricWindowCreated;
 
     /** dwmapi.dll's DwmSetWindowAttribute, used only for the two chrome attributes
      *  below. Fully-qualified JNA types (matches this file's other rare/localized
@@ -872,6 +902,10 @@ public final class DesktopWindow {
 
     public void shutdown() {
         stopRenderThread();
+        if (lyricWindow != null) {
+            try { lyricWindow.disposeGpu(); } catch (Throwable ignored) {}
+            try { lyricWindow.disposeWindow(); } catch (Throwable ignored) {}
+        }
         if (view != null) {
             try {
                 view.dispose();

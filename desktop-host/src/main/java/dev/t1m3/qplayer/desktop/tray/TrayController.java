@@ -51,16 +51,19 @@ public final class TrayController implements PlayerController.PlaybackListener {
     // Windows backend (non-null when active).
     private WinTray winTray;
     private Object winPlayPause;
+    private Object winLyricToggle;
 
     // Linux backend (non-null when active).
     private LinuxTray linuxTray;
     private Object linuxPlayPause;
+    private Object linuxLyricToggle;
 
     // AWT backend (non-Windows).
     private TrayIcon trayIcon;
     private javax.swing.JPopupMenu popup;
     private javax.swing.JDialog popupAnchor;
     private javax.swing.JMenuItem playPause;
+    private javax.swing.JMenuItem lyricToggle;
     private Font menuFont;
 
     public TrayController(PlayerController controller, DesktopWindow win, byte[] iconPng) {
@@ -105,6 +108,7 @@ public final class TrayController implements PlayerController.PlaybackListener {
             winPlayPause = winTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
             winTray.addItem("下一首", () -> win.postMainTask(controller::next));
             winTray.addSeparator();
+            winLyricToggle = winTray.addItem(lyricToggleLabel(), () -> win.postMainTask(this::toggleLyricWindow));
             winTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
             winTray.addItem("退出", () -> win.postMainTask(() -> {
                 shutdown();
@@ -132,6 +136,7 @@ public final class TrayController implements PlayerController.PlaybackListener {
             linuxPlayPause = linuxTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
             linuxTray.addItem("下一首", () -> win.postMainTask(controller::next));
             linuxTray.addSeparator();
+            linuxLyricToggle = linuxTray.addItem(lyricToggleLabel(), () -> win.postMainTask(this::toggleLyricWindow));
             linuxTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
             linuxTray.addItem("退出", () -> win.postMainTask(() -> {
                 shutdown();
@@ -166,6 +171,8 @@ public final class TrayController implements PlayerController.PlaybackListener {
             popup.add(playPause);
             popup.add(swingItem("下一首", controller::next));
             popup.addSeparator();
+            lyricToggle = swingItem(lyricToggleLabel(), this::toggleLyricWindow);
+            popup.add(lyricToggle);
             popup.add(swingItem("显示窗口", win::restoreFromTray));
             popup.add(swingItem("退出", () -> {
                 shutdown();
@@ -221,6 +228,27 @@ public final class TrayController implements PlayerController.PlaybackListener {
             trayIcon = null;
             return false;
         }
+    }
+
+    /** Main thread (posted by every caller above) -- toggles the desktop
+     *  lyric window (issue #25) and refreshes this item's own label
+     *  immediately, same as play/pause does for its own label via {@link
+     *  #onPlaybackChanged}/{@link #refresh} (nothing else drives a refresh
+     *  right after a lyric-window toggle specifically). */
+    private void toggleLyricWindow() {
+        dev.t1m3.qplayer.desktop.window.DesktopLyricWindow lw = win.lyricWindow();
+        if (lw == null) return;
+        lw.toggle();
+        String label = lyricToggleLabel();
+        if (winTray != null) winTray.setLabel(winLyricToggle, label);
+        else if (linuxTray != null) linuxTray.setLabel(linuxLyricToggle, label);
+        else if (lyricToggle != null) lyricToggle.setText(label);
+    }
+
+    private String lyricToggleLabel() {
+        dev.t1m3.qplayer.desktop.window.DesktopLyricWindow lw = win.lyricWindow();
+        boolean on = lw != null && lw.isEnabled();
+        return on ? "关闭桌面歌词" : "开启桌面歌词";
     }
 
     @Override

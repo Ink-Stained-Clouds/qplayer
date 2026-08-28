@@ -140,7 +140,8 @@ public final class Main {
         settings.registerAction("openRepo", () -> openUrl("https://github.com/TIMER-err/qplayer"));
         settings.registerInfo("version", () -> "v" + controller.appVersion.peek());
         settings.registerInfo("cacheUsage", () -> controller.cacheSizeMB.peek() + " MB");
-        settings.load(new JsonSettingsStore(), SettingsCatalog.DESKTOP);
+        JsonSettingsStore desktopStore = new JsonSettingsStore();
+        settings.load(desktopStore, SettingsCatalog.DESKTOP);
         DesktopFilePicker.initializeLookAndFeel(settings.resolvedDarkValue());
         settings.onChange("darkMode", ignored ->
                 DesktopFilePicker.setDarkTheme(settings.resolvedDarkValue()));
@@ -162,6 +163,10 @@ public final class Main {
 
         QmlEngine engine = new QmlEngine();
         DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings);
+        // Desktop lyrics (issue #25): same backing store as SettingsCore's own
+        // JsonSettingsStore (not a second instance -- see setLyricSettingsStore's
+        // own doc for why), just a few extra keys it doesn't know about.
+        window.setLyricSettingsStore(desktopStore);
 
         // Playback control runs on the main event loop (alive even while the render
         // thread is dead); back/exit folds the window to the tray.
