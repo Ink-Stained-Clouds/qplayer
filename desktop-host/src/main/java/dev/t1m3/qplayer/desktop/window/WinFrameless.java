@@ -29,6 +29,7 @@ import org.lwjgl.glfw.GLFWNativeWin32;
 final class WinFrameless {
 
     private static final int GWLP_WNDPROC = -4;
+    private static final int WM_SIZE = 0x0005;
     private static final int WM_NCCALCSIZE = 0x0083;
     private static final int WM_NCHITTEST = 0x0084;
     private static final int WM_NCACTIVATE = 0x0086;
@@ -56,6 +57,11 @@ final class WinFrameless {
     private static final int SWP_NOACTIVATE = 0x0010;
     private static final int SWP_FRAMECHANGED = 0x0020;
     private static final int SWP_NOOWNERZORDER = 0x0200;
+
+    // LyricOverlay.qml: 40px IconButtons, 6px from the top/outer edge.  The
+    // right-hand cover + offset controls are separated by another 6px.
+    private static final double LYRIC_BUTTON_SIZE_LOGICAL_PX = 40;
+    private static final double LYRIC_BUTTON_MARGIN_LOGICAL_PX = 6;
 
     interface U32 extends StdCallLibrary {
         U32 I = Native.load("user32", U32.class, W32APIOptions.UNICODE_OPTIONS);
@@ -128,6 +134,15 @@ final class WinFrameless {
         this.extendLegacyDwmFrame = extendLegacyDwmFrame;
 
         wndProc = (h, msg, wParam, lParam) -> {
+            // Publish the client size before GLFW's original procedure runs.  In
+            // particular this keeps the render thread fed from inside Windows'
+            // modal interactive-resize loop instead of waiting for the outer GLFW
+            // event pump to regain control after the mouse button is released.
+            if (msg == WM_SIZE) {
+                int packed = lParam.intValue();
+                window.onNativeFramebufferResize(
+                        packed & 0xFFFF, (packed >>> 16) & 0xFFFF);
+            }
             if (msg == WM_NCCALCSIZE) return ncCalcSize(h, wParam, lParam);
             if (msg == WM_NCHITTEST) return hitTest(h, lParam, window, titleBarHeightLogicalPx);
             if (msg == WM_NCACTIVATE) return U32.I.DefWindowProcW(h, msg, wParam, new LPARAM(-1));
@@ -245,21 +260,43 @@ final class WinFrameless {
             if (bottom) return new LRESULT(HTBOTTOM);
         }
 
-        double titleBarPhysical = titleBarHeightLogicalPx * window.uiScale();
+        double scale = window.uiScale();
+        double titleBarPhysical = titleBarHeightLogicalPx * scale;
         if (y - rect.top < titleBarPhysical) {
-            // The normal custom title bar is hidden on the lyric page and its own
-            // collapse button occupies this same top-left strip. Treat the whole
-            // strip as client area while lyrics are open; otherwise WM_NCHITTEST
-            // returns HTCAPTION before GLFW/qml4j ever receives the click (#25).
+            // The normal custom title bar is hidden on the lyric page. Preserve
+            // HTCLIENT only over LyricOverlay's actual top controls (back on the
+            // left; cover + offset on the right), and return HTCAPTION for the
+            // empty space between them. That keeps every icon clickable without
+            // sacrificing native drag, double-click-maximise, or Aero Snap.
             if (window.controller() != null
                     && Boolean.TRUE.equals(window.controller().lyricsOpen.peek())) {
-                return new LRESULT(HTCLIENT);
+                double clientX = x - rect.left;
+                double clientY = y - rect.top;
+                double width = rect.right - rect.left;
+                if (isLyricButton(clientX, clientY, width, scale)) {
+                    return new LRESULT(HTCLIENT);
+                }
+                return new LRESULT(HTCAPTION);
             }
             double buttonStripPhysical =
-                    WindowChrome.BUTTON_WIDTH_LOGICAL_PX * WindowChrome.BUTTON_COUNT * window.uiScale();
+                    WindowChrome.BUTTON_WIDTH_LOGICAL_PX * WindowChrome.BUTTON_COUNT * scale;
             if (rect.right - x <= buttonStripPhysical) return new LRESULT(HTCLIENT);
             return new LRESULT(HTCAPTION);
         }
         return new LRESULT(HTCLIENT);
+    }
+
+    /** Pure geometry shared by the native hit-test and its unit tests. */
+    static boolean isLyricButton(double x, double y, double windowWidth, double scale) {
+        double margin = LYRIC_BUTTON_MARGIN_LOGICAL_PX * scale;
+        double size = LYRIC_BUTTON_SIZE_LOGICAL_PX * scale;
+        if (y < margin || y >= margin + size) return false;
+
+        boolean back = x >= margin && x < margin + size;
+        double fromRight = windowWidth - x;
+        boolean offset = fromRight > margin && fromRight <= margin + size;
+        boolean cover = fromRight > margin * 2 + size
+                && fromRight <= margin * 2 + size * 2;
+        return back || offset || cover;
     }
 }

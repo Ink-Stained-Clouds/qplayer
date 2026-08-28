@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Owns the GLFW window and the render-thread lifecycle on the process main
@@ -78,7 +79,13 @@ public final class DesktopWindow {
     private volatile int fbW = INITIAL_W;
     private volatile int fbH = INITIAL_H;
     private volatile int refreshHz = 60;
-    private volatile int[] pendingResize;
+    /**
+     * Latest framebuffer resize waiting for the render thread.  A plain volatile
+     * reference is not enough here: read-then-clear can erase a newer callback
+     * that arrives between those two operations during an interactive resize.
+     * getAndSet makes consuming atomic while still coalescing intermediate sizes.
+     */
+    private final AtomicReference<int[]> pendingResize = new AtomicReference<>();
 
     // Persistent across render-thread respawns (built once, on the render thread).
     private volatile QmlView view;
@@ -213,9 +220,15 @@ public final class DesktopWindow {
     }
 
     int[] consumePendingResize() {
-        int[] r = pendingResize;
-        if (r != null) pendingResize = null;
-        return r;
+        return pendingResize.getAndSet(null);
+    }
+
+    /** Windows WNDPROC and GLFW's cross-platform callback both converge here. */
+    void onNativeFramebufferResize(int width, int height) {
+        if (width <= 0 || height <= 0) return;
+        fbW = width;
+        fbH = height;
+        pendingResize.set(new int[]{width, height});
     }
 
     /**
@@ -661,7 +674,7 @@ public final class DesktopWindow {
         settings.put("graphicsBackend", 0);
         settings.graphicsFallbackNotice.set(Boolean.TRUE);
         if (lyricWindow != null) lyricWindow.recreate(kind);
-        pendingResize = null;
+        pendingResize.set(null);
         try {
             createWindow();
             spawnRenderThread();
@@ -728,10 +741,7 @@ public final class DesktopWindow {
     @SuppressWarnings("resource")
     private void installCallbacks() {
         GLFW.glfwSetFramebufferSizeCallback(window, (win, w, h) -> {
-            if (w <= 0 || h <= 0) return;
-            fbW = w;
-            fbH = h;
-            pendingResize = new int[]{w, h};
+            onNativeFramebufferResize(w, h);
         });
         GLFW.glfwSetWindowContentScaleCallback(window, (win, sx, sy) -> {
             if (sx > 0) uiScale = sx;
