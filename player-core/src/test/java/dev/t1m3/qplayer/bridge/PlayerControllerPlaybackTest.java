@@ -21,6 +21,8 @@ import static org.junit.Assert.assertTrue;
 
 public class PlayerControllerPlaybackTest {
 
+    private static final long ASYNC_FADE_TIMEOUT_MS = 3000L;
+
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -230,7 +232,7 @@ public class PlayerControllerPlaybackTest {
             controller.setFadeEnabled(true);
             controller.playQueueIndex(0);
             backend.fireStarted();
-            waitForVolume(backend, 0.8f, 1600L);
+            waitForVolume(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
 
             // The MediaSession intent flips immediately (state must be reported right
             // away), but the notification/lock-screen/dynamic-island pause now rides
@@ -241,7 +243,12 @@ public class PlayerControllerPlaybackTest {
             assertEquals(pausesBeforeMediaCommand, backend.pauseCalls);
             assertTrue(backend.playing);
 
-            waitForVolume(backend, 0f, 1600L);
+            waitForVolume(backend, 0f, ASYNC_FADE_TIMEOUT_MS);
+            // The final fade tick publishes zero volume immediately before it
+            // invokes the deferred pause callback. Wait for that second observable
+            // state as well instead of racing the two adjacent worker operations.
+            waitForPauseCalls(backend, pausesBeforeMediaCommand + 1,
+                    ASYNC_FADE_TIMEOUT_MS);
             assertEquals(pausesBeforeMediaCommand + 1, backend.pauseCalls);
             assertFalse(backend.playing);
 
@@ -254,7 +261,7 @@ public class PlayerControllerPlaybackTest {
             assertTrue(backend.playing);
             assertEquals(0f, backend.volume, 0.05f);
 
-            waitForVolume(backend, 0.8f, 1600L);
+            waitForVolume(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
             assertEquals(resumesBeforeMediaCommand + 1, backend.resumeCalls);
         } finally {
             if (controller != null) controller.shutdown();
@@ -280,7 +287,7 @@ public class PlayerControllerPlaybackTest {
             controller.setFadeEnabled(true);
             controller.playQueueIndex(0);
             backend.fireStarted();
-            waitForVolume(backend, 0.8f, 1600L);
+            waitForVolume(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
 
             // playAt() itself unconditionally pauses the backend once up front (there
             // is nothing playing yet to fade), so the "no extra pause" baseline is
@@ -299,7 +306,7 @@ public class PlayerControllerPlaybackTest {
             assertEquals(resumesBeforeMediaCommand, backend.resumeCalls);
             assertTrue(backend.playing);
 
-            waitForVolume(backend, 0.8f, 1600L);
+            waitForVolume(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
             // The superseded pause's deferred completion must not fire late and
             // pause the backend out from under the resume.
             Thread.sleep(1000L);
@@ -386,7 +393,7 @@ public class PlayerControllerPlaybackTest {
 
             // Deliberately never call controller.pump(): a hidden/destroyed window
             // must not strand playback at the first quiet fade sample.
-            waitForVolume(backend, 0.6f, 1600L);
+            waitForVolume(backend, 0.6f, ASYNC_FADE_TIMEOUT_MS);
             assertEquals(0.6f, backend.volume, 0.02f);
             assertTrue(backend.volumeWrites > 2);
         } finally {
@@ -450,7 +457,7 @@ public class PlayerControllerPlaybackTest {
             controller.setFadeEnabled(true);
             controller.playQueueIndex(0);
             backend.fireStarted();
-            waitForVolume(backend, 0.8f, 1600L);
+            waitForVolume(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
 
             backend.position = 119500L;
             controller.pump();
@@ -639,6 +646,14 @@ public class PlayerControllerPlaybackTest {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (Math.abs(backend.volume - target) > 0.001f
                 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+    }
+
+    private static void waitForPauseCalls(FakeAudioBackend backend, int target,
+                                          long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (backend.pauseCalls < target && System.currentTimeMillis() < deadline) {
             Thread.sleep(10L);
         }
     }
