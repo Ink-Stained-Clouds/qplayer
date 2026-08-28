@@ -391,6 +391,17 @@ Rectangle {
         showNavigationIcon: false
 
         IconButton {
+            // This setting only exists on desktop hosts. Its presence, rather than
+            // a responsive layout breakpoint, decides whether the action is shown.
+            visible: settings.has("desktopLyricEnabled")
+            type: "standard"
+            icon: "subtitles"
+            contentColor: settings.value("desktopLyricEnabled")
+                          ? Theme.color.primary : Theme.color.onSurfaceVariantColor
+            onClicked: settings.setValue("desktopLyricEnabled",
+                                         !settings.value("desktopLyricEnabled"))
+        }
+        IconButton {
             type: "standard"
             icon: "queue_music"
             onClicked: app.openOverlay("queue")

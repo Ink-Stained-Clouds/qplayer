@@ -448,6 +448,10 @@ public final class DesktopWindow {
             settings.graphicsFallbackNotice.set(Boolean.TRUE);
         }
         createWindow();
+        // Compile the second qml4j scene while the main window is still hidden.
+        // Main.start performs other host initialization in parallel, then
+        // spawnRenderThread() joins this short prewarm before compiling Main.qml.
+        if (lyricWindow != null) lyricWindow.startRenderThread();
     }
 
     private void createWindow() {
@@ -671,27 +675,33 @@ public final class DesktopWindow {
     }
 
     // Rendering happens on a dedicated thread while the main thread pumps events.
-    // On a Wayland session NVIDIA's EGL driver crashes under that split; X11/GLX
-    // (via XWayland) is stable, so prefer X11 when a DISPLAY is available. Override
-    // with -Dqplayer.glfw.platform=wayland|x11|any.
+    // More importantly, the desktop-lyric overlay must be transparent, undecorated,
+    // draggable and position-persistent. Native Wayland deliberately exposes no
+    // global top-level coordinates, so GLFW cannot implement the latter two there.
+    // Prefer X11/XWayland whenever the session exposes DISPLAY, even if a stale
+    // qplayer.glfw.platform override asks for Wayland.
     private void preferStablePlatform() {
         String os = System.getProperty("os.name", "").toLowerCase();
         if (!os.contains("linux")) return;
         String pref = System.getProperty("qplayer.glfw.platform", "").toLowerCase();
-        int platform;
-        if ("wayland".equals(pref)) {
-            platform = GLFW.GLFW_PLATFORM_WAYLAND;
-        } else if ("any".equals(pref)) {
-            return;
-        } else if ("x11".equals(pref) || System.getenv("DISPLAY") != null) {
-            platform = GLFW.GLFW_PLATFORM_X11;
-        } else {
+        String display = System.getenv("DISPLAY");
+        boolean hasXDisplay = display != null && !display.isBlank();
+        if (hasXDisplay && GLFW.glfwPlatformSupported(GLFW.GLFW_PLATFORM_X11)) {
+            if ("wayland".equals(pref) || "any".equals(pref)) {
+                Logger.warn("ignoring qplayer.glfw.platform={}: desktop lyrics require "
+                        + "X11/XWayland for transparent draggable positioning", pref);
+            }
+            GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11);
+            Logger.info("forcing GLFW platform = x11 (DISPLAY={})", display);
             return;
         }
-        if (GLFW.glfwPlatformSupported(platform)) {
-            GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, platform);
-            Logger.info("forcing GLFW platform = {}",
-                    platform == GLFW.GLFW_PLATFORM_X11 ? "x11" : "wayland");
+
+        if ("x11".equals(pref)) {
+            Logger.warn("qplayer.glfw.platform=x11 requested but DISPLAY is unavailable");
+        }
+        if (System.getenv("WAYLAND_DISPLAY") != null) {
+            Logger.warn("XWayland is unavailable; native Wayland cannot reposition or "
+                    + "persist an undecorated desktop-lyric window");
         }
     }
 
@@ -820,6 +830,7 @@ public final class DesktopWindow {
     public void spawnRenderThread() {
         RenderThread rt = renderThread;
         if (rt != null && rt.isAlive()) return;
+        if (lyricWindow != null) lyricWindow.awaitRenderThreadReady();
         rt = new RenderThread(this);
         renderThread = rt;
         rt.start();
@@ -907,6 +918,24 @@ public final class DesktopWindow {
                     Logger.warn("main task failed: {}", t);
                 }
             }
+            publishDesktopLyricsWithoutMainRenderer();
+        }
+    }
+
+    /**
+     * The main GPU/QML thread is intentionally destroyed while hidden in the
+     * tray. Transfer the controller pump to the still-alive GLFW event loop in
+     * that state so track changes keep feeding the independent lyric renderer.
+     */
+    private void publishDesktopLyricsWithoutMainRenderer() {
+        RenderThread rt = renderThread;
+        if ((rt != null && rt.isAlive()) || lyricWindow == null || !lyricWindow.isEnabled()) {
+            return;
+        }
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (controller != null) controller.pump();
+            lyricWindow.publish(controller,
+                    settings == null || settings.resolvedDarkValue());
         }
     }
 

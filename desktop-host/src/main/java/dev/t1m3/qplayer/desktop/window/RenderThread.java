@@ -71,7 +71,6 @@ final class RenderThread extends Thread {
             PlayerController controller = win.controller();
             LyricCompositor compositor = win.compositor();
             DesktopLyricWindow lyricWindow = win.lyricWindow();
-            if (lyricWindow != null) lyricWindow.startRenderThread();
             if (respawn) compositor.onRenderResumed();
             // glfwSwapInterval normally blocks present until vblank. Some X11/
             // XWayland drivers only honour it for processes launched from an

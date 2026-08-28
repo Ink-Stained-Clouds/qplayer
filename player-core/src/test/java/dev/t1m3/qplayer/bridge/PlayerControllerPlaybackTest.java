@@ -186,6 +186,34 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void restoredCurrentTrackIsLikeableBeforePlaybackStarts() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("restore-likeable").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":42000,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"neteaseId\":123,\"title\":\"restored\","
+                    + "\"durationMs\":120000,\"filePath\":\"restored.mp3\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            FakeAudioBackend backend = new FakeAudioBackend();
+            controller = new PlayerController(backend, track -> { }, NeteaseClient.INSTANCE);
+            controller.pump();
+
+            assertTrue(controller.currentLikeable.peek());
+            assertFalse(controller.currentLiked.peek());
+            assertEquals(0, backend.playCalls);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
     public void mediaSessionControlsUseTheSameFadeAsManualToggle() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();

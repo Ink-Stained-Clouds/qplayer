@@ -44,11 +44,12 @@ public final class DesktopLyricWindow {
             new AtomicReference<>(new FramebufferSize(WIDTH, HEIGHT));
 
     private volatile boolean enabled;
+    private volatile boolean snapshotPublished;
     private volatile DesktopLyricRenderThread renderThread;
     private volatile long window = MemoryUtil.NULL;
     private volatile boolean firstFrameReady;
     private GraphicsBackend.Kind kind;
-    private boolean compositorManagedDrag;
+    private boolean positioningSupported = true;
     private List<LyricLine> lastLines;
     private boolean lastLinearPlainLrc;
     private LyricTimeline.Prepared prepared;
@@ -94,19 +95,23 @@ public final class DesktopLyricWindow {
         return snapshot.get();
     }
 
+    boolean hasPublishedSnapshot() {
+        return snapshotPublished;
+    }
+
     FramebufferSize framebufferSize() {
         return framebufferSize.get();
     }
 
     /** Main thread: creates the native surface using the selected app backend. */
     void create() {
-        compositorManagedDrag = GLFW.glfwGetPlatform() == GLFW.GLFW_PLATFORM_WAYLAND;
+        positioningSupported = GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_WAYLAND;
         GLFW.glfwDefaultWindowHints();
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
-        // Wayland intentionally gives clients no API for positioning top-level
-        // windows. Keep compositor decorations there so the window remains movable.
-        GLFW.glfwWindowHint(GLFW.GLFW_DECORATED,
-                compositorManagedDrag ? GLFW.GLFW_TRUE : GLFW.GLFW_FALSE);
+        // Desktop lyrics is an auxiliary overlay, never a normal document window:
+        // keep it undecorated so the framebuffer can stay transparent and entirely
+        // app-rendered on every supported window system.
+        GLFW.glfwWindowHint(GLFW.GLFW_DECORATED, GLFW.GLFW_FALSE);
         GLFW.glfwWindowHint(GLFW.GLFW_FLOATING, GLFW.GLFW_TRUE);
         GLFW.glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_FALSE);
         GLFW.glfwWindowHint(GLFW.GLFW_TRANSPARENT_FRAMEBUFFER, GLFW.GLFW_TRUE);
@@ -133,6 +138,10 @@ public final class DesktopLyricWindow {
         DesktopWindow.applyWindowsRoundedCorners(window);
         Logger.info("desktop lyric window created (backend {}, transparent framebuffer = {})",
                 kind, transparent);
+        if (!positioningSupported) {
+            Logger.warn("desktop lyrics disabled: native Wayland cannot move or persist "
+                    + "an undecorated window; enable XWayland so QPlayer can use X11");
+        }
         cacheFramebufferSize();
         GLFW.glfwSetFramebufferSizeCallback(window, (win, width, height) -> {
             if (width > 0 && height > 0) {
@@ -141,23 +150,48 @@ public final class DesktopLyricWindow {
         });
         int x = store.getInt(X_KEY, -1);
         int y = store.getInt(Y_KEY, -1);
-        if (!compositorManagedDrag && x >= 0 && y >= 0) GLFW.glfwSetWindowPos(window, x, y);
-        else if (!compositorManagedDrag) centerBottom();
-        if (!compositorManagedDrag) installDragHandlers();
-        enabled = store.getBool(ENABLED_KEY, false);
+        if (positioningSupported && x >= 0 && y >= 0) GLFW.glfwSetWindowPos(window, x, y);
+        else if (positioningSupported) centerBottom();
+        if (positioningSupported) installDragHandlers();
+        boolean requestedEnabled = store.getBool(ENABLED_KEY, false);
+        enabled = positioningSupported && requestedEnabled;
+        if (!positioningSupported) {
+            store.putBool(ENABLED_KEY, false);
+            if (requestedEnabled && settingsWriter != null) settingsWriter.accept(false);
+        }
         // Stay hidden until qml4j has compiled and presented a real transparent
         // frame. Showing an uninitialized native backbuffer produces a black box.
         firstFrameReady = false;
+        snapshotPublished = false;
     }
 
-    /** Starts the independent desktop-lyric GPU/QML owner once. */
+    /**
+     * Starts the independent desktop-lyric GPU/QML owner once. The scene is
+     * prewarmed even while disabled so enabling it later never stalls the main
+     * QML renderer for compilation.
+     */
     synchronized void startRenderThread() {
-        if (!enabled || window == MemoryUtil.NULL) return;
+        if (window == MemoryUtil.NULL) return;
         DesktopLyricRenderThread current = renderThread;
         if (current != null && current.isAlive()) return;
         DesktopLyricRenderThread thread = new DesktopLyricRenderThread(this);
         renderThread = thread;
         thread.start();
+    }
+
+    /** Main startup thread: keep the hidden main window hidden until qml4j's
+     * process-global initialization for the second scene has completed. */
+    void awaitRenderThreadReady() {
+        startRenderThread();
+        DesktopLyricRenderThread thread = renderThread;
+        if (thread == null) return;
+        try {
+            if (!thread.awaitInitialized(30_000L)) {
+                Logger.warn("desktop lyric renderer prewarm timed out");
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Main render thread: copy all non-thread-safe QML/controller state. */
@@ -179,17 +213,31 @@ public final class DesktopLyricWindow {
                 controller.lyricClockPosition(), controller.isLyricClockRunning(),
                 System.nanoTime(), config.offsetMs.getValue(),
                 fontSize, fontWeight, shadow, dark));
+        boolean firstSnapshot = !snapshotPublished;
+        snapshotPublished = true;
+        if (firstSnapshot) {
+            DesktopLyricRenderThread thread = renderThread;
+            if (thread != null) java.util.concurrent.locks.LockSupport.unpark(thread);
+        }
     }
 
     /** Main thread. */
     public void setEnabled(boolean value) {
         applyEnabled(value);
-        if (settingsWriter != null) settingsWriter.accept(value);
+        if (settingsWriter != null) settingsWriter.accept(enabled);
     }
 
     /** Main thread: applies a SettingsCore-originated change without echoing it. */
     void applyEnabled(boolean value) {
         if (window == MemoryUtil.NULL) return;
+        if (value && !positioningSupported) {
+            enabled = false;
+            store.putBool(ENABLED_KEY, false);
+            Logger.warn("cannot enable desktop lyrics on native Wayland; "
+                    + "start QPlayer through XWayland to keep it transparent and draggable");
+            if (settingsWriter != null) settingsWriter.accept(false);
+            return;
+        }
         enabled = value;
         store.putBool(ENABLED_KEY, value);
         if (value) {

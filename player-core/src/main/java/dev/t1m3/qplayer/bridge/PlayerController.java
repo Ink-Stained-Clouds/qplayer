@@ -3527,6 +3527,12 @@ public final class PlayerController {
                     // So the progress bar shows the resume point before playback
                     // actually starts (toggle() only plays on the user's first tap).
                     positionMs.set(clampedPos);
+                    // The restored track is already the current track even though its
+                    // audio source is not opened until the first Play press. Publish
+                    // the same favorite-button state as playAt() now, rather than
+                    // leaving the heart disabled for the whole pre-playback session.
+                    currentLiked.set(cur.neteaseId != 0 && likedSet.contains(cur.neteaseId));
+                    currentLikeable.set(cur.neteaseId != 0);
                     playMode.set(Math.max(0, Math.min(2, savedMode)));
                 });
                 // Load the full cover art + lyrics now (both cache-first internally)
