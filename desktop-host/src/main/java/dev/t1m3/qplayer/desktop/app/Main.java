@@ -163,9 +163,8 @@ public final class Main {
 
         QmlEngine engine = new QmlEngine();
         DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings);
-        // Desktop lyrics (issue #25): same backing store as SettingsCore's own
-        // JsonSettingsStore (not a second instance -- see setLyricSettingsStore's
-        // own doc for why), just a few extra keys it doesn't know about.
+        // Desktop lyrics shares SettingsCore's store so its settings-page toggle
+        // and tray toggle remain one value; window position uses adjacent host keys.
         window.setLyricSettingsStore(desktopStore);
 
         // Playback control runs on the main event loop (alive even while the render

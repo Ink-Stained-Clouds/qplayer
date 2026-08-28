@@ -70,6 +70,8 @@ final class RenderThread extends Thread {
 
             PlayerController controller = win.controller();
             LyricCompositor compositor = win.compositor();
+            DesktopLyricWindow lyricWindow = win.lyricWindow();
+            if (lyricWindow != null) lyricWindow.startRenderThread();
             if (respawn) compositor.onRenderResumed();
             // glfwSwapInterval normally blocks present until vblank. Some X11/
             // XWayland drivers only honour it for processes launched from an
@@ -87,46 +89,43 @@ final class RenderThread extends Thread {
                 // the next sizeRoot / composite call — avoids stale-scale mismatch.
                 float uiScale = win.uiScale();
                 DirtyQueue dq = view.dirtyQueue();
-                dq.install();
-                try {
-                    win.drainRenderTasks();
-                    win.tickInput(); // smooth wheel-scroll easing
-                    int[] size = win.consumePendingResize();
-                    if (size != null) {
-                        backend.resize(size[0], size[1]);
-                        sizeRoot(view, size[0], size[1], uiScale);
+                // qml4j's dirty queue is thread-local, but Property.changeVersion
+                // is process-global in 0.2.x. Keep mutation + layout atomic against
+                // the independent desktop-lyric scene; present remains outside so
+                // either window's vsync cannot block the other scene's QML work.
+                synchronized (QmlRuntimeLock.MONITOR) {
+                    dq.install();
+                    try {
+                        win.drainRenderTasks();
+                        win.tickInput(); // smooth wheel-scroll easing
+                        int[] size = win.consumePendingResize();
+                        if (size != null) {
+                            backend.resize(size[0], size[1]);
+                            sizeRoot(view, size[0], size[1], uiScale);
+                        }
+                        if (controller != null) controller.pump();
+                        if (lyricWindow != null) lyricWindow.publish(controller,
+                                win.settings() == null || win.settings().resolvedDarkValue());
+                        view.tickAnimations(System.nanoTime());
+                        dq.flush();
+
+                        Canvas canvas = backend.acquireCanvas();
+                        Renderer renderer = view.renderer();
+                        renderer.setGpuContext(backend.recordingContext());
+                        compositor.composite(canvas, renderer, view, controller, win.settings(),
+                                backend.recordingContext(), uiScale,
+                                backend.width(), backend.height());
+                    } finally {
+                        dq.uninstall();
                     }
-                    if (controller != null) controller.pump();
-                    view.tickAnimations(System.nanoTime());
-                    dq.flush();
+                }
 
-                    Canvas canvas = backend.acquireCanvas();
-                    Renderer renderer = view.renderer();
-                    renderer.setGpuContext(backend.recordingContext());
-                    compositor.composite(canvas, renderer, view, controller, win.settings(),
-                            backend.recordingContext(), uiScale, backend.width(), backend.height());
+                backend.present();
 
-                    backend.present();
-
-                    // Desktop lyrics (issue #25): its own GL context, switched
-                    // to and back on THIS thread right after the main window's
-                    // own present() -- no-op (no context switch at all) unless
-                    // actually enabled. See DesktopLyricWindow's class doc for
-                    // why this can't be a second thread (PlayerController's
-                    // Property reads are only safe from the thread that
-                    // already writes them, which is this one).
-                    DesktopLyricWindow lyricWindow = win.lyricWindow();
-                    if (lyricWindow != null) {
-                        lyricWindow.renderFrame(win.window(), backend.kind() == GraphicsBackend.Kind.GL, controller);
-                    }
-
-                    if (!firstFrameDone) {
-                        firstFrameDone = true;
-                        dev.t1m3.qplayer.util.Logger.info("first frame painted");
-                        win.onFirstFramePainted();
-                    }
-                } finally {
-                    dq.uninstall();
+                if (!firstFrameDone) {
+                    firstFrameDone = true;
+                    dev.t1m3.qplayer.util.Logger.info("first frame painted");
+                    win.onFirstFramePainted();
                 }
 
                 // Pace relative to this frame, rather than an accumulated absolute

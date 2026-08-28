@@ -159,14 +159,17 @@ public final class DesktopWindow {
         return lyricWindow;
     }
 
-    /** Called once from Main before {@link #init()}, with the same {@code
-     *  SettingsStore} instance backing the shared {@code SettingsCore} — the
-     *  desktop lyric window persists its own few keys (enabled/x/y) straight
-     *  through it rather than via a second JsonSettingsStore instance, which
-     *  would read/write the same file independently and risk one clobbering
-     *  keys the other doesn't know about. */
+    /** Called once from Main before {@link #init()}, with the same store backing
+     * SettingsCore. The enabled value is synchronized with the generated settings
+     * page; host-only window coordinates stay beside it in that same store. */
     public void setLyricSettingsStore(dev.t1m3.qplayer.settings.SettingsStore store) {
-        this.lyricWindow = new DesktopLyricWindow(store);
+        this.lyricWindow = new DesktopLyricWindow(store, resources, kind,
+                enabled -> postRenderTask(() -> settings.put("desktopLyricEnabled", enabled)),
+                this::postMainTask);
+        settings.onChange("desktopLyricEnabled", value -> postMainTask(() -> {
+            DesktopLyricWindow target = lyricWindow;
+            if (target != null) target.applyEnabled(Boolean.TRUE.equals(value));
+        }));
     }
 
     public void setFirstFrameListener(Runnable r) {
@@ -503,10 +506,8 @@ public final class DesktopWindow {
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
 
-        // Created once, alongside the main window (not recreated on a Vulkan-
-        // fallback recreate of it -- lyricWindow is a separate GLFW window/GL
-        // context untouched by that path). Hidden unless the user previously
-        // left it enabled.
+        // Created once alongside the main window. Vulkan startup fallback explicitly
+        // recreates this separate surface with GL before rebuilding the main window.
         if (lyricWindow != null && !lyricWindowCreated) {
             lyricWindow.create();
             lyricWindowCreated = true;
@@ -640,6 +641,7 @@ public final class DesktopWindow {
         kind = GraphicsBackend.Kind.GL;
         settings.put("graphicsBackend", 0);
         settings.graphicsFallbackNotice.set(Boolean.TRUE);
+        if (lyricWindow != null) lyricWindow.recreate(kind);
         pendingResize = null;
         try {
             createWindow();
@@ -903,8 +905,7 @@ public final class DesktopWindow {
     public void shutdown() {
         stopRenderThread();
         if (lyricWindow != null) {
-            try { lyricWindow.disposeGpu(); } catch (Throwable ignored) {}
-            try { lyricWindow.disposeWindow(); } catch (Throwable ignored) {}
+            try { lyricWindow.shutdown(); } catch (Throwable ignored) {}
         }
         if (view != null) {
             try {

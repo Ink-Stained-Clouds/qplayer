@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.lyric.skia;
 
 import dev.t1m3.qplayer.lyric.LyricLine;
+import dev.t1m3.qplayer.lyric.LyricTimeline;
 import dev.t1m3.qplayer.lyric.Syllable;
 import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
@@ -298,7 +299,7 @@ public class LyricRenderer {
      * this, the moment the second singer starts mid-phrase the first
      * singer's row would flip to "non-active" and freeze its sweep.
      */
-    private List<LineGroup> groups = Collections.emptyList();
+    private List<LyricTimeline.Group> groups = Collections.emptyList();
     /**
      * Index into {@link #groups} per line. Sized to lines.size().
      */
@@ -640,16 +641,12 @@ public class LyricRenderer {
     public void setLyrics(List<LyricLine> newLines) {
         clearLayoutCache();
         boolean linearPlainLrc = Boolean.TRUE.equals(LyricConfig.instance.linearAnimForPlainLrc.getValue());
-        PreparedLyrics prepared = prepareLyrics(newLines, linearPlainLrc);
+        LyricTimeline.Prepared prepared = LyricTimeline.prepare(newLines, linearPlainLrc);
         this.lines = prepared.lines;
         this.animatablePerToken = prepared.animatablePerToken;
         this.wordGlowSupported = prepared.perSyllableSource;
-        this.groups = buildGroups(this.lines);
-        this.lineToGroup = new int[this.lines.size()];
-        for (int gi = 0; gi < this.groups.size(); gi++) {
-            LineGroup g = this.groups.get(gi);
-            for (int i = g.from; i < g.to; i++) lineToGroup[i] = gi;
-        }
+        this.groups = prepared.groups;
+        this.lineToGroup = prepared.lineToGroup;
 
         this.activeGroupIndex = -1;
         this.scrollAnim.setValue(0);
@@ -704,206 +701,6 @@ public class LyricRenderer {
         }
     }
 
-    /**
-     * Build the renderer-owned lyric model. The parser/controller may retain and
-     * reuse {@code newLines} from the in-memory lyric cache, so wrapping must never
-     * tokenize those shared {@link LyricLine} instances in place. Otherwise the
-     * second load sees the synthetic wrap tokens as real per-syllable timing and a
-     * plain LRC line incorrectly enters the karaoke sweep path.
-     */
-    static PreparedLyrics prepareLyrics(List<LyricLine> newLines, boolean linearPlainLrc) {
-        // Strip whitespace-only / fully-empty lines. Some TTML / LRC
-        // sources put a blank <p>/[mm:ss] in the middle of a long
-        // interlude to mark "the music continues here" — it has a
-        // timestamp but no rendered text. Keeping them would make
-        // {@link #buildGroups} treat the blank as a normal singing
-        // line, eating the gap and suppressing interlude dots.
-        List<LyricLine> filtered;
-        if (newLines == null || newLines.isEmpty()) {
-            filtered = Collections.emptyList();
-        } else {
-            filtered = new java.util.ArrayList<>(newLines.size());
-            for (LyricLine l : newLines) {
-                if (l == null) continue;
-                boolean hasText = false;
-                for (Syllable s : l.syllables) {
-                    if (s != null && s.text != null && !s.text.trim().isEmpty()) {
-                        hasText = true;
-                        break;
-                    }
-                }
-                if (hasText) filtered.add(copyLine(l));
-            }
-        }
-        // Detect source type once per load: any line with multi-syllable
-        // means the source is per-syllable (YRC / LYS / TTML / QRC).
-        // Pure LRC always parses to exactly one syllable per line.
-        boolean perSyl = false;
-        for (LyricLine l : filtered) {
-            if (l.syllables.size() > 1) {
-                perSyl = true;
-                break;
-            }
-        }
-        // Settings-driven: whether a plain-LRC line's synthetic per-token timing
-        // is spread evenly (linear front-to-back sweep/lift, matching a real
-        // per-syllable source) or collapsed to the whole line's own start/duration
-        // (the whole line lights up together as one block instead — it still gets
-        // line-level scale emphasis, just no per-character sweep motion).
-        // Read once per load, same as {@code perSyl} itself; a live mid-song
-        // toggle only takes effect on the next track change, not the current
-        // line's already-tokenized syllables. Word glow still requires real timing.
-        boolean animatablePerToken = perSyl || linearPlainLrc;
-
-        // LRC (line-level) lyrics parse to a single syllable per line, so the
-        // syllable-boundary wrap never finds a break point and long lines run
-        // off the edge. Split each line's lone syllable into wrap tokens (one
-        // per CJK char, Latin split on spaces). Per-syllable sources already
-        // carry their own real break points, so leave them untouched.
-        if (!perSyl) {
-            for (LyricLine l : filtered) {
-                if (l.syllables.size() != 1) continue;
-                List<Syllable> toks = tokenizeForWrap(l.syllables.get(0), linearPlainLrc);
-                if (toks.size() > 1) {
-                    l.syllables.clear();
-                    l.syllables.addAll(toks);
-                }
-            }
-        }
-        return new PreparedLyrics(filtered, animatablePerToken, perSyl);
-    }
-
-    private static LyricLine copyLine(LyricLine source) {
-        LyricLine copy = new LyricLine();
-        copy.syllables.addAll(source.syllables); // Syllable is immutable.
-        copy.vocalChannel = source.vocalChannel;
-        copy.translation = source.translation;
-        copy.romaji = source.romaji;
-        return copy;
-    }
-
-    static final class PreparedLyrics {
-        final List<LyricLine> lines;
-        final boolean animatablePerToken;
-        final boolean perSyllableSource;
-
-        PreparedLyrics(List<LyricLine> lines, boolean animatablePerToken, boolean perSyllableSource) {
-            this.lines = lines;
-            this.animatablePerToken = animatablePerToken;
-            this.perSyllableSource = perSyllableSource;
-        }
-    }
-
-    // Break a whole-line syllable into wrap-friendly tokens (each CJK character
-    // is its own token; Latin text splits on spaces, the run of spaces riding
-    // with the preceding token's trailing break). `spreadEvenly` (settings-
-    // driven, see LyricConfig#linearAnimForPlainLrc) decides the per-token
-    // timing:
-    //  - true: spread the line's real start/duration evenly across the tokens
-    //    by count — token i of n runs from start + i*(dur/n) to
-    //    start + (i+1)*(dur/n), the last one absorbing the integer-division
-    //    remainder so the tokens' spans still sum to the line's real duration
-    //    exactly. Synthetic (not real per-word timing), but monotonically
-    //    increasing, which is all the sweep/lift code needs to run on it —
-    //    linear front-to-back instead of the whole line lighting as one block.
-    //  - false: every token keeps the WHOLE line's start/duration (all
-    //    identical) — only good enough for wrapStarts to find a break point,
-    //    NOT for the sweep/lift code (identical timestamps collapse its
-    //    "which token is active" search); callers must gate that off when
-    //    passing false (see animatablePerToken).
-    private static List<Syllable> tokenizeForWrap(Syllable s, boolean spreadEvenly) {
-        String text = s.text == null ? "" : s.text;
-        long start = s.startMs;
-        long dur = s.durationMs;
-        List<String> runs = new java.util.ArrayList<>();
-        int i = 0, n = text.length();
-        while (i < n) {
-            char c = text.charAt(i);
-            if (c == ' ') {
-                int j = i;
-                while (j < n && text.charAt(j) == ' ') j++;
-                runs.add(text.substring(i, j));
-                i = j;
-            } else if (isWrapCjk(c)) {
-                runs.add(String.valueOf(c));
-                i++;
-            } else {
-                int j = i;
-                while (j < n && text.charAt(j) != ' ' && !isWrapCjk(text.charAt(j))) j++;
-                runs.add(text.substring(i, j));
-                i = j;
-            }
-        }
-        List<Syllable> out = new java.util.ArrayList<>(runs.size());
-        int runCount = runs.size();
-        if (runCount == 0) return out;
-        if (!spreadEvenly) {
-            for (String run : runs) out.add(new Syllable(run, start, dur));
-            return out;
-        }
-        long perRun = dur / runCount;
-        for (int r = 0; r < runCount; r++) {
-            long rStart = start + r * perRun;
-            long rDur = (r == runCount - 1) ? (start + dur - rStart) : perRun;
-            out.add(new Syllable(runs.get(r), rStart, rDur));
-        }
-        return out;
-    }
-
-    private static boolean isWrapCjk(char c) {
-        return (c >= 0x4E00 && c <= 0x9FFF)    // CJK unified ideographs
-                || (c >= 0x3040 && c <= 0x30FF) // hiragana + katakana
-                || (c >= 0xAC00 && c <= 0xD7A3); // hangul syllables
-    }
-
-    /**
-     * A contiguous range of lines that should activate / scroll together.
-     */
-    private static final class LineGroup {
-        final int from;   // inclusive
-        final int to;     // exclusive
-        final long startMs;
-        final long endMs;
-
-        LineGroup(int from, int to, long startMs, long endMs) {
-            this.from = from;
-            this.to = to;
-            this.startMs = startMs;
-            this.endMs = endMs;
-        }
-
-        boolean contains(int i) {
-            return i >= from && i < to;
-        }
-    }
-
-    /**
-     * Build groups the way AMLL does: a group is one main line plus any
-     * BACKGROUND-channel lines that immediately follow it. Two consecutive
-     * non-BG lines are two separate groups regardless of channel
-     * (DUET_LEFT vs DUET_RIGHT) — AMLL doesn't merge by agent.
-     *
-     * <p>Cross-group scroll behaviour (the "v1 still singing while v2
-     * starts" feedback) is handled at render time via the buffered-group
-     * rule, not by merging groups here.
-     */
-    private static List<LineGroup> buildGroups(List<LyricLine> lines) {
-        List<LineGroup> out = new ArrayList<>();
-        int n = lines.size();
-        int i = 0;
-        while (i < n) {
-            int j = i + 1;
-            long endMs = lines.get(i).endMs();
-            // Absorb BG lines that follow the main line.
-            while (j < n && isBackground(lines.get(j).vocalChannel)) {
-                endMs = Math.max(endMs, lines.get(j).endMs());
-                j++;
-            }
-            out.add(new LineGroup(i, j, lines.get(i).startMs(), endMs));
-            i = j;
-        }
-        return out;
-    }
 
     /** Screen-space {top, bottom} of the currently-lit lines from the last
      *  {@link #render} call, eased over time so a line joining the lit set crossfades
@@ -937,7 +734,7 @@ public class LyricRenderer {
         // Snapshot mutable state so a concurrent setLyrics() mid-frame can't
         // replace lines/groups/lineToGroup underneath us (ArrayIndexOutOfBounds).
         final java.util.List<LyricLine> lines = this.lines;
-        final java.util.List<LineGroup> groups = this.groups;
+        final java.util.List<LyricTimeline.Group> groups = this.groups;
         final int[] lineToGroup = this.lineToGroup;
         if (lines.isEmpty()) return;
         final boolean resumeEase = seekEaseNextRender;
@@ -1034,7 +831,7 @@ public class LyricRenderer {
             float[][] sylWidths = new float[n][];
             for (int i = 0; i < n; i++) {
                 LyricLine line = lines.get(i);
-                boolean isBg = isBackground(line.vocalChannel);
+                boolean isBg = LyricTimeline.isBackground(line.vocalChannel);
                 Font font = isBg ? bgFont : lyricFont;
                 float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
 
@@ -1051,7 +848,7 @@ public class LyricRenderer {
                 layoutSyllables.add(rowSyllables);
                 float[] widths = shapeSyllableAdvances(rowSyllables, font);
                 sylWidths[i] = widths;
-                rowStarts[i] = wrapStarts(rowSyllables, widths, wrapW);
+                rowStarts[i] = LyricTextLayout.wrapStarts(rowSyllables, widths, wrapW);
                 int subRowCount = Math.max(1, rowStarts[i].length - 1);
                 shapedRows[i] = new ShapedRow[subRowCount];
                 for (int r = 0; r < subRowCount; r++) {
@@ -1146,7 +943,7 @@ public class LyricRenderer {
         float[] effHeights = effHeightsBuf;
         for (int i = 0; i < n; i++) {
             float h = lineHeights[i];
-            if (isBackground(lines.get(i).vocalChannel)) {
+            if (LyricTimeline.isBackground(lines.get(i).vocalChannel)) {
                 h *= computeActiveK(positionMs, groups.get(lineToGroup[i]));
             }
             effHeights[i] = h;
@@ -1173,16 +970,16 @@ public class LyricRenderer {
         int anchorGroup = -1;
         int timelineGroupIndex = -1;
         for (int gi = 0; gi < groups.size(); gi++) {
-            LineGroup g = groups.get(gi);
+            LyricTimeline.Group g = groups.get(gi);
             if (fadeInStartMs(g) > positionMs) break;
             anchorGroup = gi;
             if (g.startMs <= positionMs) timelineGroupIndex = gi;
         }
         activeGroupIndex = anchorGroup;
 
-        LineGroup activeGroup = (activeGroupIndex >= 0 && activeGroupIndex < groups.size())
+        LyricTimeline.Group activeGroup = (activeGroupIndex >= 0 && activeGroupIndex < groups.size())
                 ? groups.get(activeGroupIndex) : null;
-        LineGroup timelineGroup = (timelineGroupIndex >= 0 && timelineGroupIndex < groups.size())
+        LyricTimeline.Group timelineGroup = (timelineGroupIndex >= 0 && timelineGroupIndex < groups.size())
                 ? groups.get(timelineGroupIndex) : null;
 
         // Scroll target = the centre of the whole simultaneously-singing block. This
@@ -1205,8 +1002,8 @@ public class LyricRenderer {
         if (activeGroup != null) {
             int blockFromGroup = activeGroupIndex;
             while (blockFromGroup > 0) {
-                LineGroup firstIncluded = groups.get(blockFromGroup);
-                LineGroup previous = groups.get(blockFromGroup - 1);
+                LyricTimeline.Group firstIncluded = groups.get(blockFromGroup);
+                LyricTimeline.Group previous = groups.get(blockFromGroup - 1);
                 if (previous.endMs <= firstIncluded.startMs) break;
                 // Do not let short pairwise overlaps form an indefinitely long
                 // chain. Once the preceding group has completed its own visual
@@ -1238,7 +1035,7 @@ public class LyricRenderer {
         //   3. Outro: after last group — no dots (no "next" to anchor to)
         // End trimmed by INTERLUDE_TRAIL_TRIM_MS so the dots collapse a
         // moment before the next line sings.
-        LineGroup nextGroup = null;
+        LyricTimeline.Group nextGroup = null;
         long gapStart = -1L;
         if (timelineGroup == null && !groups.isEmpty()
                 && positionMs < groups.get(0).startMs) {
@@ -1455,7 +1252,7 @@ public class LyricRenderer {
             scrollStiffness = SCROLL_STIFFNESS_INTERLUDE;
             scrollDamping = SCROLL_DAMPING_INTERLUDE;
         } else {
-            LineGroup prevG = (activeGroupIndex > 0) ? groups.get(activeGroupIndex - 1) : null;
+            LyricTimeline.Group prevG = (activeGroupIndex > 0) ? groups.get(activeGroupIndex - 1) : null;
             double interval = (activeGroup != null && prevG != null)
                     ? (activeGroup.startMs - prevG.startMs) : SCROLL_INTERVAL_MAX_MS;
             double ci = Math.max(SCROLL_INTERVAL_MIN_MS, Math.min(SCROLL_INTERVAL_MAX_MS, interval));
@@ -1493,12 +1290,12 @@ public class LyricRenderer {
         litBandValid = false;
         for (int i = start; i < end; i++) {
             LyricLine line = lines.get(i);
-            LineGroup myGroup = groups.get(lineToGroup[i]);
+            LyricTimeline.Group myGroup = groups.get(lineToGroup[i]);
 
             float activeK = computeActiveK(positionMs, myGroup);
 
             LyricLine.VocalChannel ch = line.vocalChannel;
-            boolean isBg = isBackground(ch);
+            boolean isBg = LyricTimeline.isBackground(ch);
             boolean alignRight = ch == LyricLine.VocalChannel.DUET_RIGHT
                     || ch == LyricLine.VocalChannel.BACKGROUND_RIGHT;
 
@@ -1668,7 +1465,7 @@ public class LyricRenderer {
         // it. Math is a 1:1 port of amll-dev/applemusic-like-lyrics/.../
         // interlude-dots.ts.
         if (inInterlude && interludeNextGroup >= 0) {
-            LineGroup interludeNext = groups.get(interludeNextGroup);
+            LyricTimeline.Group interludeNext = groups.get(interludeNextGroup);
             // Use the trimmed window — same one the slot computeInterludeSlot
             // ramps against — so the dots' internal timeline matches the
             // slot's open/close timeline exactly. interludeStartMs is 0
@@ -1867,190 +1664,11 @@ public class LyricRenderer {
         return Math.min(v, hi);
     }
 
-    private static final float MIN_FINAL_ROW_WIDTH_RATIO = 0.60f;
-
-    /**
-     * Word-aware mostly-greedy wrapper. Normal rows fill naturally from top to
-     * bottom; only an abnormally short final row is adjusted, and then by moving
-     * the minimum number of complete words from its predecessor. This preserves
-     * the familiar slightly-ragged lyric shape without leaving a one-word orphan.
-     *
-     * <p>Unicode line-break boundaries supplement whitespace/CJK boundaries. If a
-     * script exposes no dictionary breaks, safe timed-syllable junctions remain an
-     * emergency fallback rather than making the complete line unwrappable.
-     */
-    static int[] wrapStarts(List<Syllable> syls, float[] sylWidths, float maxW) {
-        int size = sylWidths.length;
-        if (size == 0) return new int[]{0, 0};
-        float limit = Math.max(1f, maxW);
-        float[] prefix = new float[size + 1];
-        for (int i = 0; i < size; i++) prefix[i + 1] = prefix[i] + Math.max(0f, sylWidths[i]);
-        boolean[] safe = safeBreaks(syls);
-        boolean[] preferred = preferredBreaks(syls);
-        ArrayList<Integer> starts = new ArrayList<>();
-        starts.add(0);
-        int rowStart = 0;
-        while (rowStart < size) {
-            int preferredEnd = -1;
-            int emergencyEnd = -1;
-            for (int end = rowStart + 1; end <= size; end++) {
-                if (end < size && !safe[end]) continue;
-                if (!rowFits(prefix, safe, rowStart, end, limit)) break;
-                emergencyEnd = end;
-                if (preferred[end]) preferredEnd = end;
-            }
-            int next = preferredEnd > rowStart ? preferredEnd : emergencyEnd;
-            if (next <= rowStart) {
-                next = rowStart + 1;
-                while (next < size && !safe[next]) next++;
-            }
-            starts.add(next);
-            rowStart = next;
-        }
-
-        softenFinalOrphan(starts, prefix, safe, preferred, limit);
-        int[] result = new int[starts.size()];
-        for (int i = 0; i < result.length; i++) result[i] = starts.get(i);
-        return result;
-    }
-
-    private static void softenFinalOrphan(ArrayList<Integer> starts, float[] prefix,
-                                          boolean[] safe, boolean[] preferred,
-                                          float maxWidth) {
-        if (starts.size() < 3) return;
-        int end = starts.get(starts.size() - 1);
-        int splitSlot = starts.size() - 2;
-        int split = starts.get(splitSlot);
-        int previousStart = starts.get(splitSlot - 1);
-        float previousWidth = prefix[split] - prefix[previousStart];
-        float finalWidth = prefix[end] - prefix[split];
-        float currentRatio = shorterToLongerRatio(previousWidth, finalWidth);
-        if (currentRatio >= MIN_FINAL_ROW_WIDTH_RATIO) return;
-
-        int best = split;
-        float bestRatio = currentRatio;
-        // Walk backwards from the greedy break: the first candidate satisfying
-        // the threshold moves the fewest complete words possible.
-        for (int candidate = split - 1; candidate > previousStart; candidate--) {
-            if (!safe[candidate] || !preferred[candidate]
-                    || !rowFits(prefix, safe, previousStart, candidate, maxWidth)
-                    || !rowFits(prefix, safe, candidate, end, maxWidth)) continue;
-            float upper = prefix[candidate] - prefix[previousStart];
-            float lower = prefix[end] - prefix[candidate];
-            float ratio = shorterToLongerRatio(upper, lower);
-            if (ratio > bestRatio + 0.0001f) {
-                best = candidate;
-                bestRatio = ratio;
-            }
-            if (ratio >= MIN_FINAL_ROW_WIDTH_RATIO) {
-                best = candidate;
-                break;
-            }
-        }
-        if (best != split) starts.set(splitSlot, best);
-    }
-
-    private static float shorterToLongerRatio(float a, float b) {
-        float longer = Math.max(a, b);
-        return longer <= 0.001f ? 1f : Math.min(a, b) / longer;
-    }
-
-    private static boolean rowFits(float[] prefix, boolean[] safe, int start, int end,
-                                   float maxWidth) {
-        if (prefix[end] - prefix[start] <= maxWidth + 0.5f) return true;
-        // One indivisible grapheme cluster may itself exceed a very narrow
-        // viewport. It still needs a row, but no legal break may be skipped.
-        for (int i = start + 1; i < end; i++) if (safe[i]) return false;
-        return true;
-    }
-
-    private static boolean[] safeBreaks(List<Syllable> syllables) {
-        int size = syllables.size();
-        boolean[] result = new boolean[size + 1];
-        result[0] = true;
-        result[size] = true;
-        StringBuilder text = new StringBuilder();
-        int[] offsets = new int[size + 1];
-        for (int i = 0; i < size; i++) {
-            offsets[i] = text.length();
-            String value = syllables.get(i).text;
-            if (value != null) text.append(value);
-        }
-        offsets[size] = text.length();
-        String fullText = text.toString();
-        for (int i = 1; i < size; i++) {
-            result[i] = isSafeGraphemeBoundary(fullText, offsets[i]);
-        }
-        return result;
-    }
-
-    private static boolean[] preferredBreaks(List<Syllable> syllables) {
-        int size = syllables.size();
-        boolean[] result = new boolean[size + 1];
-        result[0] = true;
-        result[size] = true;
-        StringBuilder text = new StringBuilder();
-        int[] offsets = new int[size + 1];
-        for (int i = 0; i < size; i++) {
-            offsets[i] = text.length();
-            String value = syllables.get(i).text;
-            if (value != null) text.append(value);
-        }
-        offsets[size] = text.length();
-        String fullText = text.toString();
-        boolean[] unicodeBreaks = unicodeLineBreakOffsets(fullText);
-        for (int i = 1; i < size; i++) {
-            result[i] = isSafeGraphemeBoundary(fullText, offsets[i])
-                    && (canBreakBefore(syllables, i) || unicodeBreaks[offsets[i]]);
-        }
-        return result;
-    }
-
-    /**
-     * Whether a row may break before syllable {@code i}: only at a real word
-     * boundary — whitespace at the junction, or a CJK character on either side
-     * (CJK breaks per character). Latin syllables of one word (no space between)
-     * return false so the word stays intact.
-     */
-    private static boolean canBreakBefore(List<Syllable> syls, int i) {
-        String prev = syls.get(i - 1).text;
-        String cur = syls.get(i).text;
-        if (prev == null || prev.isEmpty() || cur == null || cur.isEmpty()) return true;
-        char last = prev.charAt(prev.length() - 1);
-        char first = cur.charAt(0);
-        if (Character.isWhitespace(last) || Character.isWhitespace(first)) return true;
-        return isWrapCjk(last) || isWrapCjk(first);
-    }
-
-    /**
-     * Set the cached {@link Font} to a configuration that allows smooth
-     * fractional Y movement:
-     * <ul>
-     *   <li>{@code baselineSnapped=false} — without this Skia rounds every
-     *       drawString y to the nearest integer pixel, defeating sub-pixel
-     *       lift animation entirely.</li>
-     *   <li>{@code subpixel=true} — glyph positions are reported as
-     *       fractional and the rasterizer produces sub-pixel-accurate AA
-     *       masks instead of grid-fit ones.</li>
-     *   <li>{@code hinting=NONE} — keeps glyph outlines untouched so they
-     *       don't snap to the grid when y changes by less than 1px.</li>
-     *   <li>{@code edging=SUBPIXEL_ANTI_ALIAS} — best AA quality.</li>
-     * </ul>
-     * The {@link Fonts} cache returns the same {@code Font} instance for a
-     * given (face,size) pair, so calling this every frame is cheap and
-     * idempotent (set-to-same-value is a no-op in skia).
-     */
     private static void configureForAnimation(Font f) {
         f.setBaselineSnapped(false);
         f.setSubpixel(true);
         f.setHinting(FontHinting.NONE);
         f.setEdging(FontEdging.SUBPIXEL_ANTI_ALIAS);
-    }
-
-    private static boolean isBackground(LyricLine.VocalChannel ch) {
-        return ch == LyricLine.VocalChannel.BACKGROUND
-                || ch == LyricLine.VocalChannel.BACKGROUND_LEFT
-                || ch == LyricLine.VocalChannel.BACKGROUND_RIGHT;
     }
 
     // Hangul: Syllables + Jamo Extended-B (AC00-D7FF), Jamo (1100-11FF), Compatibility
@@ -2358,8 +1976,8 @@ public class LyricRenderer {
         try (TextLine line = shapeLine(text, font)) {
             if (line.getWidth() <= maxWidth + 0.5f) return null;
 
-            boolean[] preferred = unicodeLineBreakOffsets(text);
-            int[] graphemes = graphemeBoundaries(text);
+            boolean[] preferred = LyricTextLayout.unicodeLineBreakOffsets(text);
+            int[] graphemes = LyricTextLayout.graphemeBoundaries(text);
             boolean usableCaretWidths = false;
             float origin = line.getCoordAtOffset(0);
             for (int i = 1; i + 1 < graphemes.length; i++) {
@@ -2412,104 +2030,6 @@ public class LyricRenderer {
         }
     }
 
-    private static int[] graphemeBoundaries(String text) {
-        java.text.BreakIterator iterator = java.text.BreakIterator.getCharacterInstance(
-                lineBreakLocale(text));
-        iterator.setText(text);
-        ArrayList<Integer> offsets = new ArrayList<>();
-        for (int boundary = iterator.first(); boundary != java.text.BreakIterator.DONE;
-             boundary = iterator.next()) {
-            if (isSafeGraphemeBoundary(text, boundary)) offsets.add(boundary);
-        }
-        if (offsets.isEmpty() || offsets.get(0) != 0) offsets.add(0, 0);
-        if (offsets.get(offsets.size() - 1) != text.length()) offsets.add(text.length());
-        int[] result = new int[offsets.size()];
-        for (int i = 0; i < result.length; i++) result[i] = offsets.get(i);
-        return result;
-    }
-
-    private static boolean[] unicodeLineBreakOffsets(String text) {
-        boolean[] result = new boolean[text.length() + 1];
-        java.text.BreakIterator iterator = java.text.BreakIterator.getLineInstance(
-                lineBreakLocale(text));
-        iterator.setText(text);
-        for (int boundary = iterator.first(); boundary != java.text.BreakIterator.DONE;
-             boundary = iterator.next()) {
-            if (isSafeGraphemeBoundary(text, boundary)) result[boundary] = true;
-        }
-        result[0] = true;
-        result[text.length()] = true;
-        return result;
-    }
-
-    /** java.text.BreakIterator differs across the desktop JDK and Android ICU.
-     * Apply the non-negotiable extended-grapheme rules ourselves so neither may
-     * strand a virama/coeng, combining mark, variation selector or emoji joiner at
-     * a row edge. */
-    private static boolean isSafeGraphemeBoundary(String text, int offset) {
-        if (offset <= 0 || offset >= text.length()) return true;
-        int previous = text.codePointBefore(offset);
-        int next = text.codePointAt(offset);
-        int nextType = Character.getType(next);
-        if (nextType == Character.NON_SPACING_MARK
-                || nextType == Character.COMBINING_SPACING_MARK
-                || nextType == Character.ENCLOSING_MARK
-                || isVariationSelector(next)
-                || isEmojiModifier(next)
-                || next == 0x200D) {
-            return false;
-        }
-        return previous != 0x200D && !isVirama(previous);
-    }
-
-    private static boolean isVariationSelector(int cp) {
-        return (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF);
-    }
-
-    private static boolean isEmojiModifier(int cp) {
-        return cp >= 0x1F3FB && cp <= 0x1F3FF;
-    }
-
-    private static boolean isVirama(int cp) {
-        switch (cp) {
-            case 0x094D: // Devanagari
-            case 0x09CD: // Bengali
-            case 0x0A4D: // Gurmukhi
-            case 0x0ACD: // Gujarati
-            case 0x0B4D: // Oriya
-            case 0x0BCD: // Tamil
-            case 0x0C4D: // Telugu
-            case 0x0CCD: // Kannada
-            case 0x0D4D: // Malayalam
-            case 0x0DCA: // Sinhala
-            case 0x0E3A: // Thai phinthu
-            case 0x0EBA: // Lao semivowel sign
-            case 0x1039: // Myanmar virama
-            case 0x17D2: // Khmer coeng
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    private static java.util.Locale lineBreakLocale(String text) {
-        for (int i = 0; i < text.length();) {
-            int cp = text.codePointAt(i);
-            Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-            if (script == Character.UnicodeScript.THAI) return new java.util.Locale("th");
-            if (script == Character.UnicodeScript.KHMER) return new java.util.Locale("km");
-            if (script == Character.UnicodeScript.LAO) return new java.util.Locale("lo");
-            if (script == Character.UnicodeScript.MYANMAR) return new java.util.Locale("my");
-            i += Character.charCount(cp);
-        }
-        return java.util.Locale.ROOT;
-    }
-
-    /** Shape the complete source line once and read HarfBuzz caret coordinates at
-     * syllable boundaries. These advances only drive wrapping. Some Skija builds
-     * report every intermediate caret as zero for RTL runs; when the resulting
-     * advances do not add back up to the shaped line width, measure the immutable
-     * syllable strings individually during this cached layout rebuild. */
     private float[] shapeSyllableAdvances(List<Syllable> syllables, Font font) {
         int n = syllables.size();
         float[] widths = new float[n];
@@ -2571,54 +2091,8 @@ public class LyricRenderer {
         }
     }
 
-    /** Pure tokenizer used by the glow cache and unit tests. Adjacent Latin
-     * fragments have no knowledge of syllable boundaries, so en+dure is one range. */
-    static int[][] displayWordRanges(String text) {
-        if (text == null || text.isEmpty()) return new int[0][];
-        ArrayList<int[]> out = new ArrayList<>();
-        int i = 0;
-        while (i < text.length()) {
-            int cp = text.codePointAt(i);
-            int cc = Character.charCount(cp);
-            if (!isWordCodePoint(cp)) {
-                i += cc;
-                continue;
-            }
-            int start = i;
-            if (isEastAsianCodePoint(cp)) {
-                i += cc;
-                while (i < text.length() && isCombiningMark(text.codePointAt(i))) {
-                    i += Character.charCount(text.codePointAt(i));
-                }
-            } else {
-                Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-                i += cc;
-                while (i < text.length()) {
-                    int next = text.codePointAt(i);
-                    if (isCombiningMark(next)) {
-                        i += Character.charCount(next);
-                        continue;
-                    }
-                    if ((next == '\'' || next == 0x2019 || next == '-')
-                            && hasWordCodePointAfter(text, i + Character.charCount(next))) {
-                        i += Character.charCount(next);
-                        continue;
-                    }
-                    if (!isWordCodePoint(next) || isEastAsianCodePoint(next)) break;
-                    Character.UnicodeScript nextScript = Character.UnicodeScript.of(next);
-                    if (script != Character.UnicodeScript.COMMON
-                            && nextScript != Character.UnicodeScript.COMMON
-                            && nextScript != script) break;
-                    i += Character.charCount(next);
-                }
-            }
-            out.add(new int[]{start, i});
-        }
-        return out.toArray(new int[0][]);
-    }
-
     private static WordSpan[] buildWordSpans(String text, int[] syllableOffsets, TextLine line) {
-        int[][] ranges = displayWordSyllableRanges(text, syllableOffsets);
+        int[][] ranges = LyricTextLayout.displayWordSyllableRanges(text, syllableOffsets);
         WordSpan[] words = new WordSpan[ranges.length];
         for (int w = 0; w < ranges.length; w++) {
             int start = ranges[w][0];
@@ -2629,56 +2103,6 @@ public class LyricRenderer {
                     line.getCoordAtOffset(start), line.getCoordAtOffset(end));
         }
         return words;
-    }
-
-    /** Adds first/last independently animated syllable indices to each display-word
-     * range. Kept pure so the crucial en+dure grouping is testable without Skia. */
-    static int[][] displayWordSyllableRanges(String text, int[] syllableOffsets) {
-        int[][] words = displayWordRanges(text);
-        int[][] result = new int[words.length][4];
-        for (int i = 0; i < words.length; i++) {
-            int start = words[i][0];
-            int end = words[i][1];
-            result[i][0] = start;
-            result[i][1] = end;
-            result[i][2] = syllableAtOffset(syllableOffsets, start);
-            result[i][3] = syllableAtOffset(syllableOffsets, Math.max(start, end - 1));
-        }
-        return result;
-    }
-
-    private static int syllableAtOffset(int[] offsets, int offset) {
-        int lo = 0, hi = offsets.length - 2, result = 0;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            if (offsets[mid] <= offset) {
-                result = mid;
-                lo = mid + 1;
-            } else hi = mid - 1;
-        }
-        return Math.min(result, offsets.length - 2);
-    }
-
-    private static boolean hasWordCodePointAfter(String text, int offset) {
-        return offset < text.length() && isWordCodePoint(text.codePointAt(offset));
-    }
-
-    private static boolean isWordCodePoint(int cp) {
-        return Character.isLetterOrDigit(cp) || isCombiningMark(cp);
-    }
-
-    private static boolean isCombiningMark(int cp) {
-        int type = Character.getType(cp);
-        return type == Character.NON_SPACING_MARK
-                || type == Character.COMBINING_SPACING_MARK
-                || type == Character.ENCLOSING_MARK;
-    }
-
-    private static boolean isEastAsianCodePoint(int cp) {
-        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-        return script == Character.UnicodeScript.HAN
-                || script == Character.UnicodeScript.HIRAGANA
-                || script == Character.UnicodeScript.KATAKANA;
     }
 
     private ShapedText shapeText(String text, Font font) {
@@ -2740,17 +2164,7 @@ public class LyricRenderer {
     }
 
     private int findActiveGroup(long pos) {
-        int lo = 0, hi = groups.size() - 1, res = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            if (groups.get(mid).startMs <= pos) {
-                res = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        return res;
+        return LyricTimeline.activeGroupIndex(groups, pos);
     }
 
     /**
@@ -3229,7 +2643,7 @@ public class LyricRenderer {
      * small easeOutBack overshoot (a gentle bounce that settles back to 1). Pop-out
      * stays a plain smoothstep collapse over {@link #BG_POP_OUT_MS}.
      */
-    private static float computeBgScaleK(long positionMs, LineGroup g) {
+    private static float computeBgScaleK(long positionMs, LyricTimeline.Group g) {
         long popStart = g.startMs + BG_POP_IN_DELAY_MS;
         if (positionMs < popStart) return 0f;
         if (positionMs < popStart + BG_POP_IN_MS) {
@@ -3260,7 +2674,7 @@ public class LyricRenderer {
      * Used both at render time (alpha/lift/scale)
      * and at layout time (BG lineHeight collapse).
      */
-    private static float computeActiveK(long positionMs, LineGroup g) {
+    private static float computeActiveK(long positionMs, LyricTimeline.Group g) {
         long fadeInStart = fadeInStartMs(g);
         long fadeInEnd = fadeInStart + ACTIVE_FADE_IN_MS;
         if (positionMs < fadeInStart) return 0f;
@@ -3276,7 +2690,7 @@ public class LyricRenderer {
         return 1f - smoothstep(0f, 1f, dt);
     }
 
-    private static long fadeInStartMs(LineGroup g) {
+    private static long fadeInStartMs(LyricTimeline.Group g) {
         return g.startMs - ACTIVE_FADE_IN_MS + ACTIVE_FADE_IN_DELAY_MS;
     }
 }

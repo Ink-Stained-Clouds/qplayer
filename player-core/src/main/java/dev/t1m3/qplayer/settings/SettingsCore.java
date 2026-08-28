@@ -67,6 +67,8 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     private String platform = SettingSpec.ANY;
     private PlayerController controller;
     private volatile DirectoryPicker directoryPicker;
+    /** Plain thread-safe mirror for non-QML consumers such as desktop lyrics. */
+    private volatile boolean resolvedDarkSnapshot;
     private boolean systemDark;
     private boolean loaded;
 
@@ -278,13 +280,14 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     }
 
     public boolean resolvedDarkValue() {
-        return Boolean.TRUE.equals(resolvedDark.peek());
+        return resolvedDarkSnapshot;
     }
 
     private void recomputeDark() {
         int mode = intOf("darkMode");
         boolean dark = mode == SettingsCatalog.MODE_DARK
                 || (mode == SettingsCatalog.MODE_SYSTEM && systemDark);
+        resolvedDarkSnapshot = dark;
         resolvedDark.set(dark);
     }
 

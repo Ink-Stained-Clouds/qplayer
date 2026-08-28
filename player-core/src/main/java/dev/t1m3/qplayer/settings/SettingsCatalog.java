@@ -131,6 +131,10 @@ public final class SettingsCatalog {
         out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "边缘模糊", false)
                 .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)")
                 .build());
+        out.add(SettingSpec.toggle("desktopLyricEnabled", LYRIC, "桌面歌词", false)
+                .desc("使用独立渲染线程显示置顶歌词浮窗")
+                .onlyOn(DESKTOP)
+                .build());
         out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC, "进度条样式", 1,
                         "波浪", "直线")
                 .build());

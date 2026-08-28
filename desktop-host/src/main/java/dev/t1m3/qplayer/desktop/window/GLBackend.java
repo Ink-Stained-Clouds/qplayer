@@ -25,6 +25,7 @@ import org.lwjgl.opengl.GL;
 final class GLBackend implements GraphicsBackend {
 
     private final long window;
+    private final boolean transparent;
     private int width;
     private int height;
     private DirectContext context;
@@ -32,7 +33,12 @@ final class GLBackend implements GraphicsBackend {
     private Surface surface;
 
     GLBackend(long window) {
+        this(window, false);
+    }
+
+    GLBackend(long window, boolean transparent) {
         this.window = window;
+        this.transparent = transparent;
     }
 
     @Override
@@ -61,7 +67,7 @@ final class GLBackend implements GraphicsBackend {
         // Skija's DirectContext and drops the frame's first draw (the root's full
         // fill), leaving the background black.
         Canvas canvas = surface.getCanvas();
-        canvas.clear(0xFF000000);
+        canvas.clear(transparent ? 0x00000000 : 0xFF000000);
         return canvas;
     }
 
