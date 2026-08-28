@@ -1665,8 +1665,17 @@ public final class PlayerController {
                 if (ids.contains(s.id)) {
                     Track t = toTrack(s);
                     // Prefer an on-disk thumbnail so the cached list renders fully
-                    // offline; toTrack's fallback is the network thumb URL.
-                    String localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "512"));
+                    // offline; toTrack's fallback is the network thumb URL. The
+                    // 1024px image is the one cacheSongAsync actually downloads
+                    // for every manually-cached song (see its "fully offline-ready"
+                    // comment) into DiskCache.IMAGE, whose eviction budget scales
+                    // with the audio cache itself; THUMB64 is a much flimsier,
+                    // hard-capped-at-128-files browsing cache shared by every
+                    // playlist/search view, so a cached song's own thumbnail
+                    // routinely gets evicted from THUMB64 by unrelated browsing
+                    // long before its audio does -- check IMAGE first.
+                    String localThumb = diskCache.getImage(thumbUrl(s.coverUrl, "1024"));
+                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "512"));
                     if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
                     if (localThumb != null) t.coverThumbPath = localThumb;
                     out.add(t);
