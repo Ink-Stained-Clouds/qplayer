@@ -197,15 +197,15 @@ Rectangle {
         anchors.top: track.bottom
         anchors.bottom: parent.bottom
 
-        Text {
+        MarqueeText {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.verticalCenter
             anchors.bottomMargin: 1
             text: player.title.length > 0 ? player.title : "未播放"
-            color: Theme.color.onSurfaceColor
+            textColor: Theme.color.onSurfaceColor
             fontSize: 15
-            elide: Text.ElideRight
+            fadeColor: Theme.color.surfaceContainerHigh
         }
         // Time on the right, pinned to its own width so it's never clipped; the
         // artist fills the space to its left and elides on its own.
@@ -219,16 +219,16 @@ Rectangle {
             color: Theme.color.onSurfaceVariantColor
             fontSize: 12
         }
-        Text {
+        MarqueeText {
             anchors.left: parent.left
             anchors.right: timeText.text.length > 0 ? timeText.left : parent.right
             anchors.rightMargin: timeText.text.length > 0 ? 8 : 0
             anchors.top: parent.verticalCenter
             anchors.topMargin: 2
             text: player.artist
-            color: Theme.color.onSurfaceVariantColor
+            textColor: Theme.color.onSurfaceVariantColor
             fontSize: 12
-            elide: Text.ElideRight
+            fadeColor: Theme.color.surfaceContainerHigh
         }
 
         MouseArea {

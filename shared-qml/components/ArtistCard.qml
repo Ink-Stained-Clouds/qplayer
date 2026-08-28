@@ -14,7 +14,6 @@ Item {
     property string coverUrl: ""
     property string coverThumbPath: ""
     property real tile: 130
-    property bool longName: nameProbe.contentWidth > card.width - 16
     signal clicked()
 
     implicitWidth: tile
@@ -43,27 +42,16 @@ Item {
         source: card.coverThumbPath || card.coverUrl
     }
 
-    Text {
-        id: nameProbe
-        visible: false
-        text: card.name
-        fontSize: 12
-        font.weight: Font.Medium
-    }
-
-    Text {
+    MarqueeText {
         x: 8
         y: card.width - 2
         width: card.width - 16
         height: 32
-        verticalAlignment: Text.AlignTop
         text: card.name
-        color: Theme.color.onSurfaceColor
-        fontSize: card.longName ? 11 : 12
-        font.weight: Font.Medium
-        wrapMode: card.longName ? Text.WordWrap : Text.NoWrap
-        maximumLineCount: card.longName ? 2 : 1
-        elide: Text.ElideRight
+        textColor: Theme.color.onSurfaceColor
+        fontSize: 12
+        fontWeight: Font.Medium
+        fadeColor: Theme.color.surfaceContainerLow
     }
 
     Text {

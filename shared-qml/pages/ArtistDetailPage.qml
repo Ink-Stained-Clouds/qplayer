@@ -127,7 +127,7 @@ Rectangle {
                         visible: false
                         width: page.bioWidth
                         text: player.artistBriefDesc
-                        wrapMode: Text.WordWrap
+                        wrapMode: Text.WrapAnywhere
                         fontSize: 12
                     }
                     Text {
@@ -135,7 +135,7 @@ Rectangle {
                         visible: false
                         width: page.bioWidth
                         text: player.artistBriefDesc
-                        wrapMode: Text.WordWrap
+                        wrapMode: Text.WrapAnywhere
                         maximumLineCount: 3
                         elide: Text.ElideRight
                         fontSize: 12
@@ -151,7 +151,13 @@ Rectangle {
                         anchors.topMargin: 10
                         visible: player.artistBriefDesc !== ""
                         text: player.artistBriefDesc
-                        wrapMode: Text.WordWrap
+                        // WrapAnywhere, not WordWrap: some bios overflowed
+                        // instead of wrapping -- a long CJK run with no break
+                        // point qml4j's word-boundary detection could find
+                        // (see [[qml4j-cjk-wordwrap-fix]] for the underlying
+                        // engine bug/PR; WrapAnywhere sidesteps needing that
+                        // detection to be complete at all).
+                        wrapMode: Text.WrapAnywhere
                         maximumLineCount: page.bioExpanded ? 9999 : 3
                         elide: page.bioExpanded ? Text.ElideNone : Text.ElideRight
                         color: Theme.color.onSurfaceVariantColor

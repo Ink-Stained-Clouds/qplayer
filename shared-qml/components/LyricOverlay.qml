@@ -299,7 +299,12 @@ Item {
         }
     }
 
-    Text {
+    // fadeColor is a translucent-black approximation, not a real match: this
+    // sits directly over the dynamic blurred-cover backdrop (no solid panel
+    // behind it), so there's no single opaque colour the edges could truly
+    // fade into -- the text dims toward the edges instead of vanishing into
+    // the background the way it does over MiniPlayer's solid bar.
+    MarqueeText {
         id: titleText
         visible: !overlay.landscape
         anchors.top: backBtn.bottom
@@ -309,14 +314,12 @@ Item {
         anchors.leftMargin: 28
         anchors.rightMargin: 28
         text: player.title
-        color: "#FFFFFFFF"
-        font.family: Theme.typography.titleLarge.family
-        font.pixelSize: 22
-        wrapMode: Text.WordWrap
-        maximumLineCount: 2
-        elide: Text.ElideRight
+        textColor: "#FFFFFFFF"
+        fontFamily: Theme.typography.titleLarge.family
+        fontSize: 22
+        fadeColor: Qt.rgba(0, 0, 0, 0.55)
     }
-    Text {
+    MarqueeText {
         id: artistText
         visible: !overlay.landscape
         anchors.top: titleText.bottom
@@ -326,9 +329,9 @@ Item {
         anchors.leftMargin: 28
         anchors.rightMargin: 28
         text: player.artist
-        color: "#B3FFFFFF"
+        textColor: "#B3FFFFFF"
         fontSize: 14
-        elide: Text.ElideRight
+        fadeColor: Qt.rgba(0, 0, 0, 0.55)
     }
 
     // --- bottom: transport (portrait) ---------------------------------
@@ -484,30 +487,30 @@ Item {
                     onClicked: player.setCoverMode(false)
                 }
             }
-            Text {
+            MarqueeText {
                 id: lTitle
                 anchors.top: lCover.bottom
                 anchors.topMargin: 20
                 anchors.left: parent.left
                 anchors.right: parent.right
                 text: player.title
-                color: "#FFFFFFFF"
-                font.family: Theme.typography.titleLarge.family
-                font.pixelSize: 20
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
+                textColor: "#FFFFFFFF"
+                fontFamily: Theme.typography.titleLarge.family
+                fontSize: 20
+                centered: true
+                fadeColor: Qt.rgba(0, 0, 0, 0.55)
             }
-            Text {
+            MarqueeText {
                 id: lArtist
                 anchors.top: lTitle.bottom
                 anchors.topMargin: 4
                 anchors.left: parent.left
                 anchors.right: parent.right
                 text: player.artist
-                color: "#B3FFFFFF"
+                textColor: "#B3FFFFFF"
                 fontSize: 13
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
+                centered: true
+                fadeColor: Qt.rgba(0, 0, 0, 0.55)
             }
             LinearProgress {
                 id: lProgress

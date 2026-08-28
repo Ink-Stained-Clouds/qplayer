@@ -35,23 +35,34 @@ Rectangle {
                 type: "standard"; icon: "arrow_back"
                 onClicked: page.back()
             }
-            Text {
+            Item {
+                id: titleSlot
                 property bool compactLayout: page.width < 600
+                // Layout.fillHeight (not an explicit Layout.preferredHeight +
+                // Layout.alignment combo) so the header row's real 64px height
+                // is this Item's own box directly -- qml4j's height/alignment
+                // propagation through a nested Layout.preferredHeight isn't
+                // reliable (same class of bug SearchPage's merged search bar
+                // hit this session), which left some playlists' single-line
+                // titles sitting off-center instead of vertically centered.
                 Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                Layout.preferredHeight: compactLayout ? 48 : 32
-                text: player.playlistTitle
-                color: Theme.color.onSurfaceColor
-                font.family: compactLayout
-                             ? Theme.typography.titleMedium.family
-                             : Theme.typography.titleLarge.family
-                font.pixelSize: compactLayout
-                                ? Theme.typography.titleMedium.size
-                                : Theme.typography.titleLarge.size
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: compactLayout ? Text.Wrap : Text.NoWrap
-                maximumLineCount: compactLayout ? 2 : 1
-                elide: Text.ElideRight
+                Layout.fillHeight: true
+
+                // Single line either way now (narrow just uses the smaller
+                // titleMedium size); overflow marquee-scrolls with faded edges
+                // instead of wrapping to a second line or eliding.
+                MarqueeText {
+                    anchors.fill: parent
+                    text: player.playlistTitle
+                    textColor: Theme.color.onSurfaceColor
+                    fontFamily: titleSlot.compactLayout
+                                ? Theme.typography.titleMedium.family
+                                : Theme.typography.titleLarge.family
+                    fontSize: titleSlot.compactLayout
+                              ? Theme.typography.titleMedium.size
+                              : Theme.typography.titleLarge.size
+                    fadeColor: Theme.color.surface
+                }
             }
             Button {
                 Layout.alignment: Qt.AlignVCenter
