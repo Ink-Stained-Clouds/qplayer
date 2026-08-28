@@ -5,6 +5,7 @@ import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.resources.CompressedResources;
 import dev.t1m3.qplayer.settings.SettingsCore;
@@ -55,6 +56,7 @@ public final class DesktopWindow {
     private final ResourceLoader resources;
     private final PlayerController controller;
     private final SettingsCore settings;
+    private final DiskCompiledSceneCache qmlCompilationCache;
     private final LyricCompositor compositor = new LyricCompositor();
     /** Desktop lyrics floating window (issue #25) -- null until {@link
      *  #setLyricSettingsStore} is called (before {@link #init}). */
@@ -102,12 +104,14 @@ public final class DesktopWindow {
     private boolean nudgeApplied = false;
 
     public DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
-                  PlayerController controller, SettingsCore settings) {
+                  PlayerController controller, SettingsCore settings,
+                  DiskCompiledSceneCache qmlCompilationCache) {
         this.engine = engine;
         this.qmlSource = qmlSource;
         this.resources = resources;
         this.controller = controller;
         this.settings = settings;
+        this.qmlCompilationCache = qmlCompilationCache;
         this.kind = GraphicsBackend.Kind.resolve(settings);
     }
 
@@ -163,7 +167,7 @@ public final class DesktopWindow {
      * SettingsCore. The enabled value is synchronized with the generated settings
      * page; host-only window coordinates stay beside it in that same store. */
     public void setLyricSettingsStore(dev.t1m3.qplayer.settings.SettingsStore store) {
-        this.lyricWindow = new DesktopLyricWindow(store, resources, kind,
+        this.lyricWindow = new DesktopLyricWindow(store, resources, kind, qmlCompilationCache,
                 enabled -> postRenderTask(() -> settings.put("desktopLyricEnabled", enabled)),
                 this::postMainTask);
         settings.onChange("desktopLyricEnabled", value -> postMainTask(() -> {
@@ -224,7 +228,10 @@ public final class DesktopWindow {
             return view;
         }
         lastSpawnWasRespawn = false;
-        QmlView v = QmlView.withStockTypes(engine).resources(resources);
+        QmlView v = QmlView.withStockTypes(engine)
+                .resources(resources)
+                .compilationCache(qmlCompilationCache,
+                        qmlCompilationCache.sceneKey("Main.qml"));
         // Cache stable top-level QML subtrees as SkPictures. Enable it before
         // load() so the constructed Items wire content invalidation from their
         // first frame; LyricCompositor uses the same cache for settled lyric chrome.

@@ -1,7 +1,6 @@
 package dev.t1m3.qplayer.desktop.app;
 
 import io.github.timer_err.qml4j.engine.QmlEngine;
-import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.audio.MetadataReader;
@@ -15,6 +14,7 @@ import dev.t1m3.qplayer.desktop.media.MacMediaControls;
 import dev.t1m3.qplayer.desktop.media.MprisControls;
 import dev.t1m3.qplayer.desktop.media.WindowsMediaControls;
 import dev.t1m3.qplayer.desktop.resources.ClasspathResourceLoader;
+import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
 import dev.t1m3.qplayer.desktop.security.DesktopCredentialProtection;
 import dev.t1m3.qplayer.desktop.settings.JsonSettingsStore;
 import dev.t1m3.qplayer.desktop.tray.TrayController;
@@ -103,7 +103,10 @@ public final class Main {
         configureWindowsAppIdentity();
         DesktopCredentialProtection.install();
 
-        ResourceLoader resources = new ClasspathResourceLoader();
+        ClasspathResourceLoader resources = new ClasspathResourceLoader();
+        String currentVersion = appVersion();
+        DiskCompiledSceneCache qmlCompilationCache = new DiskCompiledSceneCache(
+                AppDirs.cacheDir().resolve("qml"), resources.qmlFingerprint(currentVersion));
 
         // Platform backends (the desktop impls already exist).
         AudioBackend audio = new DesktopAudioBackend();
@@ -111,7 +114,7 @@ public final class Main {
 
         PlayerController controller = new PlayerController(audio, reader);
         controller.setColorExtractor(new DesktopColorExtractor());
-        controller.setCurrentVersion(appVersion());
+        controller.setCurrentVersion(currentVersion);
         controller.setWebLoginLauncher(() -> DesktopWebLogin.open(
                 controller::completeWebLogin,
                 controller::failWebLogin,
@@ -162,7 +165,8 @@ public final class Main {
         String qml = new String(qmlBytes, StandardCharsets.UTF_8);
 
         QmlEngine engine = new QmlEngine();
-        DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings);
+        DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings,
+                qmlCompilationCache);
         // Desktop lyrics shares SettingsCore's store so its settings-page toggle
         // and tray toggle remain one value; window position uses adjacent host keys.
         window.setLyricSettingsStore(desktopStore);

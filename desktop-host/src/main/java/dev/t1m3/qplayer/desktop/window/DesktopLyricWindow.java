@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.desktop.window;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
 import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.LyricTimeline;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
@@ -35,6 +36,7 @@ public final class DesktopLyricWindow {
 
     private final SettingsStore store;
     private final ResourceLoader resources;
+    private final DiskCompiledSceneCache qmlCompilationCache;
     private final String qmlSource;
     private final Consumer<Boolean> settingsWriter;
     private final Consumer<Runnable> mainPoster;
@@ -59,10 +61,12 @@ public final class DesktopLyricWindow {
     private double dragCursorY0;
 
     DesktopLyricWindow(SettingsStore store, ResourceLoader resources,
-                       GraphicsBackend.Kind kind, Consumer<Boolean> settingsWriter,
+                       GraphicsBackend.Kind kind, DiskCompiledSceneCache qmlCompilationCache,
+                       Consumer<Boolean> settingsWriter,
                        Consumer<Runnable> mainPoster) {
         this.store = store;
         this.resources = resources;
+        this.qmlCompilationCache = qmlCompilationCache;
         this.kind = transparentBackend(kind);
         this.settingsWriter = settingsWriter;
         this.mainPoster = mainPoster;
@@ -85,6 +89,10 @@ public final class DesktopLyricWindow {
 
     ResourceLoader resources() {
         return resources;
+    }
+
+    DiskCompiledSceneCache qmlCompilationCache() {
+        return qmlCompilationCache;
     }
 
     String qmlSource() {
