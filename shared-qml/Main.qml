@@ -269,6 +269,9 @@ Rectangle {
                     anchors.leftMargin: 8
                     anchors.verticalCenter: actionsLogo.verticalCenter
                     text: "QPlayer"
+                    opacity: app.expanded ? 1 : 0
+                    visible: opacity > 0.01
+                    Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     color: Theme.color.onSurfaceColor
                     font.family: Theme.typography.titleLarge.family
                     font.pixelSize: Theme.typography.titleLarge.size
