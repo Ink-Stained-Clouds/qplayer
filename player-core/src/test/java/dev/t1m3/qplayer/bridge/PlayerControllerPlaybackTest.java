@@ -127,6 +127,32 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
+    public void togetherRiskControlUsesBoundedExponentialBackoff() {
+        assertEquals(30_000L, PlayerController.togetherRateLimitBackoffMs(1));
+        assertEquals(60_000L, PlayerController.togetherRateLimitBackoffMs(2));
+        assertEquals(120_000L, PlayerController.togetherRateLimitBackoffMs(3));
+        assertEquals(120_000L, PlayerController.togetherRateLimitBackoffMs(20));
+        assertFalse(PlayerController.togetherRateLimitShouldPause(3));
+        assertTrue(PlayerController.togetherRateLimitShouldPause(4));
+    }
+
+    @Test
+    public void togetherRiskControlRecognizesServerAndTransportFailures() {
+        assertTrue(PlayerController.isTogetherRateLimited(
+                new java.io.IOException("操作频繁，请稍后再试")));
+        assertTrue(PlayerController.isTogetherRateLimited(
+                new RuntimeException("wrapper",
+                        new java.io.IOException("HTTP 429: Too Many Requests"))));
+        assertTrue(PlayerController.isTogetherRateLimited(
+                new java.io.IOException("rate limit exceeded")));
+
+        assertFalse(PlayerController.isTogetherRateLimited(
+                new java.io.IOException("连接超时，请稍后再试")));
+        assertFalse(PlayerController.isTogetherRateLimited(
+                new java.io.IOException("同步一起听状态失败")));
+    }
+
+    @Test
     public void selectingTrackAfterSessionRestoreDoesNotReplayItOnResume() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
