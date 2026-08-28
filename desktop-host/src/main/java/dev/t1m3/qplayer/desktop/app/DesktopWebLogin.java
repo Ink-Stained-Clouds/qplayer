@@ -1,6 +1,8 @@
 package dev.t1m3.qplayer.desktop.app;
 
 import ca.weblite.webview.swing.WebViewComponent;
+import com.sun.jna.Native;
+import com.sun.jna.platform.win32.Kernel32;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -9,7 +11,16 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -21,6 +32,14 @@ import java.util.function.Consumer;
 final class DesktopWebLogin {
     private static final String LOGIN_URL = "https://music.163.com/#/login";
     private static final String COOKIE_URL = "https://music.163.com/";
+    private static final String WEBVIEW2_DATA_ENV = "WEBVIEW2_USER_DATA_FOLDER";
+    private static final int CLEANUP_ATTEMPTS = 20;
+    private static final ScheduledExecutorService DATA_CLEANER =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "qplayer-webview-data-cleaner");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private static JFrame activeFrame;
 
@@ -30,9 +49,7 @@ final class DesktopWebLogin {
             Runnable onCancel) {
         SwingUtilities.invokeLater(() -> {
             if (activeFrame != null && activeFrame.isDisplayable()) {
-                activeFrame.setVisible(true);
-                activeFrame.toFront();
-                activeFrame.requestFocus();
+                DesktopSwingFocus.requestForeground(activeFrame);
                 return;
             }
             try {
@@ -65,9 +82,16 @@ final class DesktopWebLogin {
 
     private static void createWindow(Consumer<String> onCookie,
             Consumer<String> onFailure, Runnable onCancel) {
-        WebViewComponent webView = WebViewComponent.create();
-        webView.setUrl(LOGIN_URL);
-        webView.setPreferredSize(new Dimension(900, 700));
+        WebView2SessionData sessionData = WebView2SessionData.create();
+        WebViewComponent webView;
+        try {
+            webView = WebViewComponent.create();
+            webView.setUrl(LOGIN_URL);
+            webView.setPreferredSize(new Dimension(900, 700));
+        } catch (Throwable error) {
+            sessionData.close();
+            throw error;
+        }
 
         JFrame frame = new JFrame("登录网易云音乐");
         activeFrame = frame;
@@ -125,12 +149,110 @@ final class DesktopWebLogin {
                         webView.dispose();
                     } catch (Throwable ignored) {
                     }
+                    sessionData.close();
                 }
                 if (activeFrame == frame) activeFrame = null;
                 if (!submitted[0]) onCancel.run();
             }
         });
-        frame.setVisible(true);
+        DesktopSwingFocus.show(frame);
+    }
+
+    /**
+     * WebView2 persists HttpOnly login cookies in its user-data directory. A
+     * website-login handoff must instead start with a fresh profile every time,
+     * otherwise the cookie poll immediately imports the previously used account.
+     * Keep the override active until the native peer is disposed because the
+     * WebView2 environment is created asynchronously on its engine thread.
+     */
+    private static final class WebView2SessionData implements AutoCloseable {
+        private static final WebView2SessionData NONE =
+                new WebView2SessionData(null, null, false);
+
+        private final Path directory;
+        private final String previousOverride;
+        private final boolean windows;
+        private boolean closed;
+
+        private WebView2SessionData(Path directory, String previousOverride,
+                boolean windows) {
+            this.directory = directory;
+            this.previousOverride = previousOverride;
+            this.windows = windows;
+        }
+
+        static WebView2SessionData create() {
+            if (!isWindows()) return NONE;
+
+            Path directory = null;
+            try {
+                Path root = Path.of(System.getProperty("java.io.tmpdir"),
+                        "QPlayer", "web-login").toAbsolutePath().normalize();
+                Files.createDirectories(root);
+                directory = Files.createTempDirectory(root, "session-");
+                String previous = System.getenv(WEBVIEW2_DATA_ENV);
+                if (!Kernel32.INSTANCE.SetEnvironmentVariable(
+                        WEBVIEW2_DATA_ENV, directory.toString())) {
+                    throw new IOException("SetEnvironmentVariable failed: "
+                            + Native.getLastError());
+                }
+                return new WebView2SessionData(directory, previous, true);
+            } catch (Throwable error) {
+                if (directory != null) scheduleDelete(directory, 0);
+                throw new IllegalStateException(
+                        "无法创建临时 WebView2 登录数据目录", error);
+            }
+        }
+
+        @Override public synchronized void close() {
+            if (closed) return;
+            closed = true;
+            if (!windows) return;
+
+            // Restore a caller-provided override after the login-only native peer
+            // has stopped using our session directory.
+            Kernel32.INSTANCE.SetEnvironmentVariable(
+                    WEBVIEW2_DATA_ENV, previousOverride);
+            scheduleDelete(directory, 0);
+        }
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static void scheduleDelete(Path directory, int attempt) {
+        if (directory == null) return;
+        long delayMs = attempt == 0 ? 250L : Math.min(2_000L, 250L * attempt);
+        DATA_CLEANER.schedule(() -> {
+            try {
+                deleteTree(directory);
+            } catch (IOException error) {
+                // WebView2 child processes may briefly retain files after the
+                // component is disposed. Retry without blocking Swing's EDT.
+                if (attempt + 1 < CLEANUP_ATTEMPTS) {
+                    scheduleDelete(directory, attempt + 1);
+                }
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private static void deleteTree(Path directory) throws IOException {
+        if (!Files.exists(directory)) return;
+        Files.walkFileTree(directory, new SimpleFileVisitor<Path>() {
+            @Override public FileVisitResult visitFile(Path file,
+                    BasicFileAttributes attributes) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override public FileVisitResult postVisitDirectory(Path dir,
+                    IOException error) throws IOException {
+                if (error != null) throw error;
+                Files.deleteIfExists(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private static boolean containsLoginCredential(String header) {

@@ -7,6 +7,8 @@ import dev.t1m3.qplayer.util.Logger;
 import javax.swing.JFileChooser;
 import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import java.awt.Window;
+import java.awt.event.HierarchyEvent;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -64,6 +66,16 @@ final class DesktopFilePicker {
                             "图片文件 (*.png, *.jpg, *.webp, *.gif, *.bmp)",
                             "png", "jpg", "jpeg", "webp", "gif", "bmp"));
                 }
+
+                // The GLFW main window cannot be passed as an AWT owner. Bring
+                // the JFileChooser-created dialog forward as soon as it becomes
+                // visible instead of letting Windows place it behind QPlayer.
+                chooser.addHierarchyListener(event -> {
+                    if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0
+                            || !chooser.isShowing()) return;
+                    Window dialog = SwingUtilities.getWindowAncestor(chooser);
+                    DesktopSwingFocus.requestForeground(dialog);
+                });
 
                 if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
                     File selected = chooser.getSelectedFile();
