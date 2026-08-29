@@ -122,6 +122,12 @@ Rectangle {
                    ? row.coverThumbPath : ""
             radius: 8
             fillMode: Image.PreserveAspectCrop
+            // See CoverImage.qml: decode-time downscale (mipmap-quality)
+            // instead of a plain bilinear draw-time scale, which aliases
+            // into moiré. Fixed size (the leading box is always 48x48), so
+            // no reuse-staleness risk from VirtualSongList's windowing.
+            sourceSize.width: width
+            sourceSize.height: height
             // Fade the art in as it loads, like the lyric-page cover. Keyed on source
             // presence (not load status, which would deadlock — opacity 0 skips the
             // paint that advances the decode). A reused row whose source swaps path→path

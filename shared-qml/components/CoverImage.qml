@@ -45,6 +45,17 @@ Item {
         source: cover.source
         radius: cover.radius
         fillMode: "PreserveAspectCrop"
+        // Without this, qml4j's decoder (ImageLoader.decodeRaster) has no target
+        // size to shrink to at LOAD time, so it keeps the full source resolution
+        // (now up to 1024px for playlist/album covers) and the draw-time scale
+        // down to a small grid tile falls back to Painter's plain bilinear
+        // SamplingMode.LINEAR (no mipmap) -- that aliases badly on any
+        // high-frequency detail in the art (fine text, a repeating pattern),
+        // showing up as moiré. Setting sourceSize routes the SAME downscale
+        // through decodeRaster's mipmap-quality FilterMipmap pass instead, done
+        // once at decode time rather than approximated every frame.
+        sourceSize.width: cover.width
+        sourceSize.height: cover.height
         // Fade the art in on a source change (fadeIn only). Driven by source presence,
         // NOT the Image's load status: a status-gated opacity would deadlock — opacity 0
         // makes the renderer skip painting the node, and the decode that advances status

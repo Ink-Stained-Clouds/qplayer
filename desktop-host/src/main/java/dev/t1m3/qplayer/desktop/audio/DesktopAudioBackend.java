@@ -32,9 +32,18 @@ import static org.lwjgl.system.MemoryUtil.NULL;
  */
 public final class DesktopAudioBackend implements AudioBackend {
 
-    /** Buffer ring depth and per-buffer size. 4 × ~93 ms keeps a smooth feed
-     *  while keeping seek/pause refill cheap. */
-    private static final int NUM_BUFFERS = 4;
+    /** Buffer ring depth and per-buffer size. primeFromCurrent() fills every
+     *  buffer before alSourcePlay() is called, so this ring is also the
+     *  pre-read buffer: 16 x ~93ms (each ~93ms at 44.1kHz/16-bit stereo)
+     *  totals ~1.5s of decoded audio queued before a track actually starts
+     *  sounding -- deliberately traded for start-up latency, to absorb a
+     *  network stall on a streamed netease URL (HttpByteSource.read()
+     *  blocks the decoder, and thus this fill loop, until enough bytes have
+     *  downloaded) without an audible stutter partway into the track. Still
+     *  fine-grained per-buffer (not fewer/bigger buffers) so seek/pause
+     *  refill stays cheap.
+     */
+    private static final int NUM_BUFFERS = 16;
     private static final int CHUNK_BYTES = 16 * 1024;
 
     private final AtomicBoolean playing = new AtomicBoolean(false);

@@ -54,6 +54,14 @@ Rectangle {
             source: row.coverThumbPath !== "" ? row.coverThumbPath : row.coverUrl
             radius: width / 2
             fillMode: Image.PreserveAspectCrop
+            // See CoverImage.qml's own comment: without sourceSize, a large
+            // fetched avatar (up to 512px) gets decoded at full resolution and
+            // downscaled to this 44px avatar every frame with plain (non-
+            // mipmap) bilinear sampling -- aliases into visible moiré on
+            // detailed source art. sourceSize routes it through the mipmap-
+            // quality decode-time downscale instead.
+            sourceSize.width: width
+            sourceSize.height: height
         }
     }
 

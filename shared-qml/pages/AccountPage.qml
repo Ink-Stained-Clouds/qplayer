@@ -97,6 +97,11 @@ Rectangle {
                                 radius: width / 2
                                 fillMode: "PreserveAspectCrop"
                                 visible: player.userAvatar.length > 0
+                                // See CoverImage.qml: decode-time downscale
+                                // (mipmap-quality) instead of a plain bilinear
+                                // draw-time scale, which aliases into moiré.
+                                sourceSize.width: width
+                                sourceSize.height: height
                             }
                         }
 
