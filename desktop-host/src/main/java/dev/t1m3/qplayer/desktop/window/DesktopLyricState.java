@@ -7,6 +7,8 @@ import io.github.timer_err.qml4j.engine.binding.Property;
 /** qml4j context object owned and mutated only by the desktop-lyric thread. */
 public final class DesktopLyricState extends QObject {
 
+    static final String IDLE_PLACEHOLDER = "暂无播放";
+
     public final Property<Boolean> playing = new Property<>(Boolean.FALSE);
     public final Property<Boolean> pointerInside = new Property<>(Boolean.FALSE);
     public final Property<Boolean> mousePassthrough = new Property<>(Boolean.FALSE);
@@ -31,9 +33,9 @@ public final class DesktopLyricState extends QObject {
     }
 
     void update(DesktopLyricSnapshot snapshot, long nowNanos) {
-        positionMs = snapshot.predictedPosition(nowNanos);
-        LyricTimeline.Frame frame = LyricTimeline.frameAt(snapshot.timeline, positionMs);
-        this.frame = frame;
+        boolean active = snapshot.playing;
+        positionMs = active ? snapshot.predictedPosition(nowNanos) : 0L;
+        this.frame = active ? LyricTimeline.frameAt(snapshot.timeline, positionMs) : null;
         fallbackText = fallback(snapshot);
         fontSize = Math.max(18, Math.min(38, snapshot.fontSize));
         fontWeight = Math.max(0, Math.min(3, snapshot.fontWeight));
@@ -102,7 +104,8 @@ public final class DesktopLyricState extends QObject {
         owner.requestClose();
     }
 
-    private static String fallback(DesktopLyricSnapshot snapshot) {
+    static String fallback(DesktopLyricSnapshot snapshot) {
+        if (!snapshot.playing) return IDLE_PLACEHOLDER;
         if (snapshot.title.isEmpty()) return "";
         return snapshot.artist.isEmpty() ? snapshot.title : snapshot.title + "  ·  " + snapshot.artist;
     }

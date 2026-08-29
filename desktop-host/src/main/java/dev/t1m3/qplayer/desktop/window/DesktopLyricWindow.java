@@ -187,6 +187,7 @@ public final class DesktopLyricWindow {
             Logger.warn("desktop lyric window: glfwCreateWindow failed");
             return;
         }
+        AuxiliaryWindowStyle.hideFromTaskSwitchers(window);
         boolean transparent = GLFW.glfwGetWindowAttrib(
                 window, GLFW.GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW.GLFW_TRUE;
         DesktopWindow.applyWindowsRoundedCorners(window);
