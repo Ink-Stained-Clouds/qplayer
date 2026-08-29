@@ -17,6 +17,7 @@ import dev.t1m3.qplayer.desktop.resources.ClasspathResourceLoader;
 import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
 import dev.t1m3.qplayer.desktop.resources.DiskDecompressedResourceCache;
 import dev.t1m3.qplayer.desktop.security.DesktopCredentialProtection;
+import dev.t1m3.qplayer.desktop.settings.DesktopThemeMonitor;
 import dev.t1m3.qplayer.desktop.settings.JsonSettingsStore;
 import dev.t1m3.qplayer.desktop.tray.TrayController;
 import dev.t1m3.qplayer.desktop.window.DesktopWindow;
@@ -134,7 +135,8 @@ public final class Main {
         settings.setDefault("musicFolder",
                 new File(System.getProperty("user.home", "."), "Music").getAbsolutePath());
         settings.setDefault("cacheFolder", AppDirs.cacheBase());
-        settings.setSystemDark(detectSystemDark());
+        boolean initialSystemDark = DesktopThemeMonitor.detectSystemDark();
+        settings.setSystemDark(initialSystemDark);
         settings.registerAction("clearCache", controller::clearDiskCache);
         settings.registerAction("checkUpdate", controller::checkForUpdateManual);
         settings.registerAction("openRepo", () -> openUrl("https://github.com/TIMER-err/qplayer"));
@@ -143,8 +145,6 @@ public final class Main {
         JsonSettingsStore desktopStore = new JsonSettingsStore();
         settings.load(desktopStore, SettingsCatalog.DESKTOP);
         DesktopFilePicker.initializeLookAndFeel(settings.resolvedDarkValue());
-        settings.onChange("darkMode", ignored ->
-                DesktopFilePicker.setDarkTheme(settings.resolvedDarkValue()));
 
         // Fonts for the host-drawn lyric renderer (the QML scene fonts are set on the
         // view in DesktopWindow.ensureView).
@@ -162,6 +162,16 @@ public final class Main {
         QmlEngine engine = new QmlEngine();
         DesktopWindow window = new DesktopWindow(engine, qml, resources, controller, settings,
                 qmlCompilationCache);
+        settings.onChange("darkMode", ignored -> {
+            DesktopFilePicker.setDarkTheme(settings.resolvedDarkValue());
+            window.refreshSystemChromeTheme();
+        });
+        DesktopThemeMonitor themeMonitor = new DesktopThemeMonitor(initialSystemDark, dark ->
+                window.postRenderTask(() -> {
+                    settings.setSystemDark(dark);
+                    DesktopFilePicker.setDarkTheme(settings.resolvedDarkValue());
+                    window.refreshSystemChromeTheme();
+                }));
         // Desktop lyrics shares SettingsCore's store so its settings-page toggle
         // and tray toggle remain one value; window position uses adjacent host keys.
         window.setLyricSettingsStore(desktopStore);
@@ -288,9 +298,11 @@ public final class Main {
         // Start rendering only after every callback and persisted cache path is
         // wired, then enter the native event loop immediately.
         window.spawnRenderThread();
+        themeMonitor.start();
 
         window.runEventLoop(); // blocks on the main thread until quit
 
+        themeMonitor.close();
         watcher.stop();
         if (systemMedia != null) systemMedia.shutdown();
         tray.shutdown();
@@ -301,13 +313,6 @@ public final class Main {
         }
         window.shutdown();
         Logger.info("QPlayer desktop exited");
-    }
-
-    /** Best-effort desktop dark-theme probe: a GTK theme-name hint, else light.
-     *  Unlike Android there's no live signal to observe, so this is read once. */
-    private static boolean detectSystemDark() {
-        String t = System.getenv("GTK_THEME");
-        return t != null && t.toLowerCase().contains("dark");
     }
 
     /** Open a URL in the system default browser via the OS handler (no AWT). */

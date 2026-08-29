@@ -461,7 +461,9 @@ public class PlayerControllerPlaybackTest {
 
             backend.position = 119500L;
             controller.pump();
-            Thread.sleep(120L);
+            // The fade worker can start late on a busy CI runner. Wait for an
+            // observable fade sample instead of assuming one landed within 120 ms.
+            waitForVolumeBelow(backend, 0.8f, ASYNC_FADE_TIMEOUT_MS);
             assertTrue(backend.volume < 0.8f);
 
             controller.seek(1000L);
@@ -652,6 +654,14 @@ public class PlayerControllerPlaybackTest {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (Math.abs(backend.volume - target) > 0.001f
                 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+    }
+
+    private static void waitForVolumeBelow(FakeAudioBackend backend, float upperBound,
+                                           long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (backend.volume >= upperBound && System.currentTimeMillis() < deadline) {
             Thread.sleep(10L);
         }
     }

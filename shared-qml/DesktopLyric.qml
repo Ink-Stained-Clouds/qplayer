@@ -20,7 +20,7 @@ Item {
         DesktopLyricControlButton {
             x: 12
             y: 12
-            icon: "arrow_back"
+            icon: "open_in_new"
             onClicked: desktopLyric.openPlayer()
         }
 

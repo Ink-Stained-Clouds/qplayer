@@ -202,6 +202,11 @@ public final class DesktopWindow {
         mainTasks.add(r);
     }
 
+    /** Reapply native frame colors after the effective app theme changes. */
+    public void refreshSystemChromeTheme() {
+        postMainTask(this::applyWindowsDwmChrome);
+    }
+
     void drainRenderTasks() {
         Runnable r;
         while ((r = renderTasks.poll()) != null) {
@@ -569,16 +574,6 @@ public final class DesktopWindow {
     private static final int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     private static final int DWMWCP_ROUND = 2;
 
-    /** Windows-only chrome polish. GLFW creates a plain top-level window with the
-     *  OS's default (light) frame; a Windows 11 desktop won't necessarily round its
-     *  corners on its own (the DWM heuristic that does this automatically doesn't
-     *  reliably trigger for a bare GL/Vulkan-surfaced window), and the frame stays
-     *  light even though the UI right below it is dark — both need an explicit
-     *  opt-in via DwmSetWindowAttribute. Read the theme once at window creation
-     *  (same "restart to apply" convention as the font selection above) rather than
-     *  wiring a live listener for a mid-session theme switch. Best-effort: any
-     *  failure (pre-Windows-11 corner attribute, no dwmapi, ...) just leaves the OS
-     *  default frame, so this never blocks startup. */
     /** Windows-only cold-start workaround: the custom title bar's reserved top
      *  strip (settings.topInset, already 40 before the QML view is ever built --
      *  see createWindow()) renders as a few stray pixels on the very first frames
@@ -641,11 +636,10 @@ public final class DesktopWindow {
      *  corners on its own (the DWM heuristic that does this automatically doesn't
      *  reliably trigger for a bare GL/Vulkan-surfaced window), and the frame stays
      *  light even though the UI right below it is dark — both need an explicit
-     *  opt-in via DwmSetWindowAttribute. Read the theme once at window creation
-     *  (same "restart to apply" convention as the font selection above) rather than
-     *  wiring a live listener for a mid-session theme switch. Best-effort: any
-     *  failure (pre-Windows-11 corner attribute, no dwmapi, ...) just leaves the OS
-     *  default frame, so this never blocks startup.
+     *  opt-in via DwmSetWindowAttribute. The desktop theme monitor reapplies the
+     *  dark-frame value when the effective theme changes. Best-effort: any failure
+     *  (pre-Windows-11 corner attribute, no dwmapi, ...) just leaves the OS default
+     *  frame, so this never blocks startup.
      *
      *  Note: 圆角窗口仅在 Windows 11+ 上支持。Linux 不支持圆角窗口，Mac 未测试。
      *  非 Windows 平台会跳过此方法，使用系统默认窗口样式。*/
