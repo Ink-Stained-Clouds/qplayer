@@ -5,6 +5,8 @@ import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLong;
 import com.sun.jna.Pointer;
+import com.sun.jna.Structure;
+import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.platform.win32.WinUser;
@@ -13,12 +15,17 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.glfw.GLFWNativeX11;
 
+import java.util.List;
+
 /** Native window-manager hints for non-document auxiliary windows. */
 final class AuxiliaryWindowStyle {
 
     // Not all extended-style constants are exposed by jna-platform's WinUser.
     static final int WS_EX_TOOLWINDOW = 0x00000080;
     static final int WS_EX_APPWINDOW = 0x00040000;
+    private static final int SHAPE_SET = 0;
+    private static final int SHAPE_INPUT = 2;
+    private static final int UNSORTED = 0;
 
     private AuxiliaryWindowStyle() {
     }
@@ -45,6 +52,38 @@ final class AuxiliaryWindowStyle {
         return (currentStyle | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
     }
 
+    /**
+     * On X11/XWayland, keep only the unlock button in the input shape while the
+     * lyric window is locked. Unlike GLFW's whole-window passthrough attribute,
+     * the X Shape extension lets that one rectangle continue receiving clicks.
+     */
+    static boolean setX11InputRegion(long glfwWindow, boolean locked,
+                                     int unlockX, int unlockY,
+                                     int unlockWidth, int unlockHeight,
+                                     int windowWidth, int windowHeight) {
+        if (GLFW.glfwGetPlatform() != GLFW.GLFW_PLATFORM_X11) return false;
+        try {
+            long displayHandle = GLFWNativeX11.glfwGetX11Display();
+            long windowHandle = GLFWNativeX11.glfwGetX11Window(glfwWindow);
+            if (displayHandle == 0L || windowHandle == 0L) return false;
+            Pointer display = Pointer.createConstant(displayHandle);
+            if (XextApi.I.XShapeQueryExtension(display,
+                    new IntByReference(), new IntByReference()) == 0) return false;
+
+            XRectangle rectangle = locked
+                    ? new XRectangle(unlockX, unlockY, unlockWidth, unlockHeight)
+                    : new XRectangle(0, 0, windowWidth, windowHeight);
+            rectangle.write();
+            XextApi.I.XShapeCombineRectangles(display, new NativeLong(windowHandle),
+                    SHAPE_INPUT, 0, 0, rectangle, 1, SHAPE_SET, UNSORTED);
+            X11Api.I.XFlush(display);
+            return true;
+        } catch (Throwable error) {
+            Logger.warn("desktop lyric X11 input region failed: {}", error.toString());
+            return false;
+        }
+    }
+
     private static void applyWindows(long glfwWindow) {
         long nativeHandle = GLFWNativeWin32.glfwGetWin32Window(glfwWindow);
         if (nativeHandle == 0L) return;
@@ -69,15 +108,19 @@ final class AuxiliaryWindowStyle {
                 display, "_NET_WM_STATE_SKIP_TASKBAR", 0);
         NativeLong skipPager = X11Api.I.XInternAtom(
                 display, "_NET_WM_STATE_SKIP_PAGER", 0);
+        NativeLong above = X11Api.I.XInternAtom(
+                display, "_NET_WM_STATE_ABOVE", 0);
         NativeLong windowTypeProperty = X11Api.I.XInternAtom(
                 display, "_NET_WM_WINDOW_TYPE", 0);
         NativeLong utilityType = X11Api.I.XInternAtom(
                 display, "_NET_WM_WINDOW_TYPE_UTILITY", 0);
 
-        try (Memory states = nativeLongArray(skipTaskbar, skipPager);
+        // GLFW_FLOATING initially asks for ABOVE. Preserve it when replacing the
+        // complete _NET_WM_STATE property with our task-switcher hints.
+        try (Memory states = nativeLongArray(skipTaskbar, skipPager, above);
              Memory type = nativeLongArray(utilityType)) {
             X11Api.I.XChangeProperty(display, window, stateProperty, atomType,
-                    32, 0, states, 2);
+                    32, 0, states, 3);
             X11Api.I.XChangeProperty(display, window, windowTypeProperty, atomType,
                     32, 0, type, 1);
         }
@@ -102,5 +145,39 @@ final class AuxiliaryWindowStyle {
                             int elementCount);
 
         int XFlush(Pointer display);
+    }
+
+    private interface XextApi extends Library {
+        XextApi I = Native.load("Xext", XextApi.class);
+
+        int XShapeQueryExtension(Pointer display, IntByReference eventBase,
+                                 IntByReference errorBase);
+
+        void XShapeCombineRectangles(Pointer display, NativeLong window,
+                                     int destinationKind, int xOffset, int yOffset,
+                                     XRectangle rectangles, int rectangleCount,
+                                     int operation, int ordering);
+    }
+
+    public static final class XRectangle extends Structure {
+        public short x;
+        public short y;
+        public short width;
+        public short height;
+
+        public XRectangle() {
+        }
+
+        XRectangle(int x, int y, int width, int height) {
+            this.x = (short) x;
+            this.y = (short) y;
+            this.width = (short) width;
+            this.height = (short) height;
+        }
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return List.of("x", "y", "width", "height");
+        }
     }
 }

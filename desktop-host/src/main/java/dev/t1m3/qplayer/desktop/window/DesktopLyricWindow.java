@@ -73,6 +73,7 @@ public final class DesktopLyricWindow {
     private volatile boolean pointerInside;
     private volatile boolean mousePassthrough;
     private boolean nativeMousePassthrough;
+    private boolean x11InputRegionSupported;
     private GraphicsBackend.Kind kind;
     private boolean positioningSupported = true;
     private List<LyricLine> lastLines;
@@ -208,7 +209,12 @@ public final class DesktopLyricWindow {
         if (positioningSupported && x >= 0 && y >= 0) GLFW.glfwSetWindowPos(window, x, y);
         else if (positioningSupported) centerBottom();
         if (positioningSupported) installDragHandlers();
-        updateMousePassthroughRegion();
+        x11InputRegionSupported = AuxiliaryWindowStyle.setX11InputRegion(window,
+                mousePassthrough, (int) UNLOCK_LEFT, (int) BOTTOM_HIT_TOP,
+                (int) (UNLOCK_RIGHT - UNLOCK_LEFT),
+                (int) (BOTTOM_HIT_BOTTOM - BOTTOM_HIT_TOP), WIDTH, HEIGHT);
+        if (x11InputRegionSupported) nativeMousePassthrough = mousePassthrough;
+        else updateMousePassthroughRegion();
         boolean requestedEnabled = store.getBool(ENABLED_KEY, false);
         enabled = positioningSupported && requestedEnabled;
         if (!positioningSupported) {
@@ -358,6 +364,17 @@ public final class DesktopLyricWindow {
     void updateMousePassthroughRegion() {
         long handle = window;
         if (handle == MemoryUtil.NULL) return;
+        if (x11InputRegionSupported) {
+            if (mousePassthrough == nativeMousePassthrough) return;
+            if (AuxiliaryWindowStyle.setX11InputRegion(handle, mousePassthrough,
+                    (int) UNLOCK_LEFT, (int) BOTTOM_HIT_TOP,
+                    (int) (UNLOCK_RIGHT - UNLOCK_LEFT),
+                    (int) (BOTTOM_HIT_BOTTOM - BOTTOM_HIT_TOP), WIDTH, HEIGHT)) {
+                nativeMousePassthrough = mousePassthrough;
+                return;
+            }
+            x11InputRegionSupported = false;
+        }
         boolean overUnlock = mousePassthrough && cursorOverUnlockButton();
         boolean desiredNative = mousePassthrough && !overUnlock;
         if (desiredNative == nativeMousePassthrough) return;
@@ -545,6 +562,7 @@ public final class DesktopLyricWindow {
         GLFW.glfwDestroyWindow(handle);
         window = MemoryUtil.NULL;
         nativeMousePassthrough = false;
+        x11InputRegionSupported = false;
         pointerInside = false;
     }
 
