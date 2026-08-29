@@ -131,12 +131,28 @@ Item {
         height: root.height
         visible: false
         property real edgeFraction: Math.min(0.5, root.fadeWidth / Math.max(1, root.width))
+        // Fade an edge only while a text copy actually crosses that boundary.
+        // During the initial pause label starts exactly at x=0, so its first
+        // glyph remains fully opaque instead of being mistaken for overflow.
+        property bool fadeLeft: label.scrollX < 0
+                                && label.scrollX + probe.implicitWidth > 0
+        property real nextX: label.scrollX + probe.implicitWidth + root.repeatGap
+        property bool fadeRight: (label.scrollX < root.width
+                                  && label.scrollX + probe.implicitWidth > root.width)
+                                 || (nextX < root.width
+                                     && nextX + probe.implicitWidth > root.width)
         gradient: Gradient {
             orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+            GradientStop {
+                position: 0.0
+                color: marqueeMask.fadeLeft ? Qt.rgba(1, 1, 1, 0) : "white"
+            }
             GradientStop { position: marqueeMask.edgeFraction; color: "white" }
             GradientStop { position: 1.0 - marqueeMask.edgeFraction; color: "white" }
-            GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
+            GradientStop {
+                position: 1.0
+                color: marqueeMask.fadeRight ? Qt.rgba(1, 1, 1, 0) : "white"
+            }
         }
     }
 
