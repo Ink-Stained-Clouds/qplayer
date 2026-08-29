@@ -10,13 +10,41 @@ public class SettingsCatalogTest {
 
     @Test
     public void systemTitleBarIsDesktopOnlyAndDefaultsOff() {
-        SettingSpec spec = SettingsCatalog.specs().stream()
-                .filter(candidate -> "windowDecorated".equals(candidate.key))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("windowDecorated setting missing"));
+        SettingSpec spec = setting("windowDecorated");
 
         assertEquals(Boolean.FALSE, spec.def);
         assertTrue(spec.appliesTo(SettingsCatalog.DESKTOP));
         assertFalse(spec.appliesTo(SettingsCatalog.ANDROID));
+    }
+
+    @Test
+    public void lyricSizingUsesDottedFixedStepSliders() {
+        SettingSpec fontSize = setting("lyricFontSize");
+        SettingSpec lineSpacing = setting("lyricLineSpacing");
+
+        assertEquals(SettingSpec.SLIDER, fontSize.type);
+        assertTrue(fontSize.dots);
+        assertEquals(1, fontSize.step);
+
+        assertEquals(SettingSpec.SLIDER, lineSpacing.type);
+        assertTrue(lineSpacing.dots);
+        assertEquals(5, lineSpacing.step);
+    }
+
+    @Test
+    public void maximumCacheUsesPlainSlider() {
+        SettingSpec cache = setting("maxCacheSizeMB");
+
+        assertEquals(SettingSpec.SLIDER, cache.type);
+        assertFalse(cache.dots);
+        assertEquals(50, cache.min);
+        assertEquals(1024, cache.max);
+    }
+
+    private static SettingSpec setting(String key) {
+        return SettingsCatalog.specs().stream()
+                .filter(candidate -> key.equals(candidate.key))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(key + " setting missing"));
     }
 }

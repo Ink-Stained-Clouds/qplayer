@@ -202,6 +202,7 @@ Rectangle {
 
                                     sourceComponent: modelData.type === "switch" ? switchRow
                                                    : modelData.type === "stepper" ? stepperRow
+                                                   : modelData.type === "slider" ? sliderRow
                                                    : modelData.type === "segmented" ? segmentedRow
                                                    : modelData.type === "radio" ? radioRow
                                                    : modelData.type === "dropdown" ? dropdownRow
@@ -234,6 +235,7 @@ Rectangle {
                                     property var rowSpec: modelData
                                     sourceComponent: modelData.type === "switch" ? switchRow
                                                    : modelData.type === "stepper" ? stepperRow
+                                                   : modelData.type === "slider" ? sliderRow
                                                    : modelData.type === "segmented" ? segmentedRow
                                                    : modelData.type === "radio" ? radioRow
                                                    : modelData.type === "dropdown" ? dropdownRow
@@ -252,6 +254,7 @@ Rectangle {
             Item {
                 Component { id: switchRow; SettingSwitchRow { spec: rowSpec } }
                 Component { id: stepperRow; SettingStepperRow { spec: rowSpec } }
+                Component { id: sliderRow; SettingSliderRow { spec: rowSpec } }
                 Component { id: segmentedRow; SettingSegmentedRow { spec: rowSpec } }
                 Component { id: radioRow; SettingRadioRow { spec: rowSpec } }
                 Component { id: dropdownRow; SettingDropdownRow { spec: rowSpec } }

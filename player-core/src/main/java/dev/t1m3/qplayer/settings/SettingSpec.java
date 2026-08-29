@@ -20,6 +20,7 @@ public final class SettingSpec {
     // unknown renders as nothing rather than breaking the page.
     public static final String SWITCH = "switch";        // boolean toggle
     public static final String STEPPER = "stepper";      // int with -/+ buttons
+    public static final String SLIDER = "slider";        // int selected on a slider
     public static final String SEGMENTED = "segmented";  // int index over `options`
     public static final String TEXT = "text";            // string + 应用 button
     public static final String PATH = "path";            // string chosen by the host directory picker
@@ -41,14 +42,14 @@ public final class SettingSpec {
     public final String title;
     /** Secondary line under the title; empty for none. */
     public final String desc;
-    /** Initial value for {@link #SWITCH} (Boolean), {@link #STEPPER}/
+    /** Initial value for {@link #SWITCH} (Boolean), {@link #STEPPER}/{@link #SLIDER}/
      *  {@link #SEGMENTED}/{@link #RADIO}/{@link #DROPDOWN} (Integer) and
      *  {@link #TEXT}/{@link #PATH} (String); null for the
      *  valueless row types. A null default here means "ask the host at load
      *  time" — see {@link SettingsCore#defaultOverride}. */
     public final Object def;
 
-    // Stepper bounds. `scale` divides the stored value for display only, so a
+    // Numeric-control bounds. `scale` divides the stored value for display only, so a
     // line height persisted as 200 shows as 2.00 without QML doing the math.
     public final int min;
     public final int max;
@@ -56,6 +57,9 @@ public final class SettingSpec {
     public final int scale;
     /** Suffix appended to a stepper's displayed value, e.g. " px" or "×". */
     public final String unit;
+    /** Draw one dot at every declared slider step. A slider without dots remains
+     *  continuous while dragging and is rounded to an integer when committed. */
+    public final boolean dots;
 
     /** Segmented labels, left to right; the stored value is the index. */
     public final List<String> options;
@@ -100,6 +104,7 @@ public final class SettingSpec {
         this.step = b.step;
         this.scale = b.scale;
         this.unit = b.unit;
+        this.dots = b.dots;
         this.options = b.options;
         this.hint = b.hint;
         this.button = b.button;
@@ -123,7 +128,7 @@ public final class SettingSpec {
     /** Whether the row carries a stored value (as opposed to being a button or
      *  a read-only line). */
     public boolean hasValue() {
-        return SWITCH.equals(type) || STEPPER.equals(type)
+        return SWITCH.equals(type) || STEPPER.equals(type) || SLIDER.equals(type)
                 || SEGMENTED.equals(type) || TEXT.equals(type) || PATH.equals(type)
                 || RADIO.equals(type)
                 || DROPDOWN.equals(type);
@@ -136,6 +141,11 @@ public final class SettingSpec {
     public static Builder stepper(String key, String category, String title,
                                   int def, int min, int max, int step) {
         return new Builder(key, STEPPER, category, title).def(def).range(min, max, step);
+    }
+
+    public static Builder slider(String key, String category, String title,
+                                 int def, int min, int max, int step) {
+        return new Builder(key, SLIDER, category, title).def(def).range(min, max, step);
     }
 
     public static Builder segmented(String key, String category, String title,
@@ -184,6 +194,7 @@ public final class SettingSpec {
         private int step = 1;
         private int scale = 1;
         private String unit = "";
+        private boolean dots;
         private List<String> options = Collections.emptyList();
         private String hint = "";
         private String button = "";
@@ -208,6 +219,7 @@ public final class SettingSpec {
         public Builder desc(String v) { this.desc = v; return this; }
         public Builder def(Object v) { this.def = v; return this; }
         public Builder unit(String v) { this.unit = v; return this; }
+        public Builder dots() { this.dots = true; return this; }
         public Builder scale(int v) { this.scale = v; return this; }
         public Builder hint(String v) { this.hint = v; return this; }
         public Builder button(String v) { this.button = v; return this; }

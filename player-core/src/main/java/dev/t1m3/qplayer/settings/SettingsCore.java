@@ -185,7 +185,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     }
 
     /** Write from the UI: normalizes (QML hands integers over as Long), clamps a
-     *  stepper to its declared range, persists, then applies. */
+     *  numeric control to its declared range, persists, then applies. */
     public void setValue(String key, Object raw) {
         SettingSpec spec = specsByKey.get(key);
         Property<Object> p = values.get(key);
@@ -317,6 +317,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
             case SettingSpec.SWITCH:
                 return store.getBool(spec.key, Boolean.TRUE.equals(def));
             case SettingSpec.STEPPER:
+            case SettingSpec.SLIDER:
             case SettingSpec.SEGMENTED:
             case SettingSpec.RADIO:
             case SettingSpec.DROPDOWN:
@@ -335,6 +336,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 store.putBool(spec.key, Boolean.TRUE.equals(v));
                 break;
             case SettingSpec.STEPPER:
+            case SettingSpec.SLIDER:
             case SettingSpec.SEGMENTED:
             case SettingSpec.RADIO:
             case SettingSpec.DROPDOWN:
@@ -350,15 +352,22 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     }
 
     /** QML writes arrive as Long/Double for numbers and can be anything for a
-     *  text field; coerce to the spec's own type and clamp steppers. */
+     *  text field; coerce to the spec's own type and clamp numeric controls. */
     private Object normalize(SettingSpec spec, Object raw) {
         switch (spec.type) {
             case SettingSpec.SWITCH:
                 return Boolean.TRUE.equals(raw);
-            case SettingSpec.STEPPER: {
+            case SettingSpec.STEPPER:
+            case SettingSpec.SLIDER: {
                 if (!(raw instanceof Number)) return null;
                 int v = ((Number) raw).intValue();
-                return Math.max(spec.min, Math.min(spec.max, v));
+                int clamped = Math.max(spec.min, Math.min(spec.max, v));
+                if (SettingSpec.SLIDER.equals(spec.type) && spec.dots && spec.step > 0) {
+                    int steps = Math.round((clamped - spec.min) / (float) spec.step);
+                    clamped = Math.max(spec.min,
+                            Math.min(spec.max, spec.min + steps * spec.step));
+                }
+                return clamped;
             }
             case SettingSpec.SEGMENTED:
             case SettingSpec.RADIO:

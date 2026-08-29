@@ -107,14 +107,14 @@ public final class SettingsCatalog {
         // ---- 歌词 -----------------------------------------------------------
         // One card per control, like every other tab: no group() here, so each
         // row is its own card and the wide-window grid can pair them up.
-        out.add(SettingSpec.stepper("lyricFontSize", LYRIC, "字号", 28, 14, 40, 1)
-                .unit(" px")
+        out.add(SettingSpec.slider("lyricFontSize", LYRIC, "字号", 28, 14, 40, 1)
+                .unit(" px").dots()
                 .build());
         out.add(SettingSpec.segmented("lyricFontWeight", LYRIC, "字重", 2,
                         "极细", "细", "常规", "中等")
                 .build());
-        out.add(SettingSpec.stepper("lyricLineSpacing", LYRIC, "行间距", 200, 100, 250, 5)
-                .scale(100).unit("×")
+        out.add(SettingSpec.slider("lyricLineSpacing", LYRIC, "行间距", 200, 100, 250, 5)
+                .scale(100).unit("×").dots()
                 .build());
         out.add(SettingSpec.toggle("lyricSpring", LYRIC, "弹簧动效", true)
                 .desc("滚动与逐字上抬使用弹簧物理")
@@ -150,7 +150,7 @@ public final class SettingsCatalog {
                 .desc("切换歌词页的流体背景算法")
                 .build());
         // ---- 本地 -----------------------------------------------------------
-        out.add(SettingSpec.stepper("maxCacheSizeMB", LOCAL, "最大缓存", 200, 50, 1024, 50)
+        out.add(SettingSpec.slider("maxCacheSizeMB", LOCAL, "最大缓存", 200, 50, 1024, 1)
                 .unit(" MB").group("cache")
                 .build());
         out.add(SettingSpec.action("clearCache", LOCAL, "当前占用", "清除缓存")

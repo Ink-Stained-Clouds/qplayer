@@ -18,7 +18,6 @@ public final class LyricConfig {
     }
 
     public final Val<Integer> lyricFontSize = new Val<>(28);
-    public final Val<Integer> subFontSize = new Val<>(13);
     public final Val<FontWeight> fontWeight = new Val<>(FontWeight.REGULAR);
     /** Line-height multiplier applied to the lyric font size. */
     public final Val<Float> lineSpacing = new Val<>(2.00f);
