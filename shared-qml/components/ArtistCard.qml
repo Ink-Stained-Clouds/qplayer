@@ -51,7 +51,6 @@ Item {
         textColor: Theme.color.onSurfaceColor
         fontSize: 12
         fontWeight: Font.Medium
-        fadeColor: Theme.color.surfaceContainerLow
     }
 
     Text {

@@ -1,25 +1,17 @@
 import QtQuick
-import md3.Core
+import QtQuick.Effects
 
 // A single-line Text that elides normally when it fits, and auto-scrolls
-// back and forth with faded edges when it overflows -- for song/playlist
-// titles too long to read via a static "..." truncation.
+// continuously with faded edges when it overflows -- for song/playlist titles
+// too long to read via a static "..." truncation.
 //
-// The edge fade is NOT a layer.effect/MultiEffect mask: CoverImage.qml's own
-// doc notes that path "allocates an offscreen surface per instance every
-// frame" -- fine for a static rounded corner, but this component animates
-// continuously while scrolling, which is exactly the expensive case that
-// warns against. Instead each fade edge is a plain Rectangle with a
-// Gradient(orientation: Horizontal) painted OVER the text, opaque fadeColor
-// → transparent -- static, paid for once. (An earlier version stacked ~10
-// solid Rectangles stepping opacity 1→0 as a poor-man's gradient, avoiding
-// Gradient/GradientStop entirely since neither was used anywhere else in
-// this codebase -- it rendered as a hard-edged solid bar, not a fade, so
-// don't reintroduce that approach.)
+// The edge fade is an alpha mask over the text itself. Painting a background-
+// coloured gradient on top only works on a known solid fill; translucent lyric
+// chrome, cover-derived colours and animated backgrounds otherwise reveal a
+// dark strip. The offscreen effect is enabled only for overflowing text.
 //
-// Plain Item + anchors-compatible sizing (no Layout wrapper), so it drops
-// into both Layout-managed parents (PlaylistCard, page headers) and the
-// anchors-only ones (MiniPlayer, LyricOverlay) alike.
+// Plain Item + anchors-compatible sizing (no Layout wrapper), so it drops into
+// both Layout-managed parents and anchors-only ones alike.
 Item {
     id: root
 
@@ -29,28 +21,20 @@ Item {
     property string fontFamily: ""
     property int fontWeight: Font.Normal
     property bool centered: false
-    // Opaque colour the edges fade INTO -- must match whatever this sits on
-    // (its container's own fill colour). There's no way to derive this
-    // automatically since the component doesn't know its own backdrop.
-    property color fadeColor: "black"
     property real fadeWidth: 20
-    // Scroll pace (px/s) and the pause held at each end before reversing.
+    // Gap between the tail of one copy and the beginning of the next.
+    property real repeatGap: 32
+    // Scroll pace (px/s) and the pause held at the beginning of each cycle.
     property real speed: 32
     property int pauseMs: 1000
 
     implicitHeight: probe.implicitHeight
-    // Also bind the real height (not just implicitHeight) to the same value:
-    // a plain Item's height does NOT default to implicitHeight in qml4j, and
-    // hit-testing (MouseArea/anchors.fill targeting this component, or the
-    // component's own anchors.top/bottom math) reads the real height -- left
-    // unbound it silently stays 0 and swallows clicks even though the text
-    // still renders at its correct visual size. Any caller that sets an
-    // explicit height itself (most do) overrides this default as normal.
+    // A plain Item's height does not default to implicitHeight in qml4j. Bind
+    // the real height so anchors.fill hit targets work unless a caller sizes it.
     height: probe.implicitHeight
     clip: true
 
-    // Hidden probe: measures the text's real unwrapped width, the same
-    // "measure with an invisible Text" idiom AlbumCard's nameProbe uses.
+    // Hidden probe: measure the real unwrapped width.
     Text {
         id: probe
         visible: false
@@ -63,75 +47,111 @@ Item {
 
     onOverflowingChanged: if (!overflowing) label.scrollX = 0
 
+    // The common, zero-offscreen-cost path for text that fits.
     Text {
-        id: label
-        // A reactive default (not a fixed initial value): stays correctly at
-        // 0 for text that never overflows at all, since onOverflowingChanged
-        // below only fires on an actual TRUE→FALSE transition -- text that
-        // was never overflowing in the first place would otherwise never get
-        // reset off root.width (parked past the right edge) and just never
-        // appear. Breaks (becomes a plain assigned value, no longer reactive)
-        // once the scroll animation actually starts driving it, same as any
-        // QML property binding does on its first imperative assignment.
-        property real scrollX: root.overflowing ? root.width : 0
-        // x is driven by the scroll animation; verticalCenter is independent
-        // of that and keeps the text centered even when a caller's container
-        // (anchors.fill: parent) is taller than one text line -- root's own
-        // implicitHeight only matters when the caller sizes off THAT instead.
-        x: scrollX
-        anchors.verticalCenter: parent.verticalCenter
-        width: root.overflowing ? probe.implicitWidth : root.width
+        visible: !root.overflowing
+        anchors.fill: parent
         text: root.text
         color: root.textColor
         font.family: root.fontFamily
         font.pixelSize: root.fontSize
         font.weight: root.fontWeight
-        elide: root.overflowing ? Text.ElideNone : Text.ElideRight
-        horizontalAlignment: (root.centered && !root.overflowing) ? Text.AlignHCenter : Text.AlignLeft
+        elide: Text.ElideRight
+        horizontalAlignment: root.centered ? Text.AlignHCenter : Text.AlignLeft
+        verticalAlignment: Text.AlignVCenter
+    }
 
-        // One continuous pass, left-to-right reading order preserved (enters
-        // from the right, exits on the left) -- not a back-and-forth bounce.
-        // A blank pause (nothing on screen: the previous pass has fully
-        // exited left, the next hasn't entered from the right yet) separates
-        // each loop.
-        SequentialAnimation {
-            running: root.overflowing && root.visible
-            loops: Animation.Infinite
-            PauseAnimation { duration: root.pauseMs }
-            NumberAnimation {
-                target: label; property: "scrollX"
-                from: root.width
-                to: -probe.implicitWidth
-                duration: (probe.implicitWidth + root.width) / root.speed * 1000
-                easing.type: Easing.Linear
+    // MultiEffect renders an invisible source Item, as it does for Ripple.qml.
+    // A root-sized source preserves the moving label's coordinates and clips
+    // the complete marquee before the mask is applied.
+    Item {
+        id: marqueeContent
+        x: 0
+        y: 0
+        width: root.width
+        height: root.height
+        visible: false
+        clip: true
+
+        Text {
+            id: label
+            property real scrollX: 0
+            x: scrollX
+            anchors.verticalCenter: parent.verticalCenter
+            width: probe.implicitWidth
+            text: root.text
+            color: root.textColor
+            font.family: root.fontFamily
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
+            elide: Text.ElideNone
+            horizontalAlignment: Text.AlignLeft
+
+            // Scroll exactly one copy plus the fixed gap. At the endpoint the
+            // following copy occupies the first copy's initial position, so the
+            // loop reset is pixel-identical and cannot flash or leave a long gap.
+            SequentialAnimation {
+                running: root.overflowing && root.visible
+                loops: Animation.Infinite
+                PauseAnimation { duration: root.pauseMs }
+                NumberAnimation {
+                    target: label
+                    property: "scrollX"
+                    from: 0
+                    to: -(probe.implicitWidth + root.repeatGap)
+                    duration: (probe.implicitWidth + root.repeatGap) / root.speed * 1000
+                    easing.type: Easing.Linear
+                }
             }
         }
+
+        // The next copy enters before the first one has left the viewport. Only
+        // repeatGap can ever be empty, independent of the viewport/text widths.
+        Text {
+            x: label.scrollX + probe.implicitWidth + root.repeatGap
+            anchors.verticalCenter: parent.verticalCenter
+            width: probe.implicitWidth
+            text: root.text
+            color: root.textColor
+            font.family: root.fontFamily
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
+            elide: Text.ElideNone
+            horizontalAlignment: Text.AlignLeft
+        }
     }
 
+    // Alpha-only mask: transparent at the viewport boundaries and opaque
+    // through the middle. RGB never reaches the final image.
     Rectangle {
-        visible: root.overflowing
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: root.fadeWidth
-        color: "transparent"
+        id: marqueeMask
+        x: 0
+        y: 0
+        width: root.width
+        height: root.height
+        visible: false
+        property real edgeFraction: Math.min(0.5, root.fadeWidth / Math.max(1, root.width))
         gradient: Gradient {
             orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: root.fadeColor }
-            GradientStop { position: 1.0; color: Qt.rgba(root.fadeColor.r, root.fadeColor.g, root.fadeColor.b, 0) }
+            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+            GradientStop { position: marqueeMask.edgeFraction; color: "white" }
+            GradientStop { position: 1.0 - marqueeMask.edgeFraction; color: "white" }
+            GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
         }
     }
-    Rectangle {
+
+    MultiEffect {
         visible: root.overflowing
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: root.fadeWidth
-        color: "transparent"
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(root.fadeColor.r, root.fadeColor.g, root.fadeColor.b, 0) }
-            GradientStop { position: 1.0; color: root.fadeColor }
-        }
+        x: 0
+        y: 0
+        width: root.width
+        height: root.height
+        source: marqueeContent
+        maskEnabled: true
+        maskSource: marqueeMask
+        // Qt's defaults treat every non-zero mask alpha as fully visible.
+        // Widen the lower threshold so the gradient remains a gradual fade.
+        maskThresholdMin: 0.5
+        maskSpreadAtMin: 1.0
     }
 }

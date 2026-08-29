@@ -119,7 +119,6 @@ Rectangle {
                         textColor: Theme.color.onSurfaceColor
                         fontSize: 18
                         fontWeight: Font.Medium
-                        fadeColor: Theme.color.surface
                     }
 
                     Text {

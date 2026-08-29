@@ -205,7 +205,6 @@ Rectangle {
             text: player.title.length > 0 ? player.title : "未播放"
             textColor: Theme.color.onSurfaceColor
             fontSize: 15
-            fadeColor: Theme.color.surfaceContainerHigh
         }
         // Time on the right, pinned to its own width so it's never clipped; the
         // artist fills the space to its left and elides on its own.
@@ -228,7 +227,6 @@ Rectangle {
             text: player.artist
             textColor: Theme.color.onSurfaceVariantColor
             fontSize: 12
-            fadeColor: Theme.color.surfaceContainerHigh
         }
 
         MouseArea {

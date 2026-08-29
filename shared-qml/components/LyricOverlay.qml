@@ -299,11 +299,6 @@ Item {
         }
     }
 
-    // fadeColor is a translucent-black approximation, not a real match: this
-    // sits directly over the dynamic blurred-cover backdrop (no solid panel
-    // behind it), so there's no single opaque colour the edges could truly
-    // fade into -- the text dims toward the edges instead of vanishing into
-    // the background the way it does over MiniPlayer's solid bar.
     MarqueeText {
         id: titleText
         visible: !overlay.landscape
@@ -317,7 +312,6 @@ Item {
         textColor: "#FFFFFFFF"
         fontFamily: Theme.typography.titleLarge.family
         fontSize: 22
-        fadeColor: Qt.rgba(0, 0, 0, 0.55)
     }
     MarqueeText {
         id: artistText
@@ -331,7 +325,6 @@ Item {
         text: player.artist
         textColor: "#B3FFFFFF"
         fontSize: 14
-        fadeColor: Qt.rgba(0, 0, 0, 0.55)
     }
     // Jump to the artist's page, closing the lyric page first (same as the
     // rest of the app's "leave the overlay before navigating" convention).
@@ -512,7 +505,6 @@ Item {
                 fontFamily: Theme.typography.titleLarge.family
                 fontSize: 20
                 centered: true
-                fadeColor: Qt.rgba(0, 0, 0, 0.55)
             }
             MarqueeText {
                 id: lArtist
@@ -524,7 +516,6 @@ Item {
                 textColor: "#B3FFFFFF"
                 fontSize: 13
                 centered: true
-                fadeColor: Qt.rgba(0, 0, 0, 0.55)
             }
             MouseArea {
                 anchors.fill: lArtist

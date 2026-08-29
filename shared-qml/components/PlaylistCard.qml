@@ -74,7 +74,6 @@ Item {
         textColor: Theme.color.onSurfaceColor
         fontSize: 14
         fontWeight: Font.Medium
-        fadeColor: Theme.color.surfaceContainerLow
     }
 
     // Count is kept in a fixed row (including the zero case) so cards do not

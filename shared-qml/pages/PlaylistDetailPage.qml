@@ -61,7 +61,6 @@ Rectangle {
                     fontSize: titleSlot.compactLayout
                               ? Theme.typography.titleMedium.size
                               : Theme.typography.titleLarge.size
-                    fadeColor: Theme.color.surface
                 }
             }
             Button {
