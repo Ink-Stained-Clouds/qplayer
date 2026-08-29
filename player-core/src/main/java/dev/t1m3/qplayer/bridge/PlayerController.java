@@ -560,18 +560,21 @@ public final class PlayerController {
      *  Lets the detail page pass the id back for delete / remove-track actions. */
     public final Property<Long> openPlaylistId = new Property<>(0L);
     /** Currently opened artist (drill-in from a song row's artist name / an
-     *  album's artist credit). Mirrors the openPlaylist* family above.
-     *  artistPageOpen/albumPageOpen drive Main.qml's overlay visibility directly
-     *  (same pattern as queueOpen) -- they can each be true independently of
-     *  detailOpen/the current tab, so opening an artist from inside a playlist
-     *  layers the artist page on top instead of closing the playlist behind it. */
+     *  album's artist credit). Main.qml owns the actual navigation stack; the
+     *  open flags mirror only its currently visible route for host/QML state. */
     public final Property<Long> openArtistId = new Property<>(0L);
     public final Property<Boolean> artistPageOpen = new Property<>(false);
     public final Property<Boolean> albumPageOpen = new Property<>(false);
-    /** SongContextMenu's "查看歌手" picker -- a song can credit more than one
-     *  artist, so the menu no longer jumps straight to the first-listed one;
-     *  it hands the full list here and SongArtistsDialog.qml lets the user
-     *  pick which creator's page to open. */
+    /** Every artist/album navigation request bumps this revision, including a
+     *  second artist opened while an artist page is already visible. A boolean
+     *  open flag cannot represent that case, so Main.qml consumes this event and
+     *  pushes a route carrying {@link #openArtistId} or {@link #openAlbumId}. */
+    public final Property<String> pageNavigationTarget = new Property<>("");
+    public final Property<Long> pageNavigationRevision = new Property<>(0L);
+    private long pageNavigationSequence;
+    /** Shared song-credit picker for SongRow and SongContextMenu. Multiple
+     *  artists are exposed here for SongArtistsDialog; a single artist bypasses
+     *  the dialog and opens directly. */
     public final Property<Boolean> songArtistPickerOpen = new Property<>(false);
     public final Property<List<NeteaseSong.ArtistRef>> songArtistPickerList =
             new Property<>(Collections.<NeteaseSong.ArtistRef>emptyList());
@@ -1630,6 +1633,9 @@ public final class PlayerController {
         final String album = t != null ? t.album : "";
         final String cover = t != null ? t.coverUrl : "";
         final long duration = t != null ? t.durationMs : 0;
+        final long artistId = t != null ? t.artistId : 0L;
+        final String artistIdsCsv = t != null ? t.artistIdsCsv : "";
+        final String artistNamesCsv = t != null ? t.artistNamesCsv : "";
         worker.submit(() -> {
             try {
                 NeteaseClient.UrlInfo info = netease.songUrlInfo(songId, playLevel);
@@ -1648,6 +1654,9 @@ public final class PlayerController {
                 c.neteaseId = songId;
                 c.title = title;
                 c.artist = artist;
+                c.artistId = artistId;
+                c.artistIdsCsv = artistIdsCsv;
+                c.artistNamesCsv = artistNamesCsv;
                 c.album = album;
                 c.coverUrl = cover;
                 c.durationMs = duration;
@@ -1853,12 +1862,13 @@ public final class PlayerController {
         playQueue(new ArrayList<>(customPlaylist), i);
     }
 
-    /** Resolve a netease song id to a fresh Track from whichever live list the
-     *  long-press menu was opened from: the queue / custom-playlist tabs already
-     *  hold Tracks (copied so playback mutations don't alias into the custom list),
-     *  while search-result / playlist rows come through as NeteaseSong. */
+    /** Resolve a netease song id to a fresh Track from whichever live list opened
+     *  the shared context menu. Track-backed rows are copied so playback mutations
+     *  cannot alias into the custom/cached lists; page rows use NeteaseSong. */
     private Track findLiveTrack(long songId) {
         for (Track t : queue) if (t.neteaseId == songId) return copyNeteaseTrack(t);
+        for (Track t : customPlaylist) if (t.neteaseId == songId) return copyNeteaseTrack(t);
+        for (Track t : cachedSongTracks) if (t.neteaseId == songId) return copyNeteaseTrack(t);
         NeteaseSong s = findLiveSong(songId);
         return s != null ? toTrack(s) : null;
     }
@@ -1872,6 +1882,9 @@ public final class PlayerController {
         t.neteaseId = src.neteaseId;
         t.title = src.title;
         t.artist = src.artist;
+        t.artistId = src.artistId;
+        t.artistIdsCsv = src.artistIdsCsv;
+        t.artistNamesCsv = src.artistNamesCsv;
         t.album = src.album;
         t.coverUrl = src.coverUrl;
         t.coverThumbPath = src.coverThumbPath != null ? src.coverThumbPath
@@ -1880,16 +1893,20 @@ public final class PlayerController {
         return t;
     }
 
-    /** Find a netease song by id among the currently-loaded search results and
-     *  playlist tracks — the only two lists the song long-press menu opens from. */
+    /** Find a netease song by id among every currently-loaded song-row model.
+     *  SongRow exposes the same context menu in all of these views, so its actions
+     *  must resolve the full metadata regardless of which page opened the menu. */
     private NeteaseSong findLiveSong(long songId) {
-        List<NeteaseSong> results = searchResults.peek();
-        if (results != null) {
-            for (NeteaseSong s : results) if (s.id == songId) return s;
-        }
-        List<NeteaseSong> plTracks = playlistTracks.peek();
-        if (plTracks != null) {
-            for (NeteaseSong s : plTracks) if (s.id == songId) return s;
+        @SuppressWarnings("unchecked")
+        List<NeteaseSong>[] sources = new List[] {
+                searchResults.peek(), playlistTracks.peek(), recommendations.peek(),
+                recentSongs.peek(), artistSongs.peek(), albumTracks.peek()
+        };
+        for (List<NeteaseSong> songs : sources) {
+            if (songs == null) continue;
+            for (NeteaseSong song : songs) {
+                if (song.id == songId) return song;
+            }
         }
         return null;
     }
@@ -1907,6 +1924,11 @@ public final class PlayerController {
                 if (t.neteaseId != 0) sb.append(",\"neteaseId\":").append(t.neteaseId);
                 sb.append(",\"title\":").append(jsonStr(t.title));
                 sb.append(",\"artist\":").append(jsonStr(t.artist));
+                if (t.artistId != 0) sb.append(",\"artistId\":").append(t.artistId);
+                if (t.artistIdsCsv != null && !t.artistIdsCsv.isEmpty()) {
+                    sb.append(",\"artistIdsCsv\":").append(jsonStr(t.artistIdsCsv));
+                    sb.append(",\"artistNamesCsv\":").append(jsonStr(t.artistNamesCsv));
+                }
                 sb.append(",\"album\":").append(jsonStr(t.album));
                 sb.append(",\"coverUrl\":").append(jsonStr(t.coverUrl));
                 sb.append(",\"durationMs\":").append(t.durationMs);
@@ -1938,6 +1960,11 @@ public final class PlayerController {
                 t.neteaseId = o.has("neteaseId") ? o.get("neteaseId").getAsLong() : 0;
                 t.title    = o.has("title")    && !o.get("title").isJsonNull()    ? o.get("title").getAsString()    : "";
                 t.artist   = o.has("artist")   && !o.get("artist").isJsonNull()   ? o.get("artist").getAsString()   : "";
+                t.artistId = o.has("artistId") ? o.get("artistId").getAsLong() : 0L;
+                t.artistIdsCsv = o.has("artistIdsCsv") && !o.get("artistIdsCsv").isJsonNull()
+                        ? o.get("artistIdsCsv").getAsString() : "";
+                t.artistNamesCsv = o.has("artistNamesCsv") && !o.get("artistNamesCsv").isJsonNull()
+                        ? o.get("artistNamesCsv").getAsString() : "";
                 t.album    = o.has("album")    && !o.get("album").isJsonNull()    ? o.get("album").getAsString()    : "";
                 t.durationMs = o.has("durationMs") ? o.get("durationMs").getAsLong() : 0;
                 if (t.source == Track.Source.LOCAL) {
@@ -3067,7 +3094,8 @@ public final class PlayerController {
         // remember its title/artist/cover so offline search can actually surface
         // it later, regardless of whether it was ever a search result itself
         // (played from a playlist/recommendation/liked list, say).
-        songMetaIndex.upsert(nid, t.title, t.artist, t.album, t.coverUrl, t.durationMs);
+        songMetaIndex.upsert(nid, t.title, t.artist, t.artistId,
+                t.artistIdsCsv, t.artistNamesCsv, t.album, t.coverUrl, t.durationMs);
         cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
             songMetaIndex.save();
@@ -3098,7 +3126,8 @@ public final class PlayerController {
         // Whatever gets its audio cached is, by definition, playable offline —
         // remember its title/artist/cover so offline search can actually surface
         // it later, regardless of whether it was ever a search result itself.
-        songMetaIndex.upsert(nid, t.title, t.artist, t.album, cover, t.durationMs);
+        songMetaIndex.upsert(nid, t.title, t.artist, t.artistId,
+                t.artistIdsCsv, t.artistNamesCsv, t.album, cover, t.durationMs);
         cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
             // A manually cached song must be fully offline-ready: pull the cover
@@ -3304,6 +3333,8 @@ public final class PlayerController {
         t.title = s.name;
         t.artist = s.artist;
         t.artistId = s.artistId;
+        t.artistIdsCsv = s.artistIdsCsv;
+        t.artistNamesCsv = s.artistNamesCsv;
         t.album = s.album;
         t.coverUrl = s.coverUrl;
         t.coverThumbPath = s.coverThumbPath != null ? s.coverThumbPath : NeteaseClient.thumbUrl(s.coverUrl);
@@ -3444,6 +3475,11 @@ public final class PlayerController {
                 if (t.customId != null) sb.append(",\"customId\":").append(jsonStr(t.customId));
                 sb.append(",\"title\":").append(jsonStr(t.title));
                 sb.append(",\"artist\":").append(jsonStr(t.artist));
+                if (t.artistId != 0) sb.append(",\"artistId\":").append(t.artistId);
+                if (t.artistIdsCsv != null && !t.artistIdsCsv.isEmpty()) {
+                    sb.append(",\"artistIdsCsv\":").append(jsonStr(t.artistIdsCsv));
+                    sb.append(",\"artistNamesCsv\":").append(jsonStr(t.artistNamesCsv));
+                }
                 sb.append(",\"album\":").append(jsonStr(t.album));
                 sb.append(",\"coverUrl\":").append(jsonStr(t.coverUrl));
                 sb.append(",\"durationMs\":").append(t.durationMs);
@@ -3496,6 +3532,11 @@ public final class PlayerController {
                 t.customId  = o.has("customId")  && !o.get("customId").isJsonNull()  ? o.get("customId").getAsString()  : null;
                 t.title     = o.has("title")     && !o.get("title").isJsonNull()     ? o.get("title").getAsString()     : "";
                 t.artist    = o.has("artist")    && !o.get("artist").isJsonNull()    ? o.get("artist").getAsString()    : "";
+                t.artistId  = o.has("artistId") ? o.get("artistId").getAsLong() : 0L;
+                t.artistIdsCsv = o.has("artistIdsCsv") && !o.get("artistIdsCsv").isJsonNull()
+                        ? o.get("artistIdsCsv").getAsString() : "";
+                t.artistNamesCsv = o.has("artistNamesCsv") && !o.get("artistNamesCsv").isJsonNull()
+                        ? o.get("artistNamesCsv").getAsString() : "";
                 t.album     = o.has("album")     && !o.get("album").isJsonNull()     ? o.get("album").getAsString()     : "";
                 t.coverUrl  = o.has("coverUrl")  && !o.get("coverUrl").isJsonNull()  ? o.get("coverUrl").getAsString()  : "";
                 t.durationMs = o.has("durationMs") ? o.get("durationMs").getAsLong() : 0;
@@ -4195,6 +4236,14 @@ public final class PlayerController {
             refs.add(ref);
         }
         if (refs.isEmpty()) return;
+        // A single credit has no choice to make. Use the exact same entry point as
+        // selecting an item from the multi-artist dialog, but skip the dialog and
+        // its avatar request entirely.
+        if (refs.size() == 1) {
+            closeSongArtistPicker();
+            openArtist(refs.get(0).id);
+            return;
+        }
         songArtistPickerList.set(refs);
         songArtistPickerOpen.set(true);
         // A song's own artist credits carry no avatar (id/name only) -- fetch
@@ -4214,12 +4263,9 @@ public final class PlayerController {
                 NeteaseArtist artist = page != null ? page.artist : null;
                 if (artist == null || artist.coverUrl == null || artist.coverUrl.isEmpty()) continue;
                 ref.coverUrl = artist.coverUrl;
-                // 512px, not artist.coverThumbPath's fixed 128px: the picker's
-                // card tile stretches to fill the panel width/cols (can be
-                // ~330px logical for a 1-artist row), so the source needs
-                // real headroom to stay sharp even before accounting for
-                // >100% display scaling.
-                ref.coverThumbPath = thumbUrl(artist.coverUrl, "512");
+                // The picker uses compact 44px circular row avatars; 128px keeps
+                // them sharp at high display scaling without downloading card art.
+                ref.coverThumbPath = thumbUrl(artist.coverUrl, "128");
                 if (songArtistPickerRevision != revision) return;
                 // Fresh ArtistRef instances, not the same mutated objects re-wrapped in
                 // a new ArrayList: List.equals() compares elements pairwise, and two
@@ -4248,6 +4294,7 @@ public final class PlayerController {
     }
 
     public void closeSongArtistPicker() {
+        songArtistPickerRevision++;
         songArtistPickerOpen.set(false);
     }
 
@@ -4258,6 +4305,8 @@ public final class PlayerController {
         currentArtistId = artistId;
         openArtistId.set(artistId);
         artistPageOpen.set(true);
+        pageNavigationTarget.set("artist");
+        pageNavigationRevision.set(++pageNavigationSequence);
         artistLoading.set(true);
         artistName.set("");
         artistCoverPath.set("");
@@ -4304,6 +4353,8 @@ public final class PlayerController {
         currentAlbumId = albumId;
         openAlbumId.set(albumId);
         albumPageOpen.set(true);
+        pageNavigationTarget.set("album");
+        pageNavigationRevision.set(++pageNavigationSequence);
         albumLoading.set(true);
         albumName.set("");
         albumCoverPath.set("");

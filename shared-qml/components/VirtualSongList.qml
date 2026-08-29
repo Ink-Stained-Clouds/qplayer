@@ -34,9 +34,10 @@ Flickable {
     // instead -- correct for any local-file list, live queue or not.
     property bool highlightByFilePath: false
     property bool removable: false
-    // Long-press menu opt-in for the rows (netease-backed lists set songMenu true).
-    // ownedPlaylist unlocks "从此歌单移除" inside a playlist the user owns.
-    property bool songMenu: false
+    // Every real song row gets the same right-click/long-press menu. Callers can
+    // still turn it off for a deliberately read-only list; ownedPlaylist unlocks
+    // "从此歌单移除" inside a playlist the user owns.
+    property bool songMenu: true
     // Unified/mixed lists can decide eligibility per model row (SearchRow exposes
     // menuEnabled). Homogeneous lists keep the old all-rows behavior by default.
     property bool menuEligibilityFromModel: false
@@ -111,9 +112,9 @@ Flickable {
                 y: index * view.rowH
                 rowTitle: view.isLocal ? modelData.title : modelData.name
                 rowArtist: modelData.artist
-                // isLocal rows are Track (queue/cached/local library) -- no artistId
-                // field, so leave the artist name non-clickable there.
-                rowArtistId: view.isLocal ? 0 : (modelData.artistId || 0)
+                rowArtistId: modelData.artistId || 0
+                rowArtistIdsCsv: modelData.artistIdsCsv || ""
+                rowArtistNamesCsv: modelData.artistNamesCsv || ""
                 coverThumbPath: modelData.coverThumbPath || ""
                 // Only present on SearchPage.qml's unified list (SearchRow.kindLabel);
                 // every other model shape leaves this "" so no tag renders.

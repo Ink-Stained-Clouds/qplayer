@@ -11,6 +11,7 @@ import "../components"
 Rectangle {
     id: page
     signal back()
+    signal home()
     color: Theme.color.surface
 
     property bool loadingWatch: player.artistLoading
@@ -61,10 +62,10 @@ Rectangle {
             Layout.leftMargin: 4
             Layout.rightMargin: 16
             spacing: 4
-            IconButton {
+            PageHeaderButtons {
                 Layout.alignment: Qt.AlignVCenter
-                type: "standard"; icon: "arrow_back"
-                onClicked: page.back()
+                onHome: page.home()
+                onBack: page.back()
             }
             Text {
                 Layout.fillWidth: true
@@ -242,7 +243,10 @@ Rectangle {
                             rowTitle: modelData.name
                             rowArtist: modelData.artist
                             rowArtistId: modelData.artistId || 0
+                            rowArtistIdsCsv: modelData.artistIdsCsv || ""
+                            rowArtistNamesCsv: modelData.artistNamesCsv || ""
                             coverThumbPath: modelData.coverThumbPath || ""
+                            song: modelData
                             onActivated: player.playArtistSong(index)
                         }
                     }

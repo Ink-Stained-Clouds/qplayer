@@ -11,6 +11,7 @@ import "."
 // it fades in lockstep with the host layer.
 Item {
     id: overlay
+    signal closeRequested()
 
     // Landscape (wide) layout: cover + transport on the left, lyrics on the right
     // half (host-drawn). Driven by aspect so a desktop window, tablet, or phone in
@@ -113,7 +114,7 @@ Item {
         type: "standard"
         icon: "expand_more"
         contentColor: "#FFFFFFFF"
-        onClicked: player.setLyricsOpen(false)
+        onClicked: overlay.closeRequested()
     }
 
     // Quick lyric-timing offset adjust: some LRC files don't quite line up with the
@@ -326,8 +327,9 @@ Item {
         textColor: "#B3FFFFFF"
         fontSize: 14
     }
-    // Jump to the artist's page, closing the lyric page first (same as the
-    // rest of the app's "leave the overlay before navigating" convention).
+    // Jump to the artist's page. Main.qml's page stack keeps the lyric route
+    // underneath and closes its separately-rendered host layer while the artist
+    // route is current; Back therefore returns here instead of losing context.
     // Disabled (no pointer/tap) for local/custom tracks, which have no
     // netease artist id to open.
     MouseArea {
@@ -336,7 +338,6 @@ Item {
         hoverEnabled: enabled
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-            player.setLyricsOpen(false)
             player.openArtist(player.playingArtistId)
         }
     }
@@ -523,7 +524,6 @@ Item {
                 hoverEnabled: enabled
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    player.setLyricsOpen(false)
                     player.openArtist(player.playingArtistId)
                 }
             }

@@ -35,6 +35,11 @@ public class Track {
      *  when absent. Lets the now-playing UI (lyric page) jump to that artist's
      *  page without a network round-trip. */
     public long artistId;
+    /** Every credited artist id/name, encoded like NeteaseSong. Keeping these on
+     *  Track preserves multi-artist navigation after a song enters the queue or
+     *  the custom playlist instead of degrading to the first artist only. */
+    public String artistIdsCsv = "";
+    public String artistNamesCsv = "";
     public String album;
     public long durationMs;
 

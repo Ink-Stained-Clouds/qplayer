@@ -20,6 +20,10 @@ Rectangle {
     // Id of rowArtist's (first-listed) artist -- 0 for local tracks / unknown,
     // which disables the artist-name tap target below.
     property double rowArtistId: 0
+    // Full credited-artist list. Clicking a multi-artist line opens the shared
+    // picker; a single id goes straight to the artist page in PlayerController.
+    property string rowArtistIdsCsv: ""
+    property string rowArtistNamesCsv: ""
     property string coverThumbPath: ""
     // Small per-row source badge (e.g. "网易云"/"本地"/"自定义源") for lists that
     // mix rows from more than one source — see SearchPage.qml. Empty (default)
@@ -32,7 +36,7 @@ Rectangle {
     // have no playlist-track id). `inOwnedPlaylist` + `ownerPlaylistId` unlock the
     // "从此歌单移除" entry, set only by the owned-playlist detail list.
     property var song: null
-    property bool menuEnabled: false
+    property bool menuEnabled: row.song !== null
     property bool inOwnedPlaylist: false
     // Cached-songs list mode (see SongContextMenu.inCacheList): flips the menu's
     // "缓存此歌曲" entry to "删除缓存".
@@ -176,9 +180,21 @@ Rectangle {
         anchors.topMargin: 2
         text: row.rowArtist
         elide: Text.ElideRight
-        color: (row.rowArtistId !== 0 && artistArea.containsMouse)
+        color: ((row.rowArtistIdsCsv !== "" || row.rowArtistId !== 0)
+                && artistArea.containsMouse)
                ? Theme.color.primary : Theme.color.onSurfaceVariantColor
         fontSize: 12
+    }
+
+    // Unconstrained shaping probe for the real rendered glyph width. The visible
+    // Text is anchored across the row so it can elide, therefore its own width is
+    // the available column width rather than the artist text's painted width.
+    Text {
+        id: artistProbe
+        visible: false
+        text: row.rowArtist
+        font.family: artistText.font.family
+        font.pixelSize: artistText.font.pixelSize
     }
 
     // Small source badge (see `tag` above), pinned to the right edge. Sized off
@@ -235,29 +251,23 @@ Rectangle {
         onLongPressed: { row._menuArmed = true; row._openMenu() }
     }
 
-    // Tap the artist name to open their page -- a separate, smaller MouseArea
-    // stacked above the row-wide Ripple (declared after it) so it intercepts
-    // taps only over the artist line; rowArtistId 0 (local tracks / unknown)
-    // disables it and lets the tap fall through to the row-wide Ripple.
-    // Sized off the STRING (row.rowArtist.length), not artistText.implicitWidth:
-    // this delegate gets reused by VirtualSongList's window-sliding, and a
-    // reused delegate's Text.implicitWidth goes stale on reuse even though its
-    // plain string properties update correctly (see MarqueeText/tagPill's own
-    // width fix above and [[qplayer-qml4j-gotchas]] item 6) -- anchoring the
-    // hit area to artistText.left/right instead just inherited that Text
-    // item's own full anchored container width (nearly the whole row), not
-    // the actual rendered glyph extent, which is the "spans the whole row"
-    // bug this replaces.
+    // Tap only the actually-painted artist text. The separate probe measures the
+    // unelided glyph run; min() clips the target to the visible/elided width.
     MouseArea {
         id: artistArea
         anchors.left: artistText.left
         anchors.verticalCenter: artistText.verticalCenter
-        width: Math.min(artistText.width, row.rowArtist.length * 12 + 8)
+        width: Math.min(artistText.width, artistProbe.implicitWidth)
         height: 20
-        enabled: row.rowArtistId !== 0
+        enabled: row.rowArtistIdsCsv !== "" || row.rowArtistId !== 0
         hoverEnabled: enabled
         cursorShape: Qt.PointingHandCursor
-        onClicked: player.openArtist(row.rowArtistId)
+        onClicked: {
+            if (row.rowArtistIdsCsv !== "")
+                player.openSongArtistPicker(row.rowArtistIdsCsv, row.rowArtistNamesCsv)
+            else
+                player.openArtist(row.rowArtistId)
+        }
     }
 
     // Context menu, built only for rows that opt in (menuEnabled). Loaded eagerly

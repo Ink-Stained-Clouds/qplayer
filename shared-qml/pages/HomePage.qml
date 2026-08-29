@@ -100,9 +100,11 @@ Item {
                     y: page.dailyTop + index * page.rowH
                     rowTitle: modelData.name
                     rowArtist: modelData.artist
+                    rowArtistId: modelData.artistId || 0
+                    rowArtistIdsCsv: modelData.artistIdsCsv || ""
+                    rowArtistNamesCsv: modelData.artistNamesCsv || ""
                     coverThumbPath: modelData.coverThumbPath || ""
-                    song: player.loggedIn ? modelData : null
-                    menuEnabled: player.loggedIn
+                    song: modelData
                     onActivated: player.playRecommendation(index)
                 }
             }

@@ -50,13 +50,13 @@ Menu {
         // custom-playlist rows hand over a Track (".neteaseId") instead.
         var songId = s.id !== undefined ? s.id : s.neteaseId
         if (!songId) { menu.model = items; return }
-        // Show every credited artist and let the user pick whose page to open --
-        // a song can have more than one. `artistIdsCsv` is only populated on a
-        // real NeteaseSong/SearchRow (search/playlist/album/artist rows), not
-        // the Track shape queue/custom-playlist rows use -- guarded so the
-        // entry silently disappears rather than opening a blank/empty picker.
-        if (s.artistIdsCsv) {
-            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistPickerAction(s.artistIdsCsv, s.artistNamesCsv) })
+        // NeteaseSong, SearchRow and Track now all preserve the full credits.
+        // Older persisted Tracks may only have the first artist id, which still
+        // provides a useful single-artist direct path.
+        var artistIds = s.artistIdsCsv || (s.artistId ? ("" + s.artistId) : "")
+        var artistNames = s.artistNamesCsv || s.artist || ""
+        if (artistIds) {
+            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistPickerAction(artistIds, artistNames) })
         }
         if (player.loggedIn) {
             var pls = player.myPlaylists

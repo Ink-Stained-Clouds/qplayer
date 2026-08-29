@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import md3.Core
 import "."
 import "../dialogs"
+import "../components"
 
 // App settings overlay. Nothing here knows what a setting IS: the categories and
 // the rows come from player-core's SettingsCatalog through the `settings` context
@@ -16,6 +17,7 @@ import "../dialogs"
 Rectangle {
     id: page
     signal back()
+    signal home()
     color: Theme.color.surface
 
     property var categories: settings.categories()
@@ -108,10 +110,10 @@ Rectangle {
             Layout.leftMargin: 4
             Layout.rightMargin: 16
             spacing: 4
-            IconButton {
+            PageHeaderButtons {
                 Layout.alignment: Qt.AlignVCenter
-                type: "standard"; icon: "arrow_back"
-                onClicked: page.back()
+                onHome: page.home()
+                onBack: page.back()
             }
             Text {
                 Layout.fillWidth: true

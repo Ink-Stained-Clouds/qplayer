@@ -16,12 +16,28 @@ Rectangle {
 
     property int page: 0
     property int nextPage: 0
-    property bool detailOpen: false
     property bool loginOpen: false
-    property bool settingsOpen: false
-    property bool accountOpen: false
-    property bool cacheListOpen: false
     property bool showLog: false
+    // Full-screen destinations share one navigation stack. Each drill-in keeps
+    // its source underneath, so queue -> artist -> back restores the queue. Artist
+    // and album routes also retain their ids, allowing deeper navigation to restore
+    // the correct earlier entity instead of whichever one was loaded most recently.
+    property var navigationStack: []
+    property var currentRoute: navigationStack.length > 0
+                               ? navigationStack[navigationStack.length - 1] : null
+    property string currentOverlay: currentRoute ? currentRoute.type : ""
+    property bool detailOpen: currentOverlay === "detail"
+    property bool settingsOpen: currentOverlay === "settings"
+    property bool accountOpen: currentOverlay === "account"
+    property bool cacheListOpen: currentOverlay === "cachedSongs"
+    property bool syncingPageState: false
+    // forward: new top page enters over an unchanged previous page.
+    // back: only the departing top page exits, revealing an unchanged previous page.
+    // replace: old path disappears immediately and the new root page may enter.
+    property string navigationDirection: "replace"
+    property string transitionUnderlayType: ""
+    property string leavingPageType: ""
+    property bool pageTransitionActive: false
     // Build only the initial home page on startup. Once visited, a page remains
     // loaded so navigation state and close animations are preserved.
     property bool searchLoaded: false
@@ -34,10 +50,28 @@ Rectangle {
     property bool settingsLoaded: false
     property bool accountLoaded: false
     property bool cacheListLoaded: false
-    property bool artistOpenWatch: player.artistPageOpen
-    property bool albumOpenWatch: player.albumPageOpen
-    onArtistOpenWatchChanged: if (artistOpenWatch) artistLoaded = true
-    onAlbumOpenWatchChanged: if (albumOpenWatch) albumLoaded = true
+    // openArtist/openAlbum are called from reusable child components that cannot
+    // see this root id. The controller publishes an event revision for every call
+    // (not just false -> true), and the page manager turns it into a route push.
+    property real pageNavigationWatch: player.pageNavigationRevision
+    onPageNavigationWatchChanged: {
+        if (pageNavigationWatch <= 0) return
+        if (player.pageNavigationTarget === "artist")
+            app.pushPage("artist", player.openArtistId)
+        else if (player.pageNavigationTarget === "album")
+            app.pushPage("album", player.openAlbumId)
+    }
+    // Host-side closes are uncommon (normal back now pops the stack), but mirror
+    // one if it happens so the route cannot remain logically open after its
+    // separately-rendered lyric layer has closed.
+    property bool lyricsOpenWatch: player.lyricsOpen
+    onLyricsOpenWatchChanged: {
+        if (app.syncingPageState) return
+        if (lyricsOpenWatch && app.topPageType() !== "lyrics")
+            app.pushPage("lyrics", 0)
+        else if (!lyricsOpenWatch && app.topPageType() === "lyrics")
+            app.popPage()
+    }
     // Menu.open() registers the one top-level popup currently attached to this
     // scene. Song rows each own a lazy menu instance, so without a scene-wide
     // owner repeated right-clicks can leave every row's overlay open at once.
@@ -94,55 +128,173 @@ Rectangle {
         if ((credentialNoticeDialog.opened && player.credentialNoticeType === 3)
                 || credentialFallbackConfirmDialog.opened
                 || credentialReloginUnavailableDialog.opened) return;
-        // Order = top-most layer first. The lyric page (host-drawn) and the queue
-        // sit above the QML overlays, so they must close before settings/login/log.
-        if (player.lyricsOpen)      { player.setLyricsOpen(false); return; }
-        if (player.queueOpen)       { player.setQueueOpen(false); return; }
+        if (player.songArtistPickerOpen) { player.closeSongArtistPicker(); return; }
         if (app.showLog)            { app.showLog = false; return; }
         if (app.loginOpen)          { app.loginOpen = false; return; }
-        if (app.accountOpen)        { app.accountOpen = false; return; }
-        if (app.cacheListOpen)      { app.cacheListOpen = false; return; }
-        if (app.settingsOpen)       { app.settingsOpen = false; return; }
-        // Artist/album drill-ins sit above the playlist detail (an album opened
-        // from an artist page opened from a playlist), so they close first.
-        if (player.albumPageOpen)   { player.setAlbumPageOpen(false); return; }
-        if (player.artistPageOpen)  { player.setArtistPageOpen(false); return; }
-        if (app.detailOpen)         { app.detailOpen = false; return; }
+        if (app.navigationStack.length > 0) { app.popPage(); return; }
         if (app.page !== 0)         { app.switchTo(0); return; }
         player.requestExit();
     }
 
-    // Detail/queue/settings/account are independent booleans, each just driving
-    // its own overlay's opacity/y — nothing stopped two from being true at once
-    // (e.g. opening account while settings was still open), so the later-declared
-    // one visually covered the other. Route every "open X" site through this so
-    // opening one always closes the rest first.
-    function openOverlay(which) {
+    function ensurePageLoaded(which) {
         if (which === "detail") app.detailLoaded = true
+        if (which === "artist") app.artistLoaded = true
+        if (which === "album") app.albumLoaded = true
         if (which === "settings") app.settingsLoaded = true
         if (which === "account") app.accountLoaded = true
         if (which === "cachedSongs") app.cacheListLoaded = true
         if (which === "queue") app.queueLoaded = true
-        app.detailOpen = which === "detail"
-        app.settingsOpen = which === "settings"
-        app.accountOpen = which === "account"
-        app.cacheListOpen = which === "cachedSongs"
+    }
+
+    function topRouteValue() {
+        return app.navigationStack.length > 0
+                ? app.navigationStack[app.navigationStack.length - 1] : null
+    }
+
+    function topPageType() {
+        var route = app.topRouteValue()
+        return route ? route.type : ""
+    }
+
+    function syncPageState(which) {
+        app.syncingPageState = true
+        player.setLyricsOpen(which === "lyrics")
         player.setQueueOpen(which === "queue")
-        // Artist/album pages are opened directly by player.openArtist/openAlbum
-        // (not routed through here), but any OTHER destination replaces them.
-        player.setArtistPageOpen(false)
-        player.setAlbumPageOpen(false)
+        player.setArtistPageOpen(which === "artist")
+        player.setAlbumPageOpen(which === "album")
+        app.syncingPageState = false
+    }
+
+    // Top-level destinations opened from the app chrome replace the previous
+    // path. Drill-ins use pushPage() so Back can restore their source page.
+    function replacePage(which, entityId) {
+        pageTransitionCleanup.stop()
+        app.navigationDirection = "replace"
+        app.transitionUnderlayType = ""
+        app.leavingPageType = ""
+        app.pageTransitionActive = false
+        app.ensurePageLoaded(which)
+        app.navigationStack = which !== ""
+                ? [{ type: which, entityId: entityId || 0 }] : []
+        app.syncPageState(which)
+    }
+
+    function pushPage(which, entityId) {
+        if (which === "") return
+        app.ensurePageLoaded(which)
+        var id = entityId || 0
+        var current = app.topRouteValue()
+        if (current && current.type === which && current.entityId == id) {
+            app.syncPageState(which)
+            return
+        }
+        app.navigationDirection = "forward"
+        app.transitionUnderlayType = current ? current.type : ""
+        app.leavingPageType = ""
+        app.pageTransitionActive = app.transitionUnderlayType !== ""
+        if (app.pageTransitionActive) pageTransitionCleanup.restart()
+        var next = []
+        for (var i = 0; i < app.navigationStack.length; i++)
+            next.push(app.navigationStack[i])
+        next.push({ type: which, entityId: id })
+        app.navigationStack = next
+        app.syncPageState(which)
+    }
+
+    function restoreCurrentPage(route) {
+        if (!route) return
+        if (route.type === "artist" && player.openArtistId != route.entityId)
+            player.openArtist(route.entityId)
+        else if (route.type === "album" && player.openAlbumId != route.entityId)
+            player.openAlbum(route.entityId)
+        else if (route.type === "detail" && player.openPlaylistId != route.entityId)
+            player.openPlaylist(route.entityId)
+    }
+
+    function popPage() {
+        if (app.navigationStack.length === 0) return
+        var departing = app.topRouteValue()
+        app.navigationDirection = "back"
+        app.transitionUnderlayType = ""
+        app.leavingPageType = departing ? departing.type : ""
+        app.pageTransitionActive = app.leavingPageType !== ""
+        if (app.pageTransitionActive) pageTransitionCleanup.restart()
+        var next = []
+        for (var i = 0; i < app.navigationStack.length - 1; i++)
+            next.push(app.navigationStack[i])
+        app.navigationStack = next
+        var route = next.length > 0 ? next[next.length - 1] : null
+        app.restoreCurrentPage(route)
+        app.syncPageState(route ? route.type : "")
+    }
+
+    function clearPages() {
+        pageTransitionCleanup.stop()
+        app.navigationDirection = "replace"
+        app.transitionUnderlayType = ""
+        app.leavingPageType = ""
+        app.pageTransitionActive = false
+        app.navigationStack = []
+        app.syncPageState("")
+    }
+
+    function goHome() {
+        // Home is an escape hatch, not another animated Back step. Drop the old
+        // route immediately (no exit), then animate only the recommendation page
+        // into view so no intermediate source page flashes on screen.
+        pageAnim.stop()
+        homeEntryAnim.stop()
+        app.page = 0
+        app.nextPage = 0
+        app.pageOpacity = 0
+        app.pageShift = 28
+        app.clearPages()
+        homeEntryAnim.restart()
+    }
+
+    // Give the active route a declaration-order-independent z. This matters while
+    // the outgoing loader is still fading: queue is declared after artist in this
+    // file, but queue -> artist must put artist on top immediately.
+    function pageDepth(which) {
+        for (var i = app.navigationStack.length - 1; i >= 0; i--) {
+            if (app.navigationStack[i].type === which) return i + 1
+        }
+        return 0
+    }
+
+    function pageLayer(which, paintedOpacity) {
+        var depth = app.pageDepth(which)
+        if (depth > 0) return 100 + depth
+        // A page popped by Back keeps top priority only for its own exit; a page
+        // removed by replace is hidden immediately and never covers the newcomer.
+        if (app.navigationDirection === "back" && paintedOpacity > 0.001) return 1000
+        return 1
+    }
+
+    function pagePainted(which, paintedOpacity) {
+        if (app.currentOverlay === which) return true
+        if (!app.pageTransitionActive) return false
+        if (app.navigationDirection === "forward")
+            return app.transitionUnderlayType === which
+        if (app.navigationDirection === "back")
+            return app.leavingPageType === which && paintedOpacity > 0.001
+        return false
+    }
+
+    Timer {
+        id: pageTransitionCleanup
+        interval: 280
+        repeat: false
+        onTriggered: {
+            app.pageTransitionActive = false
+            app.transitionUnderlayType = ""
+            app.leavingPageType = ""
+        }
     }
 
     // MD3 fade-through page switch: fade the content out, swap, fade it back in.
     function switchTo(idx) {
-        app.detailOpen = false;          // dismiss any open playlist detail
-        app.settingsOpen = false;        // and the settings overlay
-        app.accountOpen = false;         // and the account overlay
-        app.cacheListOpen = false;       // and the cached-songs overlay
-        player.setQueueOpen(false);      // and the queue overlay
-        player.setArtistPageOpen(false); // and any open artist page
-        player.setAlbumPageOpen(false);  // and any open album page
+        app.clearPages()
         if (idx === app.page) return;
         if (idx === 1) app.searchLoaded = true
         if (idx === 2) app.libraryLoaded = true
@@ -172,6 +324,18 @@ Rectangle {
                 target: app; property: "pageShift"; from: 28; to: 0
                 duration: 220; easing.type: Easing.OutCubic
             }
+        }
+    }
+
+    ParallelAnimation {
+        id: homeEntryAnim
+        NumberAnimation {
+            target: app; property: "pageOpacity"; from: 0; to: 1
+            duration: 220; easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: app; property: "pageShift"; from: 28; to: 0
+            duration: 220; easing.type: Easing.OutCubic
         }
     }
 
@@ -390,14 +554,14 @@ Rectangle {
                         onClicked: {
                             if (modelData.action === "download") {
                                 player.refreshCachedSongs()
-                                app.openOverlay("cachedSongs")
+                                app.replacePage("cachedSongs", 0)
                             } else if (modelData.action === "together") {
                                 togetherDialog.open()
                             } else if (modelData.action === "account") {
-                                if (player.loggedIn) app.openOverlay("account")
+                                if (player.loggedIn) app.replacePage("account", 0)
                                 else app.loginOpen = true
                             } else {
-                                app.openOverlay("settings")
+                                app.replacePage("settings", 0)
                             }
                         }
                     }
@@ -431,7 +595,7 @@ Rectangle {
         IconButton {
             type: "standard"
             icon: "queue_music"
-            onClicked: app.openOverlay("queue")
+            onClicked: app.replacePage("queue", 0)
         }
         IconButton {
             visible: !app.wide
@@ -439,7 +603,7 @@ Rectangle {
             icon: "download"
             onClicked: {
                 player.refreshCachedSongs()
-                app.openOverlay("cachedSongs")
+                app.replacePage("cachedSongs", 0)
             }
         }
         IconButton {
@@ -454,13 +618,13 @@ Rectangle {
             visible: !app.wide
             type: "standard"
             icon: player.loggedIn ? "account_circle" : "login"
-            onClicked: if (player.loggedIn) app.openOverlay("account"); else app.loginOpen = true
+            onClicked: if (player.loggedIn) app.replacePage("account", 0); else app.loginOpen = true
         }
         IconButton {
             visible: !app.wide
             type: "standard"
             icon: "settings"
-            onClicked: app.openOverlay("settings")
+            onClicked: app.replacePage("settings", 0)
         }
         IconButton {
             type: "standard"
@@ -494,7 +658,10 @@ Rectangle {
                 id: home
                 anchors.fill: parent
                 visible: app.page === 0
-                onOpenPlaylist: { player.openPlaylist(home.pendingPlaylist.id); app.openOverlay("detail") }
+                onOpenPlaylist: {
+                    player.openPlaylist(home.pendingPlaylist.id)
+                    app.replacePage("detail", home.pendingPlaylist.id)
+                }
             }
             Loader {
                 anchors.fill: parent
@@ -511,7 +678,7 @@ Rectangle {
                         id: libraryPage
                         onOpenPlaylist: {
                             player.openPlaylist(libraryPage.pendingPlaylist.id)
-                            app.openOverlay("detail")
+                            app.replacePage("detail", libraryPage.pendingPlaylist.id)
                         }
                         onRequestLogin: app.loginOpen = true
                     }
@@ -524,104 +691,93 @@ Rectangle {
                 sourceComponent: Component { LocalPage {} }
             }
 
-            // Overlays animate in: detail drills in from the right, queue and
-            // settings rise from below. Kept laid out only while opacity > 0 so a
-            // closed overlay costs nothing per frame.
-            Loader {
-                width: parent.width
-                height: parent.height
+            // The shared loader implements stack-aware z/visibility and the
+            // forward/back transition contract once for every full-screen page.
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "detail"
                 active: app.detailLoaded
-                visible: opacity > 0.001
-                opacity: app.detailOpen ? 1 : 0
-                x: app.detailOpen ? 0 : 36
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    PlaylistDetailPage { onBack: app.detailOpen = false }
+                    PlaylistDetailPage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "artist"
                 active: app.artistLoaded
-                visible: opacity > 0.001
-                opacity: player.artistPageOpen ? 1 : 0
-                x: player.artistPageOpen ? 0 : 36
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    ArtistDetailPage { onBack: player.setArtistPageOpen(false) }
+                    ArtistDetailPage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "album"
                 active: app.albumLoaded
-                visible: opacity > 0.001
-                opacity: player.albumPageOpen ? 1 : 0
-                x: player.albumPageOpen ? 0 : 36
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    AlbumDetailPage { onBack: player.setAlbumPageOpen(false) }
+                    AlbumDetailPage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "queue"
+                transitionAxis: "y"
                 active: app.queueLoaded
-                visible: opacity > 0.001
-                opacity: player.queueOpen ? 1 : 0
-                y: player.queueOpen ? 0 : 32
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    QueuePage { onBack: player.setQueueOpen(false) }
+                    QueuePage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "settings"
+                transitionAxis: "y"
                 active: app.settingsLoaded
-                visible: opacity > 0.001
-                opacity: app.settingsOpen ? 1 : 0
-                y: app.settingsOpen ? 0 : 32
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    SettingsPage { onBack: app.settingsOpen = false }
+                    SettingsPage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "account"
+                transitionAxis: "y"
                 active: app.accountLoaded
-                visible: opacity > 0.001
-                opacity: app.accountOpen ? 1 : 0
-                y: app.accountOpen ? 0 : 32
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    AccountPage { onBack: app.accountOpen = false }
+                    AccountPage {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
 
-            Loader {
-                width: parent.width
-                height: parent.height
+            ManagedPageLoader {
+                pageManager: app
+                routeType: "cachedSongs"
+                transitionAxis: "y"
                 active: app.cacheListLoaded
-                visible: opacity > 0.001
-                opacity: app.cacheListOpen ? 1 : 0
-                y: app.cacheListOpen ? 0 : 32
-                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 sourceComponent: Component {
-                    CachedSongsDialog { onBack: app.cacheListOpen = false }
+                    CachedSongsDialog {
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
                 }
             }
         }
@@ -634,7 +790,7 @@ Rectangle {
         anchors.rightMargin: settings.rightInset
         anchors.bottom: bottomNav.top
         height: 84
-        onLyricsRequested: player.setLyricsOpen(true)
+        onLyricsRequested: app.pushPage("lyrics", 0)
     }
 
     // Bottom navigation (compact). On wide layouts the rail replaces it, so collapse
@@ -668,6 +824,7 @@ Rectangle {
         // Desktop hides its custom title bar while the lyric page is open (see the
         // TitleBar below), so the three title buttons sit flush at the very top.
         topPad: hostWindow.available ? 6 : settings.topInset + 6
+        onCloseRequested: app.popPage()
         y: {
             var s = player.lyricSlide;
             return (1 - s * s * (3 - 2 * s)) * height;

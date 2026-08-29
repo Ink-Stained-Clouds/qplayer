@@ -65,11 +65,22 @@ public final class SongMetaIndex {
     /** Record/refresh one song's metadata. Cheap — no disk I/O; call {@link #save()}
      *  after a batch (e.g. once per finished search) rather than per song. */
     public void upsert(long id, String name, String artist, String album, String coverUrl, long durationMs) {
+        upsert(id, name, artist, 0L, "", "", album, coverUrl, durationMs);
+    }
+
+    /** Record a song while retaining every artist credit needed by SongRow.
+     *  The shorter overload remains for old call sites and old on-disk indexes. */
+    public void upsert(long id, String name, String artist, long artistId,
+                       String artistIdsCsv, String artistNamesCsv,
+                       String album, String coverUrl, long durationMs) {
         if (id == 0 || name == null || name.isEmpty()) return;
         NeteaseSong s = new NeteaseSong();
         s.id = id;
         s.name = name;
         s.artist = artist;
+        s.artistId = artistId;
+        s.artistIdsCsv = artistIdsCsv != null ? artistIdsCsv : "";
+        s.artistNamesCsv = artistNamesCsv != null ? artistNamesCsv : "";
         s.album = album;
         s.coverUrl = coverUrl;
         s.durationMs = durationMs;
@@ -79,7 +90,8 @@ public final class SongMetaIndex {
 
     public void upsert(NeteaseSong s) {
         if (s == null) return;
-        upsert(s.id, s.name, s.artist, s.album, s.coverUrl, s.durationMs);
+        upsert(s.id, s.name, s.artist, s.artistId, s.artistIdsCsv,
+                s.artistNamesCsv, s.album, s.coverUrl, s.durationMs);
     }
 
     /** Keyword substring match over title + artist, most-recently-seen first

@@ -12,6 +12,7 @@ import "../components"
 Rectangle {
     id: page
     signal back()
+    signal home()
     color: Theme.color.surface
 
     // Swallow taps on empty areas so they don't fall through to the page beneath.
@@ -28,10 +29,10 @@ Rectangle {
             Layout.leftMargin: 4
             Layout.rightMargin: 16
             spacing: 4
-            IconButton {
+            PageHeaderButtons {
                 Layout.alignment: Qt.AlignVCenter
-                type: "standard"; icon: "arrow_back"
-                onClicked: page.back()
+                onHome: page.home()
+                onBack: page.back()
             }
             Text {
                 Layout.fillWidth: true

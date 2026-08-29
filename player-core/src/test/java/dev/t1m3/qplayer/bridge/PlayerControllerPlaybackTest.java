@@ -488,6 +488,9 @@ public class PlayerControllerPlaybackTest {
             NeteaseSong netease = new NeteaseSong();
             netease.id = 42L;
             netease.name = "network";
+            netease.artistId = 7L;
+            netease.artistIdsCsv = "7,8";
+            netease.artistNamesCsv = "first\u0001second";
             Track local = new Track();
             local.title = "local";
             local.filePath = "/music/local.flac";
@@ -504,6 +507,9 @@ public class PlayerControllerPlaybackTest {
             assertEquals(3, rows.size());
             assertTrue(rows.get(0).menuEnabled);
             assertEquals(42L, rows.get(0).id);
+            assertEquals(7L, rows.get(0).artistId);
+            assertEquals("7,8", rows.get(0).artistIdsCsv);
+            assertEquals("first\u0001second", rows.get(0).artistNamesCsv);
             assertTrue(rows.get(1).menuEnabled);
             assertEquals("/music/local.flac", rows.get(1).filePath);
             assertTrue(rows.get(2).menuEnabled);
@@ -647,6 +653,37 @@ public class PlayerControllerPlaybackTest {
         while (Math.abs(backend.volume - target) > 0.001f
                 && System.currentTimeMillis() < deadline) {
             Thread.sleep(10L);
+        }
+    }
+
+    @Test
+    public void restoredQueueKeepsAllArtistCredits() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("restore-artist-credits").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            String queue = "{\"playIndex\":0,\"positionMs\":0,\"playMode\":0,\"tracks\":["
+                    + "{\"source\":\"LOCAL\",\"neteaseId\":42,\"title\":\"song\","
+                    + "\"artist\":\"first / second\",\"artistId\":7,"
+                    + "\"artistIdsCsv\":\"7,8\",\"artistNamesCsv\":\"first\\u0001second\","
+                    + "\"durationMs\":120000,\"filePath\":\"song.flac\"}]}";
+            Files.write(base.resolve("queue.json"), queue.getBytes(StandardCharsets.UTF_8));
+
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+            controller.pump();
+
+            Track restored = controller.queueTracks.peek().get(0);
+            assertEquals(7L, restored.artistId);
+            assertEquals("7,8", restored.artistIdsCsv);
+            assertEquals("first\u0001second", restored.artistNamesCsv);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
         }
     }
 
