@@ -216,8 +216,14 @@ public final class DesktopLyricWindow {
         });
         int x = store.getInt(X_KEY, -1);
         int y = store.getInt(Y_KEY, -1);
-        if (positioningSupported && x >= 0 && y >= 0) GLFW.glfwSetWindowPos(window, x, y);
-        else if (positioningSupported) centerBottom();
+        if (positioningSupported && x >= 0 && y >= 0) {
+            // A persisted position can be stale (dragged off-screen last session,
+            // or an external monitor from back then is gone now) -- clamp/snap it
+            // back into whichever current monitor it mostly overlaps, same as a
+            // live drag does, rather than trusting the raw stored value.
+            int[] snapped = clampAndSnap(x, y);
+            GLFW.glfwSetWindowPos(window, snapped[0], snapped[1]);
+        } else if (positioningSupported) centerBottom();
         if (positioningSupported) installDragHandlers();
         x11InputRegionSupported = AuxiliaryWindowStyle.setX11InputRegion(window,
                 mousePassthrough, (int) UNLOCK_LEFT, (int) BOTTOM_HIT_TOP,
@@ -486,6 +492,7 @@ public final class DesktopLyricWindow {
                     postInput(view -> view.dispatchPointerUp(eventX, eventY));
                 } else if (dragging) {
                     dragging = false;
+                    snapToScreenAfterDrag();
                     persistPosition();
                 }
             }
@@ -576,6 +583,81 @@ public final class DesktopLyricWindow {
             GLFW.glfwGetWindowPos(window, x, y);
             store.putInt(X_KEY, x.get(0));
             store.putInt(Y_KEY, y.get(0));
+        }
+    }
+
+    /** Distance (px) from a work-area edge within which a drag-released window
+     *  snaps flush to it, rather than just being left wherever the cursor let go. */
+    private static final int SNAP_PX = 24;
+
+    /** After a drag ends: pull the window back onto whichever monitor it mostly
+     *  overlaps (it may now be dragged fully or partly off every screen -- GLFW
+     *  never stopped that during the drag itself) and snap it flush to a nearby
+     *  edge. No-op, silently, if it's already fully on-screen and not near an edge. */
+    private void snapToScreenAfterDrag() {
+        if (window == MemoryUtil.NULL) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer xb = stack.mallocInt(1);
+            IntBuffer yb = stack.mallocInt(1);
+            GLFW.glfwGetWindowPos(window, xb, yb);
+            int[] snapped = clampAndSnap(xb.get(0), yb.get(0));
+            if (snapped[0] != xb.get(0) || snapped[1] != yb.get(0)) {
+                GLFW.glfwSetWindowPos(window, snapped[0], snapped[1]);
+            }
+        }
+    }
+
+    /** Clamps (x, y) fully inside the work area it mostly overlaps, snapping flush
+     *  to an edge within {@link #SNAP_PX} of it (also covers "way off-screen": that
+     *  reads as "way past the edge threshold", clamped the same way). */
+    private int[] clampAndSnap(int x, int y) {
+        int[] wa = bestWorkArea(x, y);
+        int wx = wa[0], wy = wa[1], ww = wa[2], wh = wa[3];
+        int maxX = wx + Math.max(WIDTH, ww) - WIDTH;
+        int maxY = wy + Math.max(HEIGHT, wh) - HEIGHT;
+        int snappedX = x <= wx + SNAP_PX ? wx
+                : x >= maxX - SNAP_PX ? maxX
+                : Math.max(wx, Math.min(x, maxX));
+        int snappedY = y <= wy + SNAP_PX ? wy
+                : y >= maxY - SNAP_PX ? maxY
+                : Math.max(wy, Math.min(y, maxY));
+        return new int[]{snappedX, snappedY};
+    }
+
+    /** The work area (x, y, width, height) of whichever connected monitor the
+     *  window rect at (x, y) overlaps the most; the primary monitor if it
+     *  currently overlaps none of them (dragged fully off every screen). */
+    private int[] bestWorkArea(int x, int y) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.PointerBuffer monitors = GLFW.glfwGetMonitors();
+            long best = MemoryUtil.NULL;
+            long bestOverlap = 0L;
+            if (monitors != null) {
+                for (int i = 0; i < monitors.limit(); i++) {
+                    long m = monitors.get(i);
+                    IntBuffer mx = stack.mallocInt(1);
+                    IntBuffer my = stack.mallocInt(1);
+                    IntBuffer mw = stack.mallocInt(1);
+                    IntBuffer mh = stack.mallocInt(1);
+                    GLFW.glfwGetMonitorWorkarea(m, mx, my, mw, mh);
+                    int overlapW = Math.max(0,
+                            Math.min(x + WIDTH, mx.get(0) + mw.get(0)) - Math.max(x, mx.get(0)));
+                    int overlapH = Math.max(0,
+                            Math.min(y + HEIGHT, my.get(0) + mh.get(0)) - Math.max(y, my.get(0)));
+                    long overlap = (long) overlapW * overlapH;
+                    if (overlap > bestOverlap) {
+                        bestOverlap = overlap;
+                        best = m;
+                    }
+                }
+            }
+            if (best == MemoryUtil.NULL) best = GLFW.glfwGetPrimaryMonitor();
+            IntBuffer wx = stack.mallocInt(1);
+            IntBuffer wy = stack.mallocInt(1);
+            IntBuffer ww = stack.mallocInt(1);
+            IntBuffer wh = stack.mallocInt(1);
+            GLFW.glfwGetMonitorWorkarea(best, wx, wy, ww, wh);
+            return new int[]{wx.get(0), wy.get(0), ww.get(0), wh.get(0)};
         }
     }
 

@@ -13,6 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Unified disk cache for audio files, lyrics and cover images.
@@ -49,6 +52,19 @@ public final class DiskCache {
     private static final int THUMB64_MAX_COUNT = 128;
 
     private volatile long maxSizeBytes;
+
+    /** Netease song ids the user explicitly asked to cache (song menu's
+     *  "缓存此歌曲", or {@code cacheSong}) — as opposed to a track that just
+     *  got auto-cached from being played/skipped past. Consulted by
+     *  {@link #evictIfNeeded()}: an actively-cached audio file is never
+     *  evicted for space, and eviction among the rest prefers the NEWEST
+     *  auto-cached file first (a burst of skip-through auto-caches is low
+     *  value; older auto-cached songs more likely got actually listened to).
+     *  Persisted as one id per line in {@code <baseDir>/actively-cached.txt}
+     *  — colocated with the cache it protects (not a fixed AppDirs path) so
+     *  it follows the desktop "custom cache location" setting's repointing. */
+    private final Set<Long> activelyCachedIds = Collections.synchronizedSet(new HashSet<>());
+    private volatile boolean activelyCachedDirty = false;
 
     public DiskCache(long maxSizeMB) {
         this.maxSizeBytes = maxSizeMB * 1024L * 1024L;
@@ -121,7 +137,72 @@ public final class DiskCache {
         String p = audioPath(neteaseId);
         if (p == null) return false;
         File f = new File(p);
-        return f.exists() && f.delete();
+        boolean deleted = f.exists() && f.delete();
+        if (deleted) unmarkActivelyCached(neteaseId);
+        return deleted;
+    }
+
+    // ---- actively-cached marker (see the field's own doc comment) --------
+
+    private String activelyCachedPath() {
+        return baseDir + "/actively-cached.txt";
+    }
+
+    /** Load the actively-cached id set from disk. Call once at startup (mirrors
+     *  {@code SongMetaIndex.load()}/{@code PlaylistCacheIndex.load()}) — cheap
+     *  no-op if the marker file doesn't exist yet. */
+    public void loadActivelyCached() {
+        try {
+            Path p = Paths.get(activelyCachedPath());
+            if (!Files.isRegularFile(p)) return;
+            String text = StorageFiles.readUtf8(p);
+            Set<Long> ids = new HashSet<>();
+            for (String line : text.split("\\R")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                try {
+                    ids.add(Long.parseLong(line));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            activelyCachedIds.addAll(ids);
+        } catch (Throwable e) {
+            Logger.warn("DiskCache: loading actively-cached marker failed: {}", e.getMessage());
+        }
+    }
+
+    public boolean isActivelyCached(long neteaseId) {
+        return activelyCachedIds.contains(neteaseId);
+    }
+
+    /** Mark a song as user-actively-cached (protects it from {@link #evictIfNeeded}).
+     *  Call only after {@link #cacheAudio} actually succeeded — marking a song whose
+     *  download failed would protect a file that doesn't exist. */
+    public void markActivelyCached(long neteaseId) {
+        if (neteaseId == 0 || !activelyCachedIds.add(neteaseId)) return;
+        activelyCachedDirty = true;
+        saveActivelyCached();
+    }
+
+    private void unmarkActivelyCached(long neteaseId) {
+        if (activelyCachedIds.remove(neteaseId)) {
+            activelyCachedDirty = true;
+            saveActivelyCached();
+        }
+    }
+
+    private void saveActivelyCached() {
+        if (!activelyCachedDirty) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            synchronized (activelyCachedIds) {
+                for (Long id : activelyCachedIds) sb.append(id).append('\n');
+            }
+            StorageFiles.writeUtf8Atomic(Paths.get(activelyCachedPath()), sb.toString());
+            activelyCachedDirty = false;
+        } catch (Throwable e) {
+            Logger.warn("DiskCache: saving actively-cached marker failed: {}", e.getMessage());
+        }
     }
 
     public boolean hasLyric(long songId) {
@@ -295,8 +376,12 @@ public final class DiskCache {
     }
 
     /**
-     * If total cache size exceeds {@link #maxSizeBytes}, delete the
-     * least-recently-used files (oldest lastModified) until under limit.
+     * If total cache size exceeds {@link #maxSizeBytes}, delete files until
+     * under limit. Lyric/image files: oldest (lastModified) first, as
+     * before. Audio files: an actively-cached one (see {@link
+     * #activelyCachedIds}) is never a candidate at all; among the rest,
+     * NEWEST first -- a burst of skip-through auto-caches is low value, and
+     * an older auto-cached song more likely got actually listened to.
      */
     private void evictIfNeeded() {
         long limit = maxSizeBytes;
@@ -304,17 +389,21 @@ public final class DiskCache {
         long total = totalSize();
         if (total <= limit) return;
 
-        // Collect all cache files across all sub-dirs.
-        File[] dirs = {new File(baseDir, AUDIO), new File(baseDir, LYRIC), new File(baseDir, IMAGE)};
+        File audioDir = new File(baseDir, AUDIO);
+        File[] dirs = {audioDir, new File(baseDir, LYRIC), new File(baseDir, IMAGE)};
         java.util.List<File> files = new java.util.ArrayList<>();
         for (File dir : dirs) {
-            if (dir.isDirectory()) {
-                File[] children = dir.listFiles();
-                if (children != null) files.addAll(Arrays.asList(children));
+            if (!dir.isDirectory()) continue;
+            File[] children = dir.listFiles();
+            if (children == null) continue;
+            for (File f : children) {
+                if (dir == audioDir && isActivelyCached(parseAudioId(f))) continue; // protected
+                files.add(f);
             }
         }
-        // Sort by lastModified ascending (oldest first).
-        files.sort((a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        // Ascending by eviction priority: an unprotected audio file's key is negated
+        // (newest -> smallest -> evicted first); lyric/image keep oldest-first.
+        files.sort((a, b) -> Long.compare(evictionKey(a, audioDir), evictionKey(b, audioDir)));
 
         for (File f : files) {
             if (total <= limit) break;
@@ -323,6 +412,24 @@ public final class DiskCache {
                 total -= sz;
                 Logger.info("disk cache evicted: {}", f.getName());
             }
+        }
+    }
+
+    private static long evictionKey(File f, File audioDir) {
+        long lm = f.lastModified();
+        return f.getParentFile() != null && f.getParentFile().equals(audioDir) ? -lm : lm;
+    }
+
+    /** Parses the netease id back out of an audio cache filename ("{id}.cache"), or
+     *  0 if it doesn't look like one (defensively -- a stray non-cache file should
+     *  never match a real id and get treated as protected). */
+    private static long parseAudioId(File f) {
+        String n = f.getName();
+        if (!n.endsWith(".cache")) return 0L;
+        try {
+            return Long.parseLong(n.substring(0, n.length() - ".cache".length()));
+        } catch (NumberFormatException e) {
+            return 0L;
         }
     }
 

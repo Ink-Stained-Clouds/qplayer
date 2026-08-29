@@ -781,6 +781,7 @@ public final class PlayerController {
         loadLyricOffsets();
         songMetaIndex.load();
         playlistCacheIndex.load();
+        diskCache.loadActivelyCached();
         loadQueue();
         loadCustomPlaylist();
         togetherWorker.scheduleAtFixedRate(this::listenTogetherTick,
@@ -3109,32 +3110,58 @@ public final class PlayerController {
         }
     }
 
-    /** Cache a netease track's audio to disk (off-thread) for local replay. Skips
-     *  trial/preview clips and tracks lacking an id or resolved url. When
-     *  {@code onDone} is non-null it runs on the render thread after the download
-     *  finishes (success or failure) — used by {@link #cacheSong} so the user gets
-     *  a completion toast; playback's auto-cache paths pass {@code null} and stay
-     *  silent. */
-    private void cacheAudioAsync(Track t, Runnable onDone) {
+    /** Coalescing 1-slot mailbox for {@link #cacheAudioAsync}: rapid skipping
+     *  (or a burst of auto-advances) must not queue every skipped-past track's
+     *  audio for download one after another on the single-threaded cacheWorker
+     *  — by the time an earlier one would start, it's already stale. A new
+     *  request just overwrites whatever was pending-but-not-yet-started, so
+     *  once the worker is free again it always picks up the LATEST track
+     *  (typically whatever's actually still playing), silently dropping the
+     *  ones skipped past in between. A download already in flight for a
+     *  since-superseded track is still let to finish (aborting a raw socket
+     *  read mid-flight isn't worth the complexity for this) before the queue
+     *  is drained again. */
+    private final Object autoCacheLock = new Object();
+    private Track autoCachePending;
+    private boolean autoCacheRunning;
+
+    /** Auto-cache a netease track's audio to disk for local replay (playback's
+     *  own paths only — the user-initiated "缓存此歌曲" flow is {@link
+     *  #cacheSongAsync}, which also marks the result actively-cached). Skips
+     *  trial/preview clips and tracks lacking an id or resolved url. */
+    private void cacheAudioAsync(Track t) {
         if (t == null || t.trial || t.neteaseId == 0 || t.streamUrl == null) return;
-        final String url = t.streamUrl;
-        final long nid = t.neteaseId;
         // Whatever gets its audio cached is, by definition, playable offline —
         // remember its title/artist/cover so offline search can actually surface
         // it later, regardless of whether it was ever a search result itself
-        // (played from a playlist/recommendation/liked list, say).
-        songMetaIndex.upsert(nid, t.title, t.artist, t.artistId,
+        // (played from a playlist/recommendation/liked list, say). Cheap/in-memory,
+        // so this always runs even for a track whose actual audio download below
+        // ends up coalesced away.
+        songMetaIndex.upsert(t.neteaseId, t.title, t.artist, t.artistId,
                 t.artistIdsCsv, t.artistNamesCsv, t.album, t.coverUrl, t.durationMs);
-        cacheWorker.submit(() -> {
-            diskCache.cacheAudio(url, nid);
-            songMetaIndex.save();
-            if (onDone != null) post(onDone);
-        });
         cacheThumb64Async(t.coverUrl);
+        synchronized (autoCacheLock) {
+            autoCachePending = t;
+            if (autoCacheRunning) return; // the drain loop will pick this up when it's free
+            autoCacheRunning = true;
+        }
+        cacheWorker.submit(this::drainAutoCacheQueue);
     }
 
-    private void cacheAudioAsync(Track t) {
-        cacheAudioAsync(t, null);
+    private void drainAutoCacheQueue() {
+        while (true) {
+            Track t;
+            synchronized (autoCacheLock) {
+                t = autoCachePending;
+                autoCachePending = null;
+                if (t == null) {
+                    autoCacheRunning = false;
+                    return;
+                }
+            }
+            diskCache.cacheAudio(t.streamUrl, t.neteaseId);
+            songMetaIndex.save();
+        }
     }
 
     /** Manual-cache a netease track (song long-press menu): audio + thumbnail +
@@ -3159,6 +3186,10 @@ public final class PlayerController {
                 t.artistIdsCsv, t.artistNamesCsv, t.album, cover, t.durationMs);
         cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
+            // Protect it from auto-cache eviction only once the download actually
+            // landed -- marking a failed download would protect a file that
+            // doesn't exist.
+            if (diskCache.hasAudio(nid)) diskCache.markActivelyCached(nid);
             // A manually cached song must be fully offline-ready: pull the cover
             // and lyrics that playback paths only fetch on first play.
             if (cover != null && !cover.isEmpty()) {

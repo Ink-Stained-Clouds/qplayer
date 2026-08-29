@@ -49,8 +49,15 @@ Source: "{#SourceFolder}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversi
 Source: "{#IconFile}"; DestDir: "{app}"; DestName: "qplayer.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\QPlayer"; Filename: "{app}\qplayer.exe"; IconFilename: "{app}\qplayer.ico"
-Name: "{autodesktop}\QPlayer"; Filename: "{app}\qplayer.exe"; IconFilename: "{app}\qplayer.ico"; Tasks: desktopicon
+; AppUserModelID must match Main.java's configureWindowsAppIdentity() call
+; (SetCurrentProcessExplicitAppUserModelID("dev.t1m3.qplayer")) exactly --
+; without a Start Menu/desktop shortcut carrying the SAME id, Windows has no
+; registered app to resolve a friendly name/icon for, and shows "未知应用"
+; (Unknown app) in the SMTC media flyout even though the process correctly
+; tagged its own identity and the track title/artist/thumbnail still publish
+; fine (only the app-identity line is affected).
+Name: "{group}\QPlayer"; Filename: "{app}\qplayer.exe"; IconFilename: "{app}\qplayer.ico"; AppUserModelID: "dev.t1m3.qplayer"
+Name: "{autodesktop}\QPlayer"; Filename: "{app}\qplayer.exe"; IconFilename: "{app}\qplayer.ico"; Tasks: desktopicon; AppUserModelID: "dev.t1m3.qplayer"
 
 [Run]
 Filename: "{app}\qplayer.exe"; Description: "{cm:LaunchProgram,QPlayer}"; Flags: nowait postinstall skipifsilent
