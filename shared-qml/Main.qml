@@ -38,6 +38,10 @@ Rectangle {
     property string transitionUnderlayType: ""
     property string leavingPageType: ""
     property bool pageTransitionActive: false
+    // SettingsCatalog.PAGE_TRANSITION_*: every full-page destination, including
+    // the separately composited lyric page, uses this same motion vocabulary.
+    // Zoom is the default; the final preset is an instant accessibility fallback.
+    property int pageTransitionPreset: settings.value("pageTransitionPreset")
     // Build only the initial home page on startup. Once visited, a page remains
     // loaded so navigation state and close animations are preserved.
     property bool searchLoaded: false
@@ -168,14 +172,20 @@ Rectangle {
     // Top-level destinations opened from the app chrome replace the previous
     // path. Drill-ins use pushPage() so Back can restore their source page.
     function replacePage(which, entityId) {
+        var departing = app.topRouteValue()
+        var leavingRoot = app.navigationStack.length === 0 && which !== ""
+        var animateReplace = app.pageTransitionPreset === 0 && departing
+                             && departing.type !== which
         pageTransitionCleanup.stop()
         app.navigationDirection = "replace"
         app.transitionUnderlayType = ""
-        app.leavingPageType = ""
-        app.pageTransitionActive = false
+        app.leavingPageType = animateReplace ? departing.type : ""
+        app.pageTransitionActive = animateReplace
+        if (app.pageTransitionActive) pageTransitionCleanup.restart()
         app.ensurePageLoaded(which)
         app.navigationStack = which !== ""
                 ? [{ type: which, entityId: entityId || 0 }] : []
+        if (app.pageTransitionPreset === 0 && leavingRoot) rootPageMotion.exit()
         app.syncPageState(which)
     }
 
@@ -198,6 +208,10 @@ Rectangle {
             next.push(app.navigationStack[i])
         next.push({ type: which, entityId: id })
         app.navigationStack = next
+        if (app.pageTransitionPreset === 0 && which !== "lyrics"
+                && (!current || (current.type === "lyrics"
+                                 && app.navigationStack.length === 1)))
+            rootPageMotion.exit()
         app.syncPageState(which)
     }
 
@@ -224,6 +238,11 @@ Rectangle {
             next.push(app.navigationStack[i])
         app.navigationStack = next
         var route = next.length > 0 ? next[next.length - 1] : null
+        if (app.pageTransitionPreset === 0 && route && route.type === "lyrics")
+            rootPageMotion.showImmediately()
+        if (app.pageTransitionPreset === 0 && !route
+                && (!departing || departing.type !== "lyrics"))
+            rootPageMotion.enter()
         app.restoreCurrentPage(route)
         app.syncPageState(route ? route.type : "")
     }
@@ -242,14 +261,11 @@ Rectangle {
         // Home is an escape hatch, not another animated Back step. Drop the old
         // route immediately (no exit), then animate only the recommendation page
         // into view so no intermediate source page flashes on screen.
-        pageAnim.stop()
-        homeEntryAnim.stop()
+        rootPageMotion.stopAnimations()
         app.page = 0
         app.nextPage = 0
-        app.pageOpacity = 0
-        app.pageShift = 28
         app.clearPages()
-        homeEntryAnim.restart()
+        rootPageMotion.enter()
     }
 
     // Give the active route a declaration-order-independent z. This matters while
@@ -267,7 +283,11 @@ Rectangle {
         if (depth > 0) return 100 + depth
         // A page popped by Back keeps top priority only for its own exit; a page
         // removed by replace is hidden immediately and never covers the newcomer.
-        if (app.navigationDirection === "back" && paintedOpacity > 0.001) return 1000
+        if ((app.navigationDirection === "back"
+                || (app.navigationDirection === "replace"
+                    && app.pageTransitionPreset === 0
+                    && app.leavingPageType === which))
+                && paintedOpacity > 0.001) return 1000
         return 1
     }
 
@@ -278,12 +298,14 @@ Rectangle {
             return app.transitionUnderlayType === which
         if (app.navigationDirection === "back")
             return app.leavingPageType === which && paintedOpacity > 0.001
+        if (app.navigationDirection === "replace" && app.pageTransitionPreset === 0)
+            return app.leavingPageType === which && paintedOpacity > 0.001
         return false
     }
 
     Timer {
         id: pageTransitionCleanup
-        interval: 280
+        interval: rootPageMotion.duration + 40
         repeat: false
         onTriggered: {
             app.pageTransitionActive = false
@@ -292,50 +314,36 @@ Rectangle {
         }
     }
 
-    // MD3 fade-through page switch: fade the content out, swap, fade it back in.
+    // Root destinations use the same configurable exit/swap/entry sequence as
+    // route-backed pages. Keeping only one page painted avoids two expensive QML
+    // trees being laid out during the transition.
     function switchTo(idx) {
+        var returningFromRoute = app.navigationStack.length > 0
         app.clearPages()
-        if (idx === app.page) return;
+        if (idx === app.page) {
+            if (app.pageTransitionPreset === 0 && returningFromRoute)
+                rootPageMotion.enter()
+            return
+        }
         if (idx === 1) app.searchLoaded = true
         if (idx === 2) app.libraryLoaded = true
         if (idx === 3) app.localLoaded = true
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
-        pageAnim.restart();
+        rootPageMotion.transition();
     }
 
-    // Driven by pageAnim; pageBody binds y + opacity to these.
-    property real pageOpacity: 1
-    property real pageShift: 0
-
-    SequentialAnimation {
-        id: pageAnim
-        NumberAnimation {
-            target: app; property: "pageOpacity"; to: 0
-            duration: 90; easing.type: Easing.OutCubic
-        }
-        ScriptAction { onTrigger: { app.page = app.nextPage; app.pageShift = 28 } }
-        ParallelAnimation {
-            NumberAnimation {
-                target: app; property: "pageOpacity"; from: 0; to: 1
-                duration: 220; easing.type: Easing.OutCubic
-            }
-            NumberAnimation {
-                target: app; property: "pageShift"; from: 28; to: 0
-                duration: 220; easing.type: Easing.OutCubic
-            }
-        }
-    }
-
-    ParallelAnimation {
-        id: homeEntryAnim
-        NumberAnimation {
-            target: app; property: "pageOpacity"; from: 0; to: 1
-            duration: 220; easing.type: Easing.OutCubic
-        }
-        NumberAnimation {
-            target: app; property: "pageShift"; from: 28; to: 0
-            duration: 220; easing.type: Easing.OutCubic
+    PageMotion {
+        id: rootPageMotion
+        preset: app.pageTransitionPreset
+        onSwapRequested: app.page = app.nextPage
+        onPresetChanged: {
+            // A Zoom route keeps the root destination parked at its Zoom Out
+            // endpoint. Other presets leave the underlay static as before.
+            if (preset === 0 && app.navigationStack.length > 0)
+                rootPageMotion.prepareHidden()
+            else
+                rootPageMotion.showImmediately()
         }
     }
 
@@ -626,15 +634,9 @@ Rectangle {
             icon: "settings"
             onClicked: app.replacePage("settings", 0)
         }
-        IconButton {
-            type: "standard"
-            icon: "bug_report"
-            onClicked: app.showLog = !app.showLog
-        }
     }
 
-    // content region. pageBody is positioned by y (not anchors) so the
-    // switch can rise it up; pageWrap clips the overshoot.
+    // Content region. pageWrap clips root/route motion at its edges.
     Item {
         id: pageWrap
         anchors.top: topBar.bottom
@@ -648,53 +650,64 @@ Rectangle {
             id: pageBody
             width: parent.width
             height: parent.height
-            y: app.pageShift
-            opacity: app.pageOpacity
 
-            // Pages stacked + toggled by visibility (was a StackLayout). The
-            // engine doesn't recurse into an invisible child's subtree during
-            // measure, so only the current page is laid out each frame.
-            HomePage {
-                id: home
+            // Root destinations have their own transform layer. Route loaders are
+            // siblings below, so the old root can Zoom Out while a new route Zooms
+            // In without the route inheriting its underlay's transform.
+            Item {
+                id: rootPages
                 anchors.fill: parent
-                visible: app.page === 0
-                onOpenPlaylist: {
-                    player.openPlaylist(home.pendingPlaylist.id)
-                    app.replacePage("detail", home.pendingPlaylist.id)
-                }
-            }
-            Loader {
-                anchors.fill: parent
-                active: app.searchLoaded
-                visible: app.page === 1
-                sourceComponent: Component { SearchPage {} }
-            }
-            Loader {
-                anchors.fill: parent
-                active: app.libraryLoaded
-                visible: app.page === 2
-                sourceComponent: Component {
-                    LibraryPage {
-                        id: libraryPage
-                        onOpenPlaylist: {
-                            player.openPlaylist(libraryPage.pendingPlaylist.id)
-                            app.replacePage("detail", libraryPage.pendingPlaylist.id)
-                        }
-                        onRequestLogin: app.loginOpen = true
+                x: rootPageMotion.contentX
+                y: rootPageMotion.contentY
+                scale: rootPageMotion.contentScale
+                opacity: rootPageMotion.contentOpacity
+
+                // Pages stacked + toggled by visibility (was a StackLayout). The
+                // engine doesn't recurse into an invisible child's subtree during
+                // measure, so only the current page is laid out each frame.
+                HomePage {
+                    id: home
+                    anchors.fill: parent
+                    visible: app.page === 0
+                    onOpenPlaylist: {
+                        player.openPlaylist(home.pendingPlaylist.id)
+                        app.replacePage("detail", home.pendingPlaylist.id)
                     }
                 }
-            }
-            Loader {
-                anchors.fill: parent
-                active: app.localLoaded
-                visible: app.page === 3
-                sourceComponent: Component { LocalPage {} }
+                Loader {
+                    anchors.fill: parent
+                    active: app.searchLoaded
+                    visible: app.page === 1
+                    sourceComponent: Component { SearchPage {} }
+                }
+                Loader {
+                    anchors.fill: parent
+                    active: app.libraryLoaded
+                    visible: app.page === 2
+                    sourceComponent: Component {
+                        LibraryPage {
+                            id: libraryPage
+                            onOpenPlaylist: {
+                                player.openPlaylist(libraryPage.pendingPlaylist.id)
+                                app.replacePage("detail", libraryPage.pendingPlaylist.id)
+                            }
+                            onRequestLogin: app.loginOpen = true
+                        }
+                    }
+                }
+                Loader {
+                    anchors.fill: parent
+                    active: app.localLoaded
+                    visible: app.page === 3
+                    sourceComponent: Component { LocalPage {} }
+                }
             }
 
             // The shared loader implements stack-aware z/visibility and the
             // forward/back transition contract once for every full-screen page.
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "detail"
                 active: app.detailLoaded
                 sourceComponent: Component {
@@ -707,6 +720,7 @@ Rectangle {
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "artist"
                 active: app.artistLoaded
                 sourceComponent: Component {
@@ -719,6 +733,7 @@ Rectangle {
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "album"
                 active: app.albumLoaded
                 sourceComponent: Component {
@@ -731,8 +746,8 @@ Rectangle {
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "queue"
-                transitionAxis: "y"
                 active: app.queueLoaded
                 sourceComponent: Component {
                     QueuePage {
@@ -744,21 +759,22 @@ Rectangle {
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "settings"
-                transitionAxis: "y"
                 active: app.settingsLoaded
                 sourceComponent: Component {
                     SettingsPage {
                         onHome: app.goHome()
                         onBack: app.popPage()
+                        onOpenDebugLog: app.showLog = true
                     }
                 }
             }
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "account"
-                transitionAxis: "y"
                 active: app.accountLoaded
                 sourceComponent: Component {
                     AccountPage {
@@ -770,8 +786,8 @@ Rectangle {
 
             ManagedPageLoader {
                 pageManager: app
+                motion: rootPageMotion
                 routeType: "cachedSongs"
-                transitionAxis: "y"
                 active: app.cacheListLoaded
                 sourceComponent: Component {
                     CachedSongsDialog {
@@ -812,11 +828,15 @@ Rectangle {
     }
 
     // Lyric page chrome (title / wavy progress / transport), over the host-drawn
-    // fluid backdrop + lyrics. Slides up from the bottom in lockstep with the host
-    // layer -- same smoothstep(player.lyricSlide) offset the host applies.
+    // fluid backdrop + lyrics. Lyrics deliberately keep their own bottom-sheet
+    // transition instead of following the configurable navigation-page preset.
     LyricOverlay {
         id: lyricOverlay
         objectName: "lyricChrome"   // host renders this subtree in its own pass, over the fluid
+        property real transitionEase: {
+            var s = player.lyricSlide
+            return s * s * (3 - 2 * s)
+        }
         x: settings.leftInset
         width: parent.width - settings.leftInset - settings.rightInset
         height: parent.height
@@ -825,10 +845,7 @@ Rectangle {
         // TitleBar below), so the three title buttons sit flush at the very top.
         topPad: hostWindow.available ? 6 : settings.topInset + 6
         onCloseRequested: app.popPage()
-        y: {
-            var s = player.lyricSlide;
-            return (1 - s * s * (3 - 2 * s)) * height;
-        }
+        y: (1 - transitionEase) * height
     }
 
     LoginDialog {

@@ -36,42 +36,32 @@ Rectangle {
                 onHome: page.home()
                 onBack: page.back()
             }
-            Item {
-                id: titleSlot
-                property bool compactLayout: page.width < 600
-                // Layout.fillHeight (not an explicit Layout.preferredHeight +
-                // Layout.alignment combo) so the header row's real 64px height
-                // is this Item's own box directly -- qml4j's height/alignment
-                // propagation through a nested Layout.preferredHeight isn't
-                // reliable (same class of bug SearchPage's merged search bar
-                // hit this session), which left some playlists' single-line
-                // titles sitting off-center instead of vertically centered.
+            // Keep the marquee at its text-height and let RowLayout position that
+            // box, rather than stretching an intermediate Item to the whole header.
+            // qml4j did not consistently propagate the stretched wrapper's height
+            // into the nested marquee, which left the glyph run above center.
+            MarqueeText {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-
-                // Single line either way now (narrow just uses the smaller
-                // titleMedium size); overflow marquee-scrolls with faded edges
-                // instead of wrapping to a second line or eliding.
-                MarqueeText {
-                    anchors.fill: parent
-                    text: player.playlistTitle
-                    textColor: Theme.color.onSurfaceColor
-                    fontFamily: titleSlot.compactLayout
-                                ? Theme.typography.titleMedium.family
-                                : Theme.typography.titleLarge.family
-                    fontSize: titleSlot.compactLayout
-                              ? Theme.typography.titleMedium.size
-                              : Theme.typography.titleLarge.size
-                }
-            }
-            Button {
                 Layout.alignment: Qt.AlignVCenter
-                type: "text"
+                text: player.playlistTitle
+                textColor: Theme.color.onSurfaceColor
+                fontFamily: page.width < 600
+                            ? Theme.typography.titleMedium.family
+                            : Theme.typography.titleLarge.family
+                fontSize: page.width < 600
+                          ? Theme.typography.titleMedium.size
+                          : Theme.typography.titleLarge.size
+            }
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
                 visible: player.loggedIn && !player.playlistLoading
                          && player.playlistTracks && player.playlistTracks.length > 0
                 enabled: !player.intelligenceLoading
-                icon: "favorite"
-                text: player.intelligenceLoading ? "推荐中…" : "心动推荐"
+                icon: "auto_awesome"
+                contentColor: player.intelligenceLoading
+                              ? Theme.color.primary
+                              : Theme.color.onSurfaceVariantColor
                 onClicked: player.startIntelligenceMode(player.openPlaylistId)
             }
             // Collect (subscribe) this playlist. Shown only once loaded and only for

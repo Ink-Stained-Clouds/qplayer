@@ -41,6 +41,18 @@ public class SettingsCatalogTest {
         assertEquals(1024, cache.max);
     }
 
+    @Test
+    public void pageTransitionDefaultsToZoomAndOffersAccessibleFallback() {
+        SettingSpec transition = setting(SettingsCatalog.PAGE_TRANSITION_KEY);
+
+        assertEquals(SettingSpec.DROPDOWN, transition.type);
+        assertEquals(SettingsCatalog.PAGE_TRANSITION_ZOOM, transition.def);
+        assertEquals("Zoom In / Out", transition.options.get(0));
+        assertTrue(transition.options.contains("无动画"));
+        assertTrue(transition.appliesTo(SettingsCatalog.DESKTOP));
+        assertTrue(transition.appliesTo(SettingsCatalog.ANDROID));
+    }
+
     private static SettingSpec setting(String key) {
         return SettingsCatalog.specs().stream()
                 .filter(candidate -> key.equals(candidate.key))

@@ -52,6 +52,16 @@ public final class SettingsCatalog {
     public static final int MODE_LIGHT = 1;
     public static final int MODE_DARK = 2;
 
+    /** Shared full-page transition presets. QML and the host-drawn lyric page
+     *  both read this index so navigation never changes motion language when it
+     *  crosses the QML/Skia rendering boundary. */
+    public static final String PAGE_TRANSITION_KEY = "pageTransitionPreset";
+    public static final int PAGE_TRANSITION_ZOOM = 0;
+    public static final int PAGE_TRANSITION_FADE = 1;
+    public static final int PAGE_TRANSITION_SLIDE_HORIZONTAL = 2;
+    public static final int PAGE_TRANSITION_SLIDE_VERTICAL = 3;
+    public static final int PAGE_TRANSITION_NONE = 4;
+
     private SettingsCatalog() {}
 
     public static List<SettingSpec> specs() {
@@ -60,6 +70,11 @@ public final class SettingsCatalog {
         // ---- 外观 -----------------------------------------------------------
         out.add(SettingSpec.segmented("darkMode", APPEARANCE, "深色模式", MODE_SYSTEM,
                         "跟随系统", "浅色", "深色")
+                .build());
+        out.add(SettingSpec.dropdown(PAGE_TRANSITION_KEY, APPEARANCE, "页面切换动画",
+                        PAGE_TRANSITION_ZOOM,
+                        "Zoom In / Out", "淡入淡出", "水平滑动", "垂直滑动", "无动画")
+                .desc("应用于导航页面，修改后立即生效；歌词页使用独立展开动画")
                 .build());
         out.add(SettingSpec.toggle("monet", APPEARANCE, "莫奈取色", true)
                 .desc("随封面动态生成主题配色")

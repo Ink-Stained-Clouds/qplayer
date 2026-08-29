@@ -238,7 +238,12 @@ public final class LyricCompositor {
         //  2) the host fluid backdrop + per-syllable lyrics (slides up),
         //  3) the lyric chrome subtree (title / wavy progress / transport).
         double slidePrev = controller != null ? controller.lyricSlide.peek() : 0.0;
-        boolean fullyCovered = slidePrev >= 0.999;
+        boolean lyricPageStillOpen = controller != null
+                && Boolean.TRUE.equals(controller.lyricsOpen.peek());
+        // Draw the main scene immediately on the first closing frame. Looking at
+        // progress alone would still call the page "covered" for that one frame,
+        // so a fading/zooming page would reveal an undrawn black surface beneath it.
+        boolean fullyCovered = slidePrev >= 0.999 && lyricPageStillOpen;
         if (!fullyCovered) {
             int sc = canvas.save();
             canvas.scale(uiScale, uiScale);
@@ -292,8 +297,10 @@ public final class LyricCompositor {
         if (controller == null) return;
         boolean open = Boolean.TRUE.equals(controller.lyricsOpen.peek());
         float target = open ? 1f : 0f;
-        // Critically-damped-ish ease toward the target; cheap and frame-stable.
-        lyricSlide += (target - lyricSlide) * 0.22f;
+        // The lyric page is a spatial bottom sheet, independent of the navigation
+        // page preset. Ease a little more slowly than the old 0.22 response while
+        // retaining the same interruptible, frame-stable approach.
+        lyricSlide += (target - lyricSlide) * 0.18f;
         if (Math.abs(target - lyricSlide) < 0.002f) lyricSlide = target;
         // Publish to QML so the LyricOverlay chrome fades in/out in lockstep. set()
         // no-ops on an unchanged value, so once settled-closed this stops bumping the
@@ -368,8 +375,8 @@ public final class LyricCompositor {
         int sc = canvas.save();
         canvas.scale(uiScale, uiScale);
 
-        // The page slides up from the bottom over the QML main scene (drawn in the prior
-        // pass). The LyricOverlay chrome slides with the same smoothstep offset.
+        // The page always slides up from the bottom over the main scene. Its QML
+        // chrome uses this same smoothstep progress, so both layers stay locked.
         float ease = lyricSlide * lyricSlide * (3f - 2f * lyricSlide); // smoothstep
         canvas.translate(0f, (1f - ease) * h);
 

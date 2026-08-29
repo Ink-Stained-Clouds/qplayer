@@ -18,6 +18,7 @@ Rectangle {
     id: page
     signal back()
     signal home()
+    signal openDebugLog()
     color: Theme.color.surface
 
     property var categories: settings.categories()
@@ -122,6 +123,12 @@ Rectangle {
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.titleLarge.family
                 font.pixelSize: Theme.typography.titleLarge.size
+            }
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                type: "standard"
+                icon: "bug_report"
+                onClicked: page.openDebugLog()
             }
         }
 
