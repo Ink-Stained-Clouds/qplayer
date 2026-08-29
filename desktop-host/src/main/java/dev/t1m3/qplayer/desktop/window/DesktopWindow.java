@@ -5,6 +5,7 @@ import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.resources.CompressedResources;
 import dev.t1m3.qplayer.settings.SettingsCore;
@@ -29,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Owns the GLFW window and the render-thread lifecycle on the process main
@@ -55,6 +57,7 @@ public final class DesktopWindow {
     private final ResourceLoader resources;
     private final PlayerController controller;
     private final SettingsCore settings;
+    private final DiskCompiledSceneCache qmlCompilationCache;
     private final LyricCompositor compositor = new LyricCompositor();
     /** Desktop lyrics floating window (issue #25) -- null until {@link
      *  #setLyricSettingsStore} is called (before {@link #init}). */
@@ -76,7 +79,13 @@ public final class DesktopWindow {
     private volatile int fbW = INITIAL_W;
     private volatile int fbH = INITIAL_H;
     private volatile int refreshHz = 60;
-    private volatile int[] pendingResize;
+    /**
+     * Latest framebuffer resize waiting for the render thread.  A plain volatile
+     * reference is not enough here: read-then-clear can erase a newer callback
+     * that arrives between those two operations during an interactive resize.
+     * getAndSet makes consuming atomic while still coalescing intermediate sizes.
+     */
+    private final AtomicReference<int[]> pendingResize = new AtomicReference<>();
 
     // Persistent across render-thread respawns (built once, on the render thread).
     private volatile QmlView view;
@@ -100,14 +109,17 @@ public final class DesktopWindow {
     private WinFrameless frameless;
     // 确保nudgeResizeOnce只调用一次，避免从托盘恢复时累积增加窗口尺寸
     private boolean nudgeApplied = false;
+    private static volatile Boolean windows11OrLater;
 
     public DesktopWindow(QmlEngine engine, String qmlSource, ResourceLoader resources,
-                  PlayerController controller, SettingsCore settings) {
+                  PlayerController controller, SettingsCore settings,
+                  DiskCompiledSceneCache qmlCompilationCache) {
         this.engine = engine;
         this.qmlSource = qmlSource;
         this.resources = resources;
         this.controller = controller;
         this.settings = settings;
+        this.qmlCompilationCache = qmlCompilationCache;
         this.kind = GraphicsBackend.Kind.resolve(settings);
     }
 
@@ -159,14 +171,17 @@ public final class DesktopWindow {
         return lyricWindow;
     }
 
-    /** Called once from Main before {@link #init()}, with the same {@code
-     *  SettingsStore} instance backing the shared {@code SettingsCore} — the
-     *  desktop lyric window persists its own few keys (enabled/x/y) straight
-     *  through it rather than via a second JsonSettingsStore instance, which
-     *  would read/write the same file independently and risk one clobbering
-     *  keys the other doesn't know about. */
+    /** Called once from Main before {@link #init()}, with the same store backing
+     * SettingsCore. The enabled value is synchronized with the generated settings
+     * page; host-only window coordinates stay beside it in that same store. */
     public void setLyricSettingsStore(dev.t1m3.qplayer.settings.SettingsStore store) {
-        this.lyricWindow = new DesktopLyricWindow(store);
+        this.lyricWindow = new DesktopLyricWindow(store, resources, kind, qmlCompilationCache,
+                enabled -> postRenderTask(() -> settings.put("desktopLyricEnabled", enabled)),
+                this::postMainTask);
+        settings.onChange("desktopLyricEnabled", value -> postMainTask(() -> {
+            DesktopLyricWindow target = lyricWindow;
+            if (target != null) target.applyEnabled(Boolean.TRUE.equals(value));
+        }));
     }
 
     public void setFirstFrameListener(Runnable r) {
@@ -206,9 +221,15 @@ public final class DesktopWindow {
     }
 
     int[] consumePendingResize() {
-        int[] r = pendingResize;
-        if (r != null) pendingResize = null;
-        return r;
+        return pendingResize.getAndSet(null);
+    }
+
+    /** Windows WNDPROC and GLFW's cross-platform callback both converge here. */
+    void onNativeFramebufferResize(int width, int height) {
+        if (width <= 0 || height <= 0) return;
+        fbW = width;
+        fbH = height;
+        pendingResize.set(new int[]{width, height});
     }
 
     /**
@@ -221,7 +242,10 @@ public final class DesktopWindow {
             return view;
         }
         lastSpawnWasRespawn = false;
-        QmlView v = QmlView.withStockTypes(engine).resources(resources);
+        QmlView v = QmlView.withStockTypes(engine)
+                .resources(resources)
+                .compilationCache(qmlCompilationCache,
+                        qmlCompilationCache.sceneKey("Main.qml"));
         // Cache stable top-level QML subtrees as SkPictures. Enable it before
         // load() so the constructed Items wire content invalidation from their
         // first frame; LyricCompositor uses the same cache for settled lyric chrome.
@@ -408,6 +432,11 @@ public final class DesktopWindow {
                 GLFW.glfwShowWindow(window);
                 GLFW.glfwFocusWindow(window);
             }
+            // Keep the auxiliary qml4j scene off the startup critical path. It is
+            // initialized after real main-window content is visible, and remains
+            // fully lazy when desktop lyrics are disabled.
+            DesktopLyricWindow target = lyricWindow;
+            if (target != null && target.isEnabled()) target.startRenderThread();
         });
         if (windowChrome != null) postMainTask(this::nudgeResizeOnce);
         Runnable r = firstFrameListener;
@@ -480,21 +509,16 @@ public final class DesktopWindow {
             // createWindow() runs, or a stale one could receive a callback for an
             // already-destroyed window.
             if (windowChrome == null) windowChrome = new WindowChrome(this);
-            // hostWindow.available drives TitleBar.qml (and NavigationRail's brand
-            // header) -- it must mirror whether the custom title bar is actually
-            // active, not just that we're on Windows. Win10 keeps the system
-            // decoration but would otherwise ALSO show our TitleBar: two title bars.
-            if (isWindows11OrLater()) {
-                // Win11+: use custom frameless title bar with rounded corners
-                frameless = new WinFrameless();
-                frameless.install(this, TITLE_BAR_HEIGHT);
-                settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
-                windowChrome.available.set(true);
-            } else {
-                // Win10 and earlier: use system decoration, no custom title bar
-                settings.setInsets(0, settings.bottomInset.peek());
-                windowChrome.available.set(false);
-            }
+            // Keep GLFW's decorated HWND and replace only its non-client layout.
+            // WS_CAPTION | WS_THICKFRAME therefore continue to provide DWM shadow,
+            // resize, Snap, taskbar preview and Alt-Tab on both Windows 10 and 11.
+            // Win10 receives a 1px extended DWM frame as a shadow fallback; Win11
+            // uses its native shadow and rounded-corner policy directly.
+            boolean windows11 = isWindows11OrLater();
+            frameless = new WinFrameless();
+            frameless.install(this, TITLE_BAR_HEIGHT, !windows11);
+            settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
+            windowChrome.available.set(true);
         }
         cacheFramebufferAndScale();
         cacheRefreshRate();
@@ -503,17 +527,13 @@ public final class DesktopWindow {
         input.install(window);
         Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
 
-        // Created once, alongside the main window (not recreated on a Vulkan-
-        // fallback recreate of it -- lyricWindow is a separate GLFW window/GL
-        // context untouched by that path). Hidden unless the user previously
-        // left it enabled.
-        if (lyricWindow != null && !lyricWindowCreated) {
+        // Disabled desktop lyrics stay fully lazy. Persistently enabled lyrics need
+        // their native shell now, but their QML renderer still starts after the main
+        // window's first frame.
+        if (lyricWindow != null && lyricWindow.isEnabled()) {
             lyricWindow.create();
-            lyricWindowCreated = true;
         }
     }
-
-    private boolean lyricWindowCreated;
 
     /** dwmapi.dll's DwmSetWindowAttribute, used only for the two chrome attributes
      *  below. Fully-qualified JNA types (matches this file's other rare/localized
@@ -569,12 +589,13 @@ public final class DesktopWindow {
     }
 
     /** Returns true on Windows 11+ (build 22000+), where DWM corner preference
-     *  and the custom frameless title bar with rounded corners are supported.
-     *  Windows 10 and earlier will use the system-provided window decoration. */
-    private static boolean isWindows11OrLater() {
+     * is supported. All Windows versions use the custom title bar. */
+    static boolean isWindows11OrLater() {
         if (!isWindows()) return false;
+        Boolean cached = windows11OrLater;
+        if (cached != null) return cached;
+        boolean detected = false;
         try {
-            String ver = System.getProperty("os.version", "");
             // Windows 11 starts at build 22000, which reports os.version=10.0
             // but the build number is available via os.version or registry.
             // Actually, Windows 10 and 11 both report "10.0" as os.version.
@@ -587,11 +608,13 @@ public final class DesktopWindow {
                 if (line.startsWith("CurrentBuildNumber")) {
                     String buildStr = line.replaceAll(".*?\\s+(\\d+)", "$1").trim();
                     int build = Integer.parseInt(buildStr);
-                    return build >= 22000;
+                    detected = build >= 22000;
+                    break;
                 }
             }
         } catch (Exception ignored) {}
-        return false;
+        windows11OrLater = detected;
+        return detected;
     }
 
     /** Windows-only chrome polish. GLFW creates a plain top-level window with the
@@ -623,6 +646,20 @@ public final class DesktopWindow {
         }
     }
 
+    /** Best-effort system clipping for undecorated auxiliary windows. */
+    static void applyWindowsRoundedCorners(long glfwWindow) {
+        if (!isWindows11OrLater()) return;
+        try {
+            long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwWindow);
+            com.sun.jna.Memory corner = new com.sun.jna.Memory(4);
+            corner.setInt(0, DWMWCP_ROUND);
+            Dwmapi.I.DwmSetWindowAttribute(com.sun.jna.Pointer.createConstant(hwnd),
+                    DWMWA_WINDOW_CORNER_PREFERENCE, corner, 4);
+        } catch (Throwable t) {
+            Logger.warn("Windows auxiliary-window corner preference failed: {}", t.getMessage());
+        }
+    }
+
     /**
      * A Vulkan device/surface can fail after GLFW's basic availability probe.
      * Recreate the window with an OpenGL context and keep the application alive.
@@ -640,7 +677,8 @@ public final class DesktopWindow {
         kind = GraphicsBackend.Kind.GL;
         settings.put("graphicsBackend", 0);
         settings.graphicsFallbackNotice.set(Boolean.TRUE);
-        pendingResize = null;
+        if (lyricWindow != null) lyricWindow.recreate(kind);
+        pendingResize.set(null);
         try {
             createWindow();
             spawnRenderThread();
@@ -661,27 +699,33 @@ public final class DesktopWindow {
     }
 
     // Rendering happens on a dedicated thread while the main thread pumps events.
-    // On a Wayland session NVIDIA's EGL driver crashes under that split; X11/GLX
-    // (via XWayland) is stable, so prefer X11 when a DISPLAY is available. Override
-    // with -Dqplayer.glfw.platform=wayland|x11|any.
+    // More importantly, the desktop-lyric overlay must be transparent, undecorated,
+    // draggable and position-persistent. Native Wayland deliberately exposes no
+    // global top-level coordinates, so GLFW cannot implement the latter two there.
+    // Prefer X11/XWayland whenever the session exposes DISPLAY, even if a stale
+    // qplayer.glfw.platform override asks for Wayland.
     private void preferStablePlatform() {
         String os = System.getProperty("os.name", "").toLowerCase();
         if (!os.contains("linux")) return;
         String pref = System.getProperty("qplayer.glfw.platform", "").toLowerCase();
-        int platform;
-        if ("wayland".equals(pref)) {
-            platform = GLFW.GLFW_PLATFORM_WAYLAND;
-        } else if ("any".equals(pref)) {
-            return;
-        } else if ("x11".equals(pref) || System.getenv("DISPLAY") != null) {
-            platform = GLFW.GLFW_PLATFORM_X11;
-        } else {
+        String display = System.getenv("DISPLAY");
+        boolean hasXDisplay = display != null && !display.isBlank();
+        if (hasXDisplay && GLFW.glfwPlatformSupported(GLFW.GLFW_PLATFORM_X11)) {
+            if ("wayland".equals(pref) || "any".equals(pref)) {
+                Logger.warn("ignoring qplayer.glfw.platform={}: desktop lyrics require "
+                        + "X11/XWayland for transparent draggable positioning", pref);
+            }
+            GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11);
+            Logger.info("forcing GLFW platform = x11 (DISPLAY={})", display);
             return;
         }
-        if (GLFW.glfwPlatformSupported(platform)) {
-            GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, platform);
-            Logger.info("forcing GLFW platform = {}",
-                    platform == GLFW.GLFW_PLATFORM_X11 ? "x11" : "wayland");
+
+        if ("x11".equals(pref)) {
+            Logger.warn("qplayer.glfw.platform=x11 requested but DISPLAY is unavailable");
+        }
+        if (System.getenv("WAYLAND_DISPLAY") != null) {
+            Logger.warn("XWayland is unavailable; native Wayland cannot reposition or "
+                    + "persist an undecorated desktop-lyric window");
         }
     }
 
@@ -701,10 +745,7 @@ public final class DesktopWindow {
     @SuppressWarnings("resource")
     private void installCallbacks() {
         GLFW.glfwSetFramebufferSizeCallback(window, (win, w, h) -> {
-            if (w <= 0 || h <= 0) return;
-            fbW = w;
-            fbH = h;
-            pendingResize = new int[]{w, h};
+            onNativeFramebufferResize(w, h);
         });
         GLFW.glfwSetWindowContentScaleCallback(window, (win, sx, sy) -> {
             if (sx > 0) uiScale = sx;
@@ -897,14 +938,31 @@ public final class DesktopWindow {
                     Logger.warn("main task failed: {}", t);
                 }
             }
+            publishDesktopLyricsWithoutMainRenderer();
+        }
+    }
+
+    /**
+     * The main GPU/QML thread is intentionally destroyed while hidden in the
+     * tray. Transfer the controller pump to the still-alive GLFW event loop in
+     * that state so track changes keep feeding the independent lyric renderer.
+     */
+    private void publishDesktopLyricsWithoutMainRenderer() {
+        RenderThread rt = renderThread;
+        if ((rt != null && rt.isAlive()) || lyricWindow == null || !lyricWindow.isEnabled()) {
+            return;
+        }
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (controller != null) controller.pump();
+            lyricWindow.publish(controller,
+                    settings == null || settings.resolvedDarkValue());
         }
     }
 
     public void shutdown() {
         stopRenderThread();
         if (lyricWindow != null) {
-            try { lyricWindow.disposeGpu(); } catch (Throwable ignored) {}
-            try { lyricWindow.disposeWindow(); } catch (Throwable ignored) {}
+            try { lyricWindow.shutdown(); } catch (Throwable ignored) {}
         }
         if (view != null) {
             try {

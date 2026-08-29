@@ -39,7 +39,6 @@ import static org.lwjgl.vulkan.VK10.*;
 final class VulkanBackend implements GraphicsBackend {
 
     private final long window;
-
     private VkInstance instance;
     private long surfaceKHR;
     private VkPhysicalDevice physicalDevice;

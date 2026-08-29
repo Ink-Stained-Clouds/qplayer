@@ -2,6 +2,7 @@ package dev.t1m3.qplayer.lyric.skia;
 
 import dev.t1m3.qplayer.lyric.LrcParser;
 import dev.t1m3.qplayer.lyric.LyricLine;
+import dev.t1m3.qplayer.lyric.LyricTimeline;
 import dev.t1m3.qplayer.lyric.Syllable;
 import org.junit.Test;
 
@@ -19,12 +20,12 @@ public class LyricRendererTest {
         List<LyricLine> cached = LrcParser.parse(
                 "[00:01.00]这是普通歌词\n[00:05.00]这是下一行");
 
-        LyricRenderer.PreparedLyrics first = LyricRenderer.prepareLyrics(cached, false);
+        LyricTimeline.Prepared first = LyricTimeline.prepare(cached, false);
         assertFalse(first.animatablePerToken);
         assertTrue(first.lines.get(0).syllables.size() > 1); // private wrap tokens
         assertEquals(1, cached.get(0).syllables.size());    // cache stays pristine
 
-        LyricRenderer.PreparedLyrics second = LyricRenderer.prepareLyrics(cached, false);
+        LyricTimeline.Prepared second = LyricTimeline.prepare(cached, false);
         assertFalse(second.animatablePerToken);
         assertEquals(1, cached.get(0).syllables.size());
     }
@@ -34,7 +35,7 @@ public class LyricRendererTest {
         List<LyricLine> cached = LrcParser.parse(
                 "[00:01.00]这是普通歌词\n[00:05.00]这是下一行");
 
-        LyricRenderer.PreparedLyrics prepared = LyricRenderer.prepareLyrics(cached, true);
+        LyricTimeline.Prepared prepared = LyricTimeline.prepare(cached, true);
 
         assertTrue(prepared.animatablePerToken);
         assertTrue(prepared.lines.get(0).syllables.size() > 1);
@@ -42,9 +43,38 @@ public class LyricRendererTest {
     }
 
     @Test
+    public void sharedTimelineSelectsCurrentAndNextCompactLines() {
+        LyricTimeline.Prepared prepared = LyricTimeline.prepare(LrcParser.parse(
+                "[00:01.00]第一行\n[00:05.00]第二行\n[00:09.00]第三行"), false);
+
+        LyricTimeline.Frame frame = LyricTimeline.frameAt(prepared, 6_000L);
+
+        assertEquals("第二行", frame.current);
+        assertEquals("第三行", frame.next);
+        assertEquals(1, frame.groupIndex);
+    }
+
+    @Test
+    public void sharedTimelineKeepsFollowingBackgroundVocalInActiveGroup() {
+        LyricLine main = new LyricLine();
+        main.syllables.add(new Syllable("主唱", 1_000L, 3_000L));
+        LyricLine background = new LyricLine();
+        background.vocalChannel = LyricLine.VocalChannel.BACKGROUND;
+        background.syllables.add(new Syllable("和声", 1_500L, 2_000L));
+        LyricLine next = new LyricLine();
+        next.syllables.add(new Syllable("下一句", 5_000L, 2_000L));
+
+        LyricTimeline.Frame frame = LyricTimeline.frameAt(
+                LyricTimeline.prepare(Arrays.asList(main, background, next), false), 2_000L);
+
+        assertEquals("主唱  ·  和声", frame.current);
+        assertEquals("下一句", frame.next);
+    }
+
+    @Test
     public void splitLatinSyllablesFormOneDisplayWordButKeepBothAnimationSegments() {
         // UTF-16 offsets for timed syllables "en" + "dure".
-        int[][] words = LyricRenderer.displayWordSyllableRanges(
+        int[][] words = LyricTextLayout.displayWordSyllableRanges(
                 "endure forever", new int[]{0, 2, 6, 7, 14});
 
         assertEquals(2, words.length);
@@ -56,7 +86,7 @@ public class LyricRendererTest {
 
     @Test
     public void everyVisibleWordGetsItsOwnGlowGroup() {
-        int[][] words = LyricRenderer.displayWordRanges("hold on, 再见");
+        int[][] words = LyricTextLayout.displayWordRanges("hold on, 再见");
 
         assertEquals(4, words.length); // hold, on, 再, 见
         assertEquals("hold", "hold on, 再见".substring(words[0][0], words[0][1]));
@@ -71,7 +101,7 @@ public class LyricRendererTest {
                 new Syllable("three ", 200, 100),
                 new Syllable("four", 300, 100));
 
-        int[] starts = LyricRenderer.wrapStarts(words,
+        int[] starts = LyricTextLayout.wrapStarts(words,
                 new float[]{30f, 30f, 30f, 30f}, 100f);
 
         assertEquals(3, starts.length);
@@ -89,7 +119,7 @@ public class LyricRendererTest {
                 new Syllable("four ", 300, 100),
                 new Syllable("five", 400, 100));
 
-        int[] starts = LyricRenderer.wrapStarts(words,
+        int[] starts = LyricTextLayout.wrapStarts(words,
                 new float[]{30f, 30f, 30f, 30f, 30f}, 100f);
 
         assertEquals(3, starts.length);
@@ -106,7 +136,7 @@ public class LyricRendererTest {
                 new Syllable("ភាសា", 200, 100),
                 new Syllable("ខ្មែរ", 300, 100));
 
-        int[] starts = LyricRenderer.wrapStarts(khmer,
+        int[] starts = LyricTextLayout.wrapStarts(khmer,
                 new float[]{30f, 30f, 30f, 30f}, 65f);
 
         assertEquals(3, starts.length);
@@ -122,7 +152,7 @@ public class LyricRendererTest {
                 new Syllable("ម ", 100, 100),
                 new Syllable("បន្ទាប់", 200, 100));
 
-        int[] starts = LyricRenderer.wrapStarts(conjunct,
+        int[] starts = LyricTextLayout.wrapStarts(conjunct,
                 new float[]{40f, 40f, 30f}, 50f);
 
         assertEquals(3, starts.length);

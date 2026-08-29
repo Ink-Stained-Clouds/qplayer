@@ -639,6 +639,13 @@ public final class PlayerController {
     private volatile long togetherQueueVersion;
     private volatile long togetherTickCount;
     private volatile long togetherSuppressReportsUntil;
+    /** NetEase risk control must pause the whole sync clock. Retrying the same
+     *  rejected report every one-second tick only extends the restriction. */
+    private volatile long togetherRateLimitUntil;
+    private volatile int togetherRateLimitFailures;
+    private static final long TOGETHER_RATE_LIMIT_BASE_MS = 30_000L;
+    private static final long TOGETHER_RATE_LIMIT_MAX_MS = 120_000L;
+    private static final int TOGETHER_RATE_LIMIT_MAX_RETRIES = 3;
     /** The room creator is the initial natural-advance authority. Any participant
      *  that later switches tracks takes ownership; followers wait for that user's
      *  GOTO instead of racing a second autoAdvance at the same song boundary. */
@@ -3539,6 +3546,12 @@ public final class PlayerController {
                     // So the progress bar shows the resume point before playback
                     // actually starts (toggle() only plays on the user's first tap).
                     positionMs.set(clampedPos);
+                    // The restored track is already the current track even though its
+                    // audio source is not opened until the first Play press. Publish
+                    // the same favorite-button state as playAt() now, rather than
+                    // leaving the heart disabled for the whole pre-playback session.
+                    currentLiked.set(cur.neteaseId != 0 && likedSet.contains(cur.neteaseId));
+                    currentLikeable.set(cur.neteaseId != 0);
                     playMode.set(Math.max(0, Math.min(2, savedMode)));
                 });
                 // Load the full cover art + lyrics now (both cache-first internally)
@@ -5089,6 +5102,8 @@ public final class PlayerController {
         togetherLastRemoteCommand = "";
         togetherPendingRemoteCommand = "";
         togetherPendingRemoteSeq = -1L;
+        togetherRateLimitUntil = 0L;
+        togetherRateLimitFailures = 0;
         cancelPendingTogetherAutoAdvance();
         togetherLeaderUserId = togetherLeaderId(room, userId);
         togetherSuppressReportsUntil = System.currentTimeMillis() + 1800L;
@@ -5131,6 +5146,8 @@ public final class PlayerController {
         pendingTogetherTargetSongId = 0L;
         togetherPendingRemoteCommand = "";
         togetherPendingRemoteSeq = -1L;
+        togetherRateLimitUntil = 0L;
+        togetherRateLimitFailures = 0;
         if (advanceLocally) {
             onMain(() -> {
                 if (togetherPendingAutoAdvanceSongId == 0L) return;
@@ -5151,6 +5168,7 @@ public final class PlayerController {
         if (!togetherActive) return;
         final String roomId = togetherRoomId;
         if (roomId.isEmpty()) return;
+        if (System.currentTimeMillis() < togetherRateLimitUntil) return;
         try {
             if (System.currentTimeMillis() >= togetherSuppressReportsUntil) {
                 reportTogetherLocalChanges();
@@ -5172,12 +5190,78 @@ public final class PlayerController {
                     publishTogetherRoom(status.room);
                 }
             }
+            boolean recoveredFromRateLimit = togetherRateLimitFailures > 0;
+            togetherRateLimitUntil = 0L;
+            togetherRateLimitFailures = 0;
+            if (recoveredFromRateLimit) {
+                post(() -> {
+                    if (togetherActive) listenTogetherStatusText.set("房间已连接");
+                });
+            }
         } catch (Throwable e) {
+            if (isTogetherRateLimited(e)) {
+                int failures = Math.min(16, togetherRateLimitFailures + 1);
+                togetherRateLimitFailures = failures;
+                if (togetherRateLimitShouldPause(failures)) {
+                    togetherRateLimitUntil = Long.MAX_VALUE;
+                    Logger.warn("listen-together rate limited {} times; automatic sync paused: {}",
+                            failures, e.getMessage());
+                    post(() -> {
+                        if (togetherActive) {
+                            listenTogetherStatusText.set(
+                                    "同步因操作频繁已暂停，请退出房间后重新加入");
+                        }
+                    });
+                    return;
+                }
+                long delayMs = togetherRateLimitBackoffMs(failures);
+                togetherRateLimitUntil = System.currentTimeMillis() + delayMs;
+                long delaySeconds = delayMs / 1000L;
+                Logger.warn("listen-together rate limited; retrying in {}s: {}",
+                        delaySeconds, e.getMessage());
+                post(() -> {
+                    if (togetherActive) {
+                        listenTogetherStatusText.set(
+                                "同步请求过于频繁，" + delaySeconds + " 秒后重试");
+                    }
+                });
+                return;
+            }
             Logger.warn("listen-together sync failed: {}", e.getMessage());
             post(() -> {
                 if (togetherActive) listenTogetherStatusText.set("正在重新连接…");
             });
         }
+    }
+
+    static long togetherRateLimitBackoffMs(int consecutiveFailures) {
+        int exponent = Math.max(0, Math.min(2, consecutiveFailures - 1));
+        return Math.min(TOGETHER_RATE_LIMIT_MAX_MS,
+                TOGETHER_RATE_LIMIT_BASE_MS << exponent);
+    }
+
+    static boolean togetherRateLimitShouldPause(int consecutiveFailures) {
+        return consecutiveFailures > TOGETHER_RATE_LIMIT_MAX_RETRIES;
+    }
+
+    static boolean isTogetherRateLimited(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(java.util.Locale.ROOT);
+                if (message.contains("操作频繁")
+                        || message.contains("请求频繁")
+                        || (message.contains("频繁") && message.contains("稍后"))
+                        || lower.contains("too many requests")
+                        || lower.contains("rate limit")
+                        || lower.contains("http 429")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private void reportTogetherLocalChanges() throws java.io.IOException {

@@ -1,5 +1,6 @@
 package dev.t1m3.qplayer.desktop.resources;
 
+import dev.t1m3.qplayer.util.Logger;
 import io.github.timer_err.qml4j.render.ResourceLoader;
 
 import java.io.ByteArrayOutputStream;
@@ -17,6 +18,20 @@ import java.nio.file.Files;
  * Android shell sees through its merged assets.
  */
 public final class ClasspathResourceLoader implements ResourceLoader {
+
+    /**
+     * Fingerprints every packaged QML, qmldir and JavaScript module together with
+     * the qml4j runtime. A changed resource or engine therefore selects a fresh
+     * compiled-scene cache entry without relying on timestamps.
+     */
+    public String qmlFingerprint(String applicationVersion) {
+        try {
+            return QmlResourceFingerprint.create(applicationVersion);
+        } catch (Exception error) {
+            Logger.warn("QML cache disabled: cannot fingerprint resources ({})", error);
+            return null;
+        }
+    }
 
     @Override
     public byte[] load(String source) {
