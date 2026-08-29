@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Owns the GLFW window and the render-thread lifecycle on the process main
@@ -169,6 +170,12 @@ public final class DesktopWindow {
      *  toggle menu item. */
     public DesktopLyricWindow lyricWindow() {
         return lyricWindow;
+    }
+
+    /** Host-only state observation that stays live after the main renderer exits. */
+    public void setDesktopLyricStateListener(Consumer<Boolean> listener) {
+        DesktopLyricWindow target = lyricWindow;
+        if (target != null) target.setStateListener(listener);
     }
 
     /** Called once from Main before {@link #init()}, with the same store backing

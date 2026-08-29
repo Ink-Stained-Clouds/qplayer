@@ -196,9 +196,10 @@ public final class Main {
             if (os.contains("mac")) return n.endsWith(".dmg");
             return n.endsWith(".appimage");
         });
-        controller.setInstaller(urls -> downloadAndInstallUpdate(controller, urls));
+        controller.setInstaller(urls -> downloadAndInstallUpdate(controller, window, urls));
 
         TrayController tray = new TrayController(controller, window, resources.load("app-icon.png"));
+        window.setDesktopLyricStateListener(ignored -> tray.onDesktopLyricChanged());
         // Windows tray: hand it the multi-size .ico the installer also uses.
         tray.setIcoBytes(resources.load("app-icon.ico"));
         DesktopMediaControls systemMedia = createSystemMediaControls(controller, window);
@@ -339,7 +340,9 @@ public final class Main {
      *  lives, so it's covered by the existing cache-size/clear-cache settings) and
      *  hand off to the OS to actually install it, mirroring how the Android side
      *  hands a downloaded APK to the system package installer. */
-    private static void downloadAndInstallUpdate(PlayerController controller, String[] urls) {
+    private static void downloadAndInstallUpdate(PlayerController controller,
+                                                 DesktopWindow window,
+                                                 String[] urls) {
         new Thread(() -> {
             String name = urls.length > 0 ? fileNameOf(urls[0]) : "qplayer-update";
             File dir = AppDirs.updatesDir().toFile();
@@ -349,7 +352,18 @@ public final class Main {
                 if (downloadOne(url, out, controller)) {
                     out.setExecutable(true, false);
                     controller.setUpdateProgress(100);
-                    launchInstaller(out);
+                    InstallerLaunch launch = launchInstaller(out);
+                    if (!launch.started()) {
+                        controller.setUpdateProgress(-2);
+                    } else if (launch.requiresAppExit()) {
+                        // Only quit after ProcessBuilder has successfully created
+                        // the independent installer process. Use the normal main-
+                        // loop shutdown path so playback, tray, GPU and settings
+                        // resources are released before the installer replaces
+                        // files from the current installation.
+                        Logger.info("update installer started; shutting down QPlayer");
+                        window.postMainTask(window::requestQuit);
+                    }
                     return;
                 }
                 Logger.warn("update source failed, trying next: {}", url);
@@ -419,20 +433,29 @@ public final class Main {
      *  dmg (mounts it, Finder shows the drag-to-Applications window). Linux:
      *  AppImage isn't a true installer, so just reveal the containing folder for
      *  the user to swap it in themselves. */
-    private static void launchInstaller(File out) {
+    private static InstallerLaunch launchInstaller(File out) {
         try {
             String os = System.getProperty("os.name", "").toLowerCase();
             if (os.contains("win")) {
                 new ProcessBuilder(out.getAbsolutePath()).start();
+                return new InstallerLaunch(true, true);
             } else if (os.contains("mac")) {
                 new ProcessBuilder("open", out.getAbsolutePath()).start();
+                // Opening a DMG only mounts/reveals it; replacing the app remains
+                // a later explicit drag, so there is no reason to close yet.
+                return new InstallerLaunch(true, false);
             } else {
                 new ProcessBuilder("xdg-open", out.getParentFile().getAbsolutePath()).start();
+                // AppImage has no installer. We only reveal the downloaded file.
+                return new InstallerLaunch(true, false);
             }
         } catch (Exception e) {
             Logger.warn("launch installer failed: {}", e.toString());
+            return new InstallerLaunch(false, false);
         }
     }
+
+    private record InstallerLaunch(boolean started, boolean requiresAppExit) { }
 
     /** Running app version from the Maven-filtered version.properties on the
      *  classpath, for the update check. Empty if unavailable. */
