@@ -74,6 +74,10 @@ public final class SettingsCatalog {
                 .desc("切换后重启软件生效；若 Vulkan 初始化失败，将自动切回 OpenGL")
                 .onlyOn(DESKTOP)
                 .build());
+        out.add(SettingSpec.toggle("windowDecorated", APPEARANCE, "使用系统标题栏", false)
+                .desc("仅 Windows 生效；关闭时使用 QPlayer 标题栏，切换后重启软件生效")
+                .onlyOn(DESKTOP)
+                .build());
         out.add(SettingSpec.toggle("showLocalTab", APPEARANCE, "显示本地标签", true)
                 .desc("关闭后隐藏底部导航栏和侧栏中的“本地”入口")
                 .build());

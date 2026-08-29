@@ -480,6 +480,11 @@ public final class DesktopWindow {
         GLFW.glfwDefaultWindowHints();
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
         GLFW.glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_TRUE);
+        // On Windows the custom title bar deliberately retains the decorated HWND
+        // style and replaces only its non-client layout. This preserves Win10/11
+        // shadow, Snap and resize behavior; windowDecorated controls whether that
+        // replacement is installed, not the underlying WS_THICKFRAME capability.
+        GLFW.glfwWindowHint(GLFW.GLFW_DECORATED, GLFW.GLFW_TRUE);
         if (kind == GraphicsBackend.Kind.VULKAN) {
             // Vulkan manages its own surface; GLFW must not create a GL context.
             GLFW.glfwWindowHint(GLFW.GLFW_CLIENT_API, GLFW.GLFW_NO_API);
@@ -501,7 +506,9 @@ public final class DesktopWindow {
 
         setWindowIcon();
         applyWindowsDwmChrome();
-        if (isWindows()) {
+        boolean customWindowsTitleBar = isWindows()
+                && (settings == null || !settings.bool("windowDecorated"));
+        if (customWindowsTitleBar) {
             // windowChrome is reused across a Vulkan-fallback recreate (it only ever
             // delegates through this DesktopWindow's own accessors, never captures a
             // specific hwnd, so it stays valid) -- but frameless subclasses one
@@ -519,13 +526,16 @@ public final class DesktopWindow {
             frameless.install(this, TITLE_BAR_HEIGHT, !windows11);
             settings.setInsets(TITLE_BAR_HEIGHT, settings.bottomInset.peek());
             windowChrome.available.set(true);
+        } else if (isWindows() && settings != null) {
+            settings.setInsets(0, settings.bottomInset.peek());
         }
         cacheFramebufferAndScale();
         cacheRefreshRate();
         installCallbacks();
         input = new InputBridge(this);
         input.install(window);
-        Logger.info("desktop window created ({}x{}), graphics backend = {}", fbW, fbH, kind);
+        Logger.info("desktop window created ({}x{}), graphics backend = {}, title bar = {}",
+                fbW, fbH, kind, customWindowsTitleBar ? "qplayer" : "system");
 
         // Disabled desktop lyrics stay fully lazy. Persistently enabled lyrics need
         // their native shell now, but their QML renderer still starts after the main
