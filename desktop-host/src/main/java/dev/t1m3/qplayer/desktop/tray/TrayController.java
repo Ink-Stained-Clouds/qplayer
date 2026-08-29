@@ -54,7 +54,7 @@ public final class TrayController implements PlayerController.PlaybackListener {
     private Object winLyricToggle;
 
     // Linux backend (non-null when active).
-    private LinuxTray linuxTray;
+    private LinuxTrayBackend linuxTray;
     private Object linuxPlayPause;
     private Object linuxLyricToggle;
 
@@ -130,18 +130,14 @@ public final class TrayController implements PlayerController.PlaybackListener {
     // ---------- Linux backend (AppIndicator + GTK via JNA) ----------
     private boolean installLinux() {
         try {
+            linuxTray = new LinuxStatusNotifierTray();
+            configureLinuxTray(linuxTray);
+            if (linuxTray.install()) return true;
+            linuxTray.shutdown();
+
+            Logger.warn("Linux StatusNotifierItem unavailable; falling back to AppIndicator");
             linuxTray = new LinuxTray();
-            linuxTray.setIconPng(iconPng != null ? iconPng : placeholderPng());
-            linuxTray.addItem("上一首", () -> win.postMainTask(controller::prev));
-            linuxPlayPause = linuxTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
-            linuxTray.addItem("下一首", () -> win.postMainTask(controller::next));
-            linuxTray.addSeparator();
-            linuxLyricToggle = linuxTray.addItem(lyricToggleLabel(), () -> win.postMainTask(this::toggleLyricWindow));
-            linuxTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
-            linuxTray.addItem("退出", () -> win.postMainTask(() -> {
-                shutdown();
-                win.requestQuit();
-            }));
+            configureLinuxTray(linuxTray);
             if (linuxTray.install()) return true;
             linuxTray = null;
             return false;
@@ -152,6 +148,23 @@ public final class TrayController implements PlayerController.PlaybackListener {
             linuxTray = null;
             return false;
         }
+    }
+
+    private void configureLinuxTray(LinuxTrayBackend tray) {
+        tray.setIconPng(iconPng != null ? iconPng : placeholderPng());
+        tray.setLeftClickAction(() -> win.postMainTask(win::restoreFromTray));
+        tray.addItem("上一首", () -> win.postMainTask(controller::prev));
+        linuxPlayPause = tray.addItem("播放 / 暂停",
+                () -> win.postMainTask(controller::toggle));
+        tray.addItem("下一首", () -> win.postMainTask(controller::next));
+        tray.addSeparator();
+        linuxLyricToggle = tray.addItem(lyricToggleLabel(),
+                () -> win.postMainTask(this::toggleLyricWindow));
+        tray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
+        tray.addItem("退出", () -> win.postMainTask(() -> {
+            shutdown();
+            win.requestQuit();
+        }));
     }
 
     // ---------- AWT backend (macOS) ----------
@@ -239,10 +252,27 @@ public final class TrayController implements PlayerController.PlaybackListener {
         dev.t1m3.qplayer.desktop.window.DesktopLyricWindow lw = win.lyricWindow();
         if (lw == null) return;
         lw.toggle();
+        refreshLyricLabel();
+    }
+
+    /**
+     * The native lyric window can change from QML, its own close button, or the
+     * tray. Marshal its actual state onto the GLFW main loop; this path remains
+     * active even when the main QML/render thread has been destroyed in tray mode.
+     */
+    public void onDesktopLyricChanged() {
+        win.postMainTask(this::refreshLyricLabel);
+    }
+
+    private void refreshLyricLabel() {
         String label = lyricToggleLabel();
         if (winTray != null) winTray.setLabel(winLyricToggle, label);
         else if (linuxTray != null) linuxTray.setLabel(linuxLyricToggle, label);
-        else if (lyricToggle != null) lyricToggle.setText(label);
+        else if (lyricToggle != null) {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (lyricToggle != null) lyricToggle.setText(label);
+            });
+        }
     }
 
     private String lyricToggleLabel() {

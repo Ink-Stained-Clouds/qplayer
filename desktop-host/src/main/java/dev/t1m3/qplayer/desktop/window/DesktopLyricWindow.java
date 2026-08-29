@@ -57,6 +57,7 @@ public final class DesktopLyricWindow {
     private final Consumer<Boolean> settingsWriter;
     private final Consumer<Runnable> mainPoster;
     private final Runnable playerRestorer;
+    private volatile Consumer<Boolean> stateListener;
     private final AtomicReference<DesktopLyricSnapshot> snapshot =
             new AtomicReference<>(DesktopLyricSnapshot.EMPTY);
     private final AtomicReference<FramebufferSize> framebufferSize =
@@ -110,6 +111,15 @@ public final class DesktopLyricWindow {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    /**
+     * Observes the native lyric window's actual state. Unlike SettingsCore this
+     * remains available while the main QML/render thread is destroyed in tray
+     * mode, so host UI such as the tray menu cannot become stale.
+     */
+    public void setStateListener(Consumer<Boolean> listener) {
+        stateListener = listener;
     }
 
     boolean isPointerInside() {
@@ -280,6 +290,15 @@ public final class DesktopLyricWindow {
 
     /** Main thread: applies a SettingsCore-originated change without echoing it. */
     void applyEnabled(boolean value) {
+        boolean previous = enabled;
+        applyEnabledInternal(value);
+        if (previous != enabled) {
+            Consumer<Boolean> listener = stateListener;
+            if (listener != null) listener.accept(enabled);
+        }
+    }
+
+    private void applyEnabledInternal(boolean value) {
         if (value && window == MemoryUtil.NULL) {
             // Disabled desktop lyrics are completely lazy: create their native
             // surface and qml4j instance only on the first explicit enable.
@@ -309,7 +328,7 @@ public final class DesktopLyricWindow {
         store.putBool(ENABLED_KEY, value);
         if (value) {
             startRenderThread();
-            if (firstFrameReady) GLFW.glfwShowWindow(window);
+            if (firstFrameReady) showWindow();
             DesktopLyricRenderThread thread = renderThread;
             if (thread != null) java.util.concurrent.locks.LockSupport.unpark(thread);
         } else {
@@ -399,8 +418,13 @@ public final class DesktopLyricWindow {
     void onFirstFrameRendered() {
         firstFrameReady = true;
         if (mainPoster != null) mainPoster.accept(() -> {
-            if (enabled && window != MemoryUtil.NULL) GLFW.glfwShowWindow(window);
+            if (enabled && window != MemoryUtil.NULL) showWindow();
         });
+    }
+
+    private void showWindow() {
+        AuxiliaryWindowStyle.hideFromTaskSwitchers(window);
+        GLFW.glfwShowWindow(window);
     }
 
     void shutdown() {

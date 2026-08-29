@@ -24,7 +24,7 @@ import java.util.List;
  * via the wrapped actions. If the libraries aren't present the install fails
  * gracefully and the app runs windowed.
  */
-final class LinuxTray {
+final class LinuxTray extends LinuxTrayBackend {
 
     private static final int CATEGORY_APPLICATION_STATUS = 0;
     private static final int STATUS_ACTIVE = 1;

@@ -30,7 +30,11 @@ final class AuxiliaryWindowStyle {
     private AuxiliaryWindowStyle() {
     }
 
-    /** Apply before the first show so no taskbar/switcher entry flashes briefly. */
+    /**
+     * Apply before every show so no taskbar/switcher entry flashes briefly.
+     * Some XWayland window managers re-evaluate an unmapped window when its main
+     * application window disappears, so creation-time hints alone are not enough.
+     */
     static void hideFromTaskSwitchers(long glfwWindow) {
         try {
             int platform = GLFW.glfwGetPlatform();
@@ -112,19 +116,28 @@ final class AuxiliaryWindowStyle {
                 display, "_NET_WM_STATE_ABOVE", 0);
         NativeLong windowTypeProperty = X11Api.I.XInternAtom(
                 display, "_NET_WM_WINDOW_TYPE", 0);
+        NativeLong dockType = X11Api.I.XInternAtom(
+                display, "_NET_WM_WINDOW_TYPE_DOCK", 0);
         NativeLong utilityType = X11Api.I.XInternAtom(
                 display, "_NET_WM_WINDOW_TYPE_UTILITY", 0);
 
         // GLFW_FLOATING initially asks for ABOVE. Preserve it when replacing the
         // complete _NET_WM_STATE property with our task-switcher hints.
         try (Memory states = nativeLongArray(skipTaskbar, skipPager, above);
-             Memory type = nativeLongArray(utilityType)) {
+             // Plasma Wayland may still expose a persistent XWayland UTILITY in
+             // its task manager. A dock without struts is the appropriate overlay
+             // layer: excluded from taskbars/switchers and kept above normal
+             // windows. UTILITY remains the ordered fallback for other WMs.
+             Memory type = nativeLongArray(dockType, utilityType)) {
             X11Api.I.XChangeProperty(display, window, stateProperty, atomType,
                     32, 0, states, 3);
             X11Api.I.XChangeProperty(display, window, windowTypeProperty, atomType,
-                    32, 0, type, 1);
+                    32, 0, type, 2);
         }
-        X11Api.I.XFlush(display);
+        // Wait until XWayland has accepted the properties before GLFW sends the
+        // map request. XFlush alone permits KWin to observe the map first and add
+        // a transient task-manager entry when the main player is hidden.
+        X11Api.I.XSync(display, 0);
     }
 
     private static Memory nativeLongArray(NativeLong... values) {
@@ -145,6 +158,8 @@ final class AuxiliaryWindowStyle {
                             int elementCount);
 
         int XFlush(Pointer display);
+
+        int XSync(Pointer display, int discard);
     }
 
     private interface XextApi extends Library {
