@@ -581,6 +581,12 @@ public final class PlayerController {
     /** Guards the picker's background avatar fetch (below) against a newer
      *  "查看歌手" click superseding a slower, still-in-flight older one. */
     private volatile long songArtistPickerRevision;
+    /** Mirrors Main.qml's `app.wide` (width >= 600) -- QML pushes this over on
+     *  every change (and once at startup) since Java has no window-layout
+     *  awareness of its own. Read by {@link #gridCoverSize()} to pick a
+     *  playlist cover's fetch resolution: a phone/narrow window's card grid
+     *  doesn't need the same pixels a desktop wide layout displays at. */
+    public final Property<Boolean> wideLayout = new Property<>(false);
     public final Property<String> artistName = new Property<>("");
     public final Property<String> artistCoverPath = new Property<>("");
     public final Property<String> artistBriefDesc = new Property<>("");
@@ -1170,6 +1176,29 @@ public final class PlayerController {
 
     public void clearLog() {
         Logger.clear();
+    }
+
+    public void setWideLayout(boolean wide) {
+        wideLayout.set(wide);
+    }
+
+    /** Resolution to fetch/cache a grid-card cover at (playlist / album) --
+     *  see {@link #wideLayout}. */
+    private String gridCoverSize() {
+        return Boolean.TRUE.equals(wideLayout.peek()) ? "1024" : "512";
+    }
+
+    /** Rewrites each album's coverThumbPath to {@link #gridCoverSize()} --
+     *  NeteaseClient.parseAlbum bakes in a fixed 128px thumb (it has no
+     *  layout awareness of its own), which looked small/soft in an
+     *  AlbumCard grid tile (ArtistDetailPage's album row, album search
+     *  results) that's well over 128px on most layouts. */
+    private void applyAlbumCoverSize(List<NeteaseAlbum> albums) {
+        if (albums == null) return;
+        String size = gridCoverSize();
+        for (NeteaseAlbum a : albums) {
+            if (a.coverUrl != null && !a.coverUrl.isEmpty()) a.coverThumbPath = thumbUrl(a.coverUrl, size);
+        }
     }
 
     public void setLyricsOpen(boolean open) {
@@ -3171,7 +3200,7 @@ public final class PlayerController {
      *  size lives in the url's own ?param= query, not a separate cache dir). */
     private void cachePlaylistCoverAsync(String coverUrl) {
         if (coverUrl == null || coverUrl.isEmpty()) return;
-        String thumb = thumbUrl(coverUrl, "512");
+        String thumb = thumbUrl(coverUrl, gridCoverSize());
         if (diskCache.hasThumb64(thumb)) return;
         cacheWorker.submit(() -> diskCache.cacheThumb64(thumb));
     }
@@ -3803,6 +3832,7 @@ public final class PlayerController {
         searchWorker.submit(() -> {
             try {
                 List<NeteaseAlbum> r = netease.searchAlbums(query, SEARCH_PAGE_SIZE);
+                applyAlbumCoverSize(r);
                 if (!key.equals(currentSearchKey)) return;
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
@@ -4193,8 +4223,9 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> picks = netease.personalizedPlaylists(12);
+                String size = gridCoverSize();
                 for (NeteasePlaylist p : picks) {
-                    p.coverThumbPath = thumbUrl(p.coverUrl, "512");
+                    p.coverThumbPath = thumbUrl(p.coverUrl, size);
                 }
                 post(() -> recommendPlaylists.set(picks));
             } catch (Throwable e) {
@@ -4317,6 +4348,7 @@ public final class PlayerController {
             try {
                 NeteaseClient.ArtistPage page = netease.artistDetail(artistId);
                 List<NeteaseAlbum> albums = netease.artistAlbums(artistId, 50);
+                applyAlbumCoverSize(albums);
                 List<NeteaseSong> hotSongs = page != null ? page.hotSongs : Collections.<NeteaseSong>emptyList();
                 fillMissingCovers(hotSongs);
                 buildSongThumbs(hotSongs, "128");
@@ -4448,10 +4480,11 @@ public final class PlayerController {
         }
         String name = detail != null ? detail.name : "";
         // Same cache-preference as loadMyPlaylists: this playlist's cover was
-        // very likely already 512-cached from appearing in 我的, so prefer
-        // that over the CDN url to survive a mid-session network drop.
+        // very likely already cached (at this same layout's size) from
+        // appearing in 我的, so prefer that over the CDN url to survive a
+        // mid-session network drop.
         String localCover = detail != null && detail.coverUrl != null
-                ? diskCache.getThumb64(thumbUrl(detail.coverUrl, "512")) : null;
+                ? diskCache.getThumb64(thumbUrl(detail.coverUrl, gridCoverSize())) : null;
         String cover = localCover != null ? localCover : detail != null
                 ? (detail.coverThumbPath != null ? detail.coverThumbPath : detail.coverUrl) : null;
         boolean subscribed = detail != null && detail.subscribed;
@@ -4528,7 +4561,7 @@ public final class PlayerController {
         }
         List<NeteaseSong> offline = new ArrayList<>(cached.songs.size());
         for (NeteaseSong s : cached.songs) offline.add(withLocalThumb(s));
-        String cover = cached.coverUrl != null ? diskCache.getThumb64(thumbUrl(cached.coverUrl, "512")) : null;
+        String cover = cached.coverUrl != null ? diskCache.getThumb64(thumbUrl(cached.coverUrl, gridCoverSize())) : null;
         final String name = cached.name;
         post(() -> {
             if (currentPlaylistId != playlistId) return;
@@ -4635,14 +4668,16 @@ public final class PlayerController {
             try {
                 List<NeteasePlaylist> pls = netease.userPlaylists(uid, 100);
                 long favPid = 0L;
+                String size = gridCoverSize();
                 for (NeteasePlaylist p : pls) {
                     // Prefer an already-cached thumbnail over the CDN url: a playlist
                     // browsed before survives the network dropping mid-session without
                     // needing an app restart to fall back to offlineMyPlaylistsFallback.
-                    // Playlist covers are cached at 512 (matches the online display size,
-                    // unlike the small per-track thumbnails) — see cachePlaylistCoverAsync.
-                    String local = diskCache.getThumb64(thumbUrl(p.coverUrl, "512"));
-                    p.coverThumbPath = local != null ? local : thumbUrl(p.coverUrl, "512");
+                    // Playlist covers are cached at gridCoverSize() (matches the
+                    // online display size, unlike the small per-track thumbnails) —
+                    // see cachePlaylistCoverAsync.
+                    String local = diskCache.getThumb64(thumbUrl(p.coverUrl, size));
+                    p.coverThumbPath = local != null ? local : thumbUrl(p.coverUrl, size);
                     p.owned = p.creatorUid == uid;
                     // The "我喜欢的音乐" default is the first playlist the user owns.
                     if (favPid == 0L && p.owned) favPid = p.id;
@@ -4681,7 +4716,7 @@ public final class PlayerController {
             p.coverUrl = e.coverUrl;
             p.trackCount = e.trackCount;
             if (e.coverUrl != null && !e.coverUrl.isEmpty()) {
-                String local = diskCache.getThumb64(thumbUrl(e.coverUrl, "512"));
+                String local = diskCache.getThumb64(thumbUrl(e.coverUrl, gridCoverSize()));
                 p.coverThumbPath = local != null ? local : "";
             }
             offline.add(p);

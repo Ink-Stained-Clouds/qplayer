@@ -93,6 +93,12 @@ Rectangle {
     // a phone in landscape adopts it automatically once the width threshold is met.
     property bool wide: app.width >= 600
     property bool expanded: app.width >= 840
+    // Java has no window-layout awareness of its own -- mirror this over so
+    // playlist covers fetch/cache at a resolution matching how big they're
+    // actually shown (512 compact, 1024 once wide). Decided once per playlist
+    // load, not continuously re-fetched on every resize.
+    onWideChanged: player.setWideLayout(wide)
+    Component.onCompleted: player.setWideLayout(wide)
 
     // Shared nav model for both the bottom bar and the rail.
     property var navItems: showLocalTab
