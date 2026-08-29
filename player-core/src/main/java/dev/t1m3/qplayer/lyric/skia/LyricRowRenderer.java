@@ -71,6 +71,7 @@ final class LyricRowRenderer implements AutoCloseable {
     private float sweepShaderDark = Float.NaN;
     private RuntimeEffect liftEffect;
     private RuntimeEffectBuilder liftBuilder;
+    private boolean liftEffectUnavailable;
 
     void drawSubLine(ShapedText text, float leftX, float rightAnchorX, float y,
                      float alpha, boolean alignRight, boolean shadowOn) {
@@ -112,10 +113,20 @@ final class LyricRowRenderer implements AutoCloseable {
                 baselineY + ascent - MAX_SHADER_LIFT_PX - 8f,
                 rowRightX + 8f, baselineY + descent + 8f, lyricLayerPaint);
         try {
+            if (liftEffectUnavailable) {
+                drawStaticRow(canvas, row.blob, startX, baselineY, 1f, shadowOn);
+                applySweepMask(canvas, sweepX, 1f - (1f - DARK_MASK_ALPHA) * activeK);
+                return;
+            }
             ensureHighResolutionRaster(row, ascent, descent, shadowOn);
             long liftedShader = makeLiftShader(row, startX, baselineY, rowRightX, count,
                     syllables, positionMs, sweepX, activeK, glowOn, shadowOn,
                     wordGlowSupported);
+            if (liftedShader == 0L) {
+                drawStaticRow(canvas, row.blob, startX, baselineY, 1f, shadowOn);
+                applySweepMask(canvas, sweepX, 1f - (1f - DARK_MASK_ALPHA) * activeK);
+                return;
+            }
             try {
                 Paint textPaint = LyricSkia.scratchPaint();
                 setShader(textPaint, liftedShader);
@@ -238,6 +249,7 @@ final class LyricRowRenderer implements AutoCloseable {
             }
         }
         RuntimeEffectBuilder builder = liftBuilder();
+        if (builder == null) return 0L;
         builder.setUniform("segments", liftUniforms);
         builder.setUniform("segmentCount", segmentCount);
         builder.setUniform("wordLifts", wordLiftUniforms);
@@ -349,30 +361,60 @@ final class LyricRowRenderer implements AutoCloseable {
     }
 
     private RuntimeEffectBuilder liftBuilder() {
-        if (liftBuilder == null) liftBuilder = new RuntimeEffectBuilder(liftEffect());
+        if (liftEffectUnavailable) return null;
+        if (liftBuilder == null) {
+            RuntimeEffect effect = liftEffect();
+            if (effect == null) {
+                liftEffectUnavailable = true;
+                return null;
+            }
+            liftBuilder = new RuntimeEffectBuilder(effect);
+        }
         return liftBuilder;
     }
 
     private RuntimeEffect liftEffect() {
-        if (liftEffect == null) liftEffect = compileShaderResource();
+        if (liftEffect == null && !liftEffectUnavailable) {
+            liftEffect = compileShaderResource();
+            if (liftEffect == null) liftEffectUnavailable = true;
+        }
         return liftEffect;
     }
 
     private static RuntimeEffect compileShaderResource() {
-        try (InputStream input = LyricRowRenderer.class.getResourceAsStream(LIFT_SHADER_RESOURCE)) {
+        return compileShaderResource(
+                () -> LyricRowRenderer.class.getResourceAsStream(LIFT_SHADER_RESOURCE),
+                RuntimeEffect::makeForShader);
+    }
+
+    static RuntimeEffect compileShaderResource(ShaderSource source,
+                                               ShaderCompiler compiler) {
+        try (InputStream input = source.open()) {
             if (input == null) throw new IOException("resource not found: " + LIFT_SHADER_RESOURCE);
             InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8);
-            StringBuilder source = new StringBuilder(4096);
+            StringBuilder text = new StringBuilder(4096);
             char[] buffer = new char[2048];
             int read;
-            while ((read = reader.read(buffer)) >= 0) source.append(buffer, 0, read);
-            return RuntimeEffect.makeForShader(source.toString());
+            while ((read = reader.read(buffer)) >= 0) text.append(buffer, 0, read);
+            return compiler.compile(text.toString());
+        } catch (ThreadDeath fatal) {
+            throw fatal;
+        } catch (VirtualMachineError fatal) {
+            throw fatal;
         } catch (Throwable failure) {
             dev.t1m3.qplayer.util.Logger.warn(
-                    "lyric lift shader compile failed: {}", failure.getMessage());
-            if (failure instanceof RuntimeException) throw (RuntimeException) failure;
-            throw new IllegalStateException("Failed to load lyric lift shader", failure);
+                    "lyric lift shader unavailable; continuing without lift effect: {}",
+                    failure.getMessage());
+            return null;
         }
+    }
+
+    interface ShaderSource {
+        InputStream open() throws Exception;
+    }
+
+    interface ShaderCompiler {
+        RuntimeEffect compile(String source);
     }
 
     private void drawTextShadow(TextBlob blob, float x, float baselineY, float alpha) {

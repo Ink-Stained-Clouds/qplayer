@@ -7,6 +7,7 @@ import dev.t1m3.qplayer.lyric.LyricTimeline;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
 import dev.t1m3.qplayer.settings.SettingsStore;
 import dev.t1m3.qplayer.util.Logger;
+import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.ResourceLoader;
 import org.lwjgl.glfw.Callbacks;
 import org.lwjgl.glfw.GLFW;
@@ -18,6 +19,7 @@ import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -29,10 +31,24 @@ import java.util.function.Consumer;
 public final class DesktopLyricWindow {
 
     private static final String ENABLED_KEY = "desktopLyricEnabled";
+    private static final String PASSTHROUGH_KEY = "desktopLyricMousePassthrough";
     private static final String X_KEY = "desktopLyricX";
     private static final String Y_KEY = "desktopLyricY";
-    static final int WIDTH = 760;
-    static final int HEIGHT = 118;
+    static final int WIDTH = 900;
+    static final int HEIGHT = 180;
+    static final float LYRIC_LEFT = 160f;
+    static final float LYRIC_RIGHT_MARGIN = 112f;
+    private static final float LEFT_HIT_LEFT = 10f;
+    private static final float LEFT_SINGLE_HIT_RIGHT = 58f;
+    private static final float LEFT_PLAYBACK_HIT_RIGHT = 138f;
+    private static final float RIGHT_HIT_LEFT = 848f;
+    private static final float RIGHT_HIT_RIGHT = 894f;
+    private static final float TOP_HIT_TOP = 10f;
+    private static final float TOP_HIT_BOTTOM = 58f;
+    private static final float BOTTOM_HIT_TOP = 122f;
+    private static final float BOTTOM_HIT_BOTTOM = 170f;
+    private static final float UNLOCK_LEFT = 848f;
+    private static final float UNLOCK_RIGHT = 894f;
 
     private final SettingsStore store;
     private final ResourceLoader resources;
@@ -40,37 +56,52 @@ public final class DesktopLyricWindow {
     private final String qmlSource;
     private final Consumer<Boolean> settingsWriter;
     private final Consumer<Runnable> mainPoster;
+    private final Runnable playerRestorer;
     private final AtomicReference<DesktopLyricSnapshot> snapshot =
             new AtomicReference<>(DesktopLyricSnapshot.EMPTY);
     private final AtomicReference<FramebufferSize> framebufferSize =
             new AtomicReference<>(new FramebufferSize(WIDTH, HEIGHT));
+    private final ConcurrentLinkedQueue<Consumer<QmlView>> inputEvents =
+            new ConcurrentLinkedQueue<>();
 
     private volatile boolean enabled;
     private volatile boolean snapshotPublished;
     private volatile DesktopLyricRenderThread renderThread;
     private volatile long window = MemoryUtil.NULL;
     private volatile boolean firstFrameReady;
+    private volatile PlayerController controller;
+    private volatile boolean pointerInside;
+    private volatile boolean mousePassthrough;
+    private boolean nativeMousePassthrough;
     private GraphicsBackend.Kind kind;
     private boolean positioningSupported = true;
     private List<LyricLine> lastLines;
     private boolean lastLinearPlainLrc;
     private LyricTimeline.Prepared prepared;
+    private Object lastPaletteScheme;
+    private DesktopLyricPalette palette;
 
     private boolean dragging;
+    private boolean controlsPressed;
+    private double cursorX;
+    private double cursorY;
     private double dragCursorX0;
     private double dragCursorY0;
 
     DesktopLyricWindow(SettingsStore store, ResourceLoader resources,
                        GraphicsBackend.Kind kind, DiskCompiledSceneCache qmlCompilationCache,
                        Consumer<Boolean> settingsWriter,
-                       Consumer<Runnable> mainPoster) {
+                       Consumer<Runnable> mainPoster,
+                       Runnable playerRestorer) {
         this.store = store;
         this.resources = resources;
         this.qmlCompilationCache = qmlCompilationCache;
         this.kind = transparentBackend(kind);
         this.settingsWriter = settingsWriter;
         this.mainPoster = mainPoster;
+        this.playerRestorer = playerRestorer;
         this.enabled = store.getBool(ENABLED_KEY, false);
+        this.mousePassthrough = store.getBool(PASSTHROUGH_KEY, false);
         byte[] bytes = resources.load("DesktopLyric.qml");
         if (bytes == null) throw new IllegalStateException("DesktopLyric.qml not found on classpath");
         this.qmlSource = new String(bytes, StandardCharsets.UTF_8);
@@ -78,6 +109,14 @@ public final class DesktopLyricWindow {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    boolean isPointerInside() {
+        return pointerInside;
+    }
+
+    public boolean isMousePassthrough() {
+        return mousePassthrough;
     }
 
     GraphicsBackend.Kind kind() {
@@ -110,6 +149,11 @@ public final class DesktopLyricWindow {
 
     FramebufferSize framebufferSize() {
         return framebufferSize.get();
+    }
+
+    void drainInput(QmlView view) {
+        Consumer<QmlView> event;
+        while ((event = inputEvents.poll()) != null) event.accept(view);
     }
 
     /** Main thread: creates the native surface using the selected app backend. */
@@ -163,6 +207,7 @@ public final class DesktopLyricWindow {
         if (positioningSupported && x >= 0 && y >= 0) GLFW.glfwSetWindowPos(window, x, y);
         else if (positioningSupported) centerBottom();
         if (positioningSupported) installDragHandlers();
+        updateMousePassthroughRegion();
         boolean requestedEnabled = store.getBool(ENABLED_KEY, false);
         enabled = positioningSupported && requestedEnabled;
         if (!positioningSupported) {
@@ -188,6 +233,7 @@ public final class DesktopLyricWindow {
     /** Main render thread: copy all non-thread-safe QML/controller state. */
     void publish(PlayerController controller, boolean dark) {
         if (controller == null) return;
+        this.controller = controller;
         List<LyricLine> lines = controller.lyrics.peek();
         LyricConfig config = LyricConfig.instance;
         boolean linear = Boolean.TRUE.equals(config.linearAnimForPlainLrc.getValue());
@@ -199,11 +245,18 @@ public final class DesktopLyricWindow {
         int fontSize = config.lyricFontSize.getValue();
         int fontWeight = config.fontWeight.getValue().ordinal();
         boolean shadow = Boolean.TRUE.equals(config.dropShadow.getValue());
+        Object paletteScheme = DesktopLyricPalette.scheme(dark);
+        if (palette == null || paletteScheme != lastPaletteScheme) {
+            lastPaletteScheme = paletteScheme;
+            palette = DesktopLyricPalette.capture(paletteScheme, dark);
+        }
         snapshot.set(new DesktopLyricSnapshot(prepared,
                 controller.title.peek(), controller.artist.peek(),
                 controller.lyricClockPosition(), controller.isLyricClockRunning(),
                 System.nanoTime(), config.offsetMs.getValue(),
-                fontSize, fontWeight, shadow, dark));
+                fontSize, fontWeight, shadow,
+                Boolean.TRUE.equals(controller.playing.peek()),
+                palette));
         boolean firstSnapshot = !snapshotPublished;
         snapshotPublished = true;
         if (firstSnapshot) {
@@ -261,6 +314,57 @@ public final class DesktopLyricWindow {
         setEnabled(!enabled);
     }
 
+    void requestPrevious() {
+        postPlayback(PlayerController::prev);
+    }
+
+    void requestTogglePlayback() {
+        postPlayback(PlayerController::toggle);
+    }
+
+    void requestNext() {
+        postPlayback(PlayerController::next);
+    }
+
+    void requestToggleMousePassthrough() {
+        if (mainPoster != null) mainPoster.accept(() -> setMousePassthrough(!mousePassthrough));
+    }
+
+    void requestOpenPlayer() {
+        if (mainPoster != null && playerRestorer != null) mainPoster.accept(playerRestorer);
+    }
+
+    void requestClose() {
+        if (mainPoster != null) mainPoster.accept(() -> setEnabled(false));
+    }
+
+    /** Main thread. The unlock button remains interactive through region polling. */
+    public void setMousePassthrough(boolean value) {
+        mousePassthrough = value;
+        store.putBool(PASSTHROUGH_KEY, value);
+        if (!value) pointerInside = cursorInsideWindow();
+        updateMousePassthroughRegion();
+        DesktopLyricRenderThread thread = renderThread;
+        if (thread != null) java.util.concurrent.locks.LockSupport.unpark(thread);
+    }
+
+    /**
+     * Main thread, called by the GLFW loop. GLFW's passthrough attribute applies
+     * to the whole native window, so briefly disable it only while the pointer is
+     * over the always-visible lock button. This keeps that button clickable while
+     * every other pixel continues forwarding input to the window below.
+     */
+    void updateMousePassthroughRegion() {
+        long handle = window;
+        if (handle == MemoryUtil.NULL) return;
+        boolean overUnlock = mousePassthrough && cursorOverUnlockButton();
+        boolean desiredNative = mousePassthrough && !overUnlock;
+        if (desiredNative == nativeMousePassthrough) return;
+        GLFW.glfwSetWindowAttrib(handle, GLFW.GLFW_MOUSE_PASSTHROUGH,
+                desiredNative ? GLFW.GLFW_TRUE : GLFW.GLFW_FALSE);
+        nativeMousePassthrough = desiredNative;
+    }
+
     /** Main thread, used when the main Vulkan backend falls back before first frame. */
     void recreate(GraphicsBackend.Kind newKind) {
         shutdownRenderThread();
@@ -307,24 +411,50 @@ public final class DesktopLyricWindow {
     }
 
     private void installDragHandlers() {
+        GLFW.glfwSetCursorEnterCallback(window, (win, entered) -> {
+            pointerInside = entered;
+            DesktopLyricRenderThread thread = renderThread;
+            if (thread != null) java.util.concurrent.locks.LockSupport.unpark(thread);
+        });
         GLFW.glfwSetMouseButtonCallback(window, (win, button, action, mods) -> {
             if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) return;
             if (action == GLFW.GLFW_PRESS) {
-                dragging = true;
                 try (MemoryStack stack = MemoryStack.stackPush()) {
-                    DoubleBuffer cursorX = stack.mallocDouble(1);
-                    DoubleBuffer cursorY = stack.mallocDouble(1);
-                    GLFW.glfwGetCursorPos(win, cursorX, cursorY);
-                    dragCursorX0 = cursorX.get(0);
-                    dragCursorY0 = cursorY.get(0);
+                    DoubleBuffer currentX = stack.mallocDouble(1);
+                    DoubleBuffer currentY = stack.mallocDouble(1);
+                    GLFW.glfwGetCursorPos(win, currentX, currentY);
+                    cursorX = currentX.get(0);
+                    cursorY = currentY.get(0);
                 }
-            } else if (action == GLFW.GLFW_RELEASE && dragging) {
-                dragging = false;
-                persistPosition();
+                if (isControlPoint(cursorX, cursorY)) {
+                    controlsPressed = true;
+                    final float eventX = (float) cursorX;
+                    final float eventY = (float) cursorY;
+                    postInput(view -> view.dispatchPointerDown(eventX, eventY));
+                    return;
+                }
+                dragging = true;
+                dragCursorX0 = cursorX;
+                dragCursorY0 = cursorY;
+            } else if (action == GLFW.GLFW_RELEASE) {
+                if (controlsPressed) {
+                    controlsPressed = false;
+                    final float eventX = (float) cursorX;
+                    final float eventY = (float) cursorY;
+                    postInput(view -> view.dispatchPointerUp(eventX, eventY));
+                } else if (dragging) {
+                    dragging = false;
+                    persistPosition();
+                }
             }
         });
         GLFW.glfwSetCursorPosCallback(window, (win, x, y) -> {
-            if (!dragging) return;
+            cursorX = x;
+            cursorY = y;
+            if (!dragging) {
+                postInput(view -> view.dispatchPointerMove((float) x, (float) y));
+                return;
+            }
             // Cursor coordinates are window-local. Read the CURRENT window origin,
             // not the press-time origin: moving the window changes the local cursor
             // coordinate even when the physical pointer stands still. Adding the
@@ -339,6 +469,51 @@ public final class DesktopLyricWindow {
                         (int) Math.round(windowY.get(0) + y - dragCursorY0));
             }
         });
+    }
+
+    private void postInput(Consumer<QmlView> event) {
+        inputEvents.add(event);
+        DesktopLyricRenderThread thread = renderThread;
+        if (thread != null) java.util.concurrent.locks.LockSupport.unpark(thread);
+    }
+
+    static boolean isControlPoint(double x, double y) {
+        boolean top = y >= TOP_HIT_TOP && y < TOP_HIT_BOTTOM
+                && ((x >= LEFT_HIT_LEFT && x < LEFT_SINGLE_HIT_RIGHT)
+                || (x >= RIGHT_HIT_LEFT && x < RIGHT_HIT_RIGHT));
+        boolean bottom = y >= BOTTOM_HIT_TOP && y < BOTTOM_HIT_BOTTOM
+                && ((x >= LEFT_HIT_LEFT && x < LEFT_PLAYBACK_HIT_RIGHT)
+                || (x >= RIGHT_HIT_LEFT && x < RIGHT_HIT_RIGHT));
+        return top || bottom;
+    }
+
+    private boolean cursorOverUnlockButton() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            DoubleBuffer x = stack.mallocDouble(1);
+            DoubleBuffer y = stack.mallocDouble(1);
+            GLFW.glfwGetCursorPos(window, x, y);
+            return isUnlockPoint(x.get(0), y.get(0));
+        }
+    }
+
+    static boolean isUnlockPoint(double x, double y) {
+        return x >= UNLOCK_LEFT && x < UNLOCK_RIGHT
+                && y >= BOTTOM_HIT_TOP && y < BOTTOM_HIT_BOTTOM;
+    }
+
+    private boolean cursorInsideWindow() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            DoubleBuffer x = stack.mallocDouble(1);
+            DoubleBuffer y = stack.mallocDouble(1);
+            GLFW.glfwGetCursorPos(window, x, y);
+            return x.get(0) >= 0d && x.get(0) < WIDTH && y.get(0) >= 0d && y.get(0) < HEIGHT;
+        }
+    }
+
+    private void postPlayback(Consumer<PlayerController> action) {
+        PlayerController target = controller;
+        if (target == null || mainPoster == null) return;
+        mainPoster.accept(() -> action.accept(target));
     }
 
     private void cacheFramebufferSize() {
@@ -368,6 +543,8 @@ public final class DesktopLyricWindow {
         Callbacks.glfwFreeCallbacks(handle);
         GLFW.glfwDestroyWindow(handle);
         window = MemoryUtil.NULL;
+        nativeMousePassthrough = false;
+        pointerInside = false;
     }
 
     private static GraphicsBackend.Kind transparentBackend(GraphicsBackend.Kind requested) {

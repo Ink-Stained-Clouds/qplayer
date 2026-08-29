@@ -1,13 +1,16 @@
 package dev.t1m3.qplayer.desktop.window;
 
+import dev.t1m3.qplayer.lyric.skia.DesktopLyricRenderer;
 import dev.t1m3.qplayer.util.Logger;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.PaintMode;
 import io.github.humbleui.types.Rect;
 import io.github.timer_err.qml4j.engine.QmlEngine;
 import io.github.timer_err.qml4j.engine.binding.DirtyQueue;
 import io.github.timer_err.qml4j.render.QmlView;
 import io.github.timer_err.qml4j.render.Renderer;
+import io.github.timer_err.qml4j.render.items.core.Item;
 
 import java.util.concurrent.locks.LockSupport;
 
@@ -34,12 +37,21 @@ final class DesktopLyricRenderThread extends Thread {
     @Override
     public void run() {
         QmlView view = null;
-        Paint progressPaint = null;
+        DesktopLyricRenderer lyricRenderer = null;
+        Paint backgroundPaint = null;
+        Paint outlinePaint = null;
         boolean firstFramePresented = false;
         try {
             DesktopLyricWindow.FramebufferSize size = owner.framebufferSize();
             backend.init(size.width(), size.height());
-            DesktopLyricState state = new DesktopLyricState();
+            DesktopLyricState state = new DesktopLyricState(owner);
+            lyricRenderer = new DesktopLyricRenderer();
+            DesktopLyricChromeMotion chromeMotion = new DesktopLyricChromeMotion();
+            backgroundPaint = new Paint().setMode(PaintMode.FILL);
+            outlinePaint = new Paint().setMode(PaintMode.STROKE).setStrokeWidth(1f);
+            Rect windowRect = Rect.makeWH(DesktopLyricWindow.WIDTH, DesktopLyricWindow.HEIGHT);
+            Item chromeCanvas;
+            Item lockedControl;
             synchronized (QmlRuntimeLock.MONITOR) {
                 view = QmlView.withStockTypes(new QmlEngine())
                         .resources(owner.resources())
@@ -59,8 +71,12 @@ final class DesktopLyricRenderThread extends Thread {
                     view.root().width.set((double) DesktopLyricWindow.WIDTH);
                     view.root().height.set((double) DesktopLyricWindow.HEIGHT);
                 }
+                chromeCanvas = view.findByObjectName("desktopLyricChromeCanvas");
+                lockedControl = view.findByObjectName("desktopLyricLockedControl");
+                if (chromeCanvas == null || lockedControl == null) {
+                    throw new IllegalStateException("desktop lyric chrome subtrees not found");
+                }
             }
-            progressPaint = new Paint().setAntiAlias(true);
             Logger.info("desktop lyric render thread ready (backend {})", backend.kind());
             while (running) {
                 if (!owner.isEnabled() || !owner.hasPublishedSnapshot()) {
@@ -72,9 +88,12 @@ final class DesktopLyricRenderThread extends Thread {
                 synchronized (QmlRuntimeLock.MONITOR) {
                     dirty.install();
                     try {
+                        owner.drainInput(view);
                         state.update(owner.snapshot(), frameStart);
                         view.tickAnimations(frameStart);
                         dirty.flush();
+                        DesktopLyricChromeMotion.Frame chrome = chromeMotion.update(
+                                owner.isPointerInside() && !owner.isMousePassthrough(), frameStart);
                         size = owner.framebufferSize();
                         backend.resize(size.width(), size.height());
                         Canvas canvas = backend.acquireCanvas();
@@ -85,8 +104,46 @@ final class DesktopLyricRenderThread extends Thread {
                             canvas.scale(
                                     (float) size.width() / DesktopLyricWindow.WIDTH,
                                     (float) size.height() / DesktopLyricWindow.HEIGHT);
-                            renderer.render(canvas, view.root(), false);
-                            drawProgress(canvas, progressPaint, state);
+                            // Layout is still owned by qml4j, while motion is applied
+                            // to the complete chrome subtree on the actual Skia canvas.
+                            // This avoids animated Transform properties invalidating
+                            // the process-global qml4j picture cache only at endpoints.
+                            renderer.layoutOnly(view.root());
+                            DesktopLyricPalette palette = state.palette();
+                            backgroundPaint.setColor(Renderer.parseColor(palette.surface));
+                            backgroundPaint.setAlphaf(chrome.backgroundOpacity());
+                            canvas.drawRect(windowRect, backgroundPaint);
+                            outlinePaint.setColor(Renderer.parseColor(palette.outline));
+                            outlinePaint.setAlphaf(chrome.backgroundOpacity());
+                            canvas.drawRect(windowRect, outlinePaint);
+
+                            if (chrome.opacity() > 0.001f) {
+                                int alpha = Math.round(chrome.opacity() * 255f);
+                                int layer = canvas.saveLayerAlpha(windowRect, alpha);
+                                canvas.translate(DesktopLyricWindow.WIDTH * 0.5f,
+                                        DesktopLyricWindow.HEIGHT * 0.5f);
+                                canvas.scale(chrome.scaleX(), chrome.scaleY());
+                                canvas.translate(DesktopLyricWindow.WIDTH * -0.5f,
+                                        DesktopLyricWindow.HEIGHT * -0.5f);
+                                renderer.renderSubtree(canvas, chromeCanvas,
+                                        DesktopLyricWindow.WIDTH, DesktopLyricWindow.HEIGHT);
+                                canvas.restoreToCount(layer);
+                            }
+                            // Passthrough must always remain reversible. Its locked
+                            // control deliberately bypasses both canvas scale and fade.
+                            if (owner.isMousePassthrough()) {
+                                renderer.renderSubtree(canvas, lockedControl,
+                                        DesktopLyricWindow.WIDTH, DesktopLyricWindow.HEIGHT);
+                            }
+                            lyricRenderer.render(canvas,
+                                    DesktopLyricWindow.LYRIC_LEFT, 6f,
+                                    DesktopLyricWindow.WIDTH - DesktopLyricWindow.LYRIC_LEFT
+                                            - DesktopLyricWindow.LYRIC_RIGHT_MARGIN,
+                                    DesktopLyricWindow.HEIGHT - 12f,
+                                    state.frame(), state.fallbackText(),
+                                    state.fontSizeValue(), state.fontWeightValue(),
+                                    state.shadowValue(), state.palette().lyricColors,
+                                    state.positionMs(), frameStart);
                         } finally {
                             canvas.restoreToCount(save);
                         }
@@ -115,7 +172,9 @@ final class DesktopLyricRenderThread extends Thread {
                 } catch (Throwable ignored) {
                 }
             }
-            if (progressPaint != null) progressPaint.close();
+            if (lyricRenderer != null) lyricRenderer.close();
+            if (backgroundPaint != null) backgroundPaint.close();
+            if (outlinePaint != null) outlinePaint.close();
             try {
                 backend.dispose();
             } catch (Throwable ignored) {
@@ -123,10 +182,4 @@ final class DesktopLyricRenderThread extends Thread {
         }
     }
 
-    private static void drawProgress(Canvas canvas, Paint paint, DesktopLyricState state) {
-        float width = DesktopLyricWindow.WIDTH * state.progress();
-        if (width <= 0f) return;
-        paint.setColor(state.darkValue() ? 0x99FFFFFF : 0x9938383C);
-        canvas.drawRect(Rect.makeXYWH(0f, DesktopLyricWindow.HEIGHT - 3f, width, 3f), paint);
-    }
 }

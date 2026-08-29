@@ -83,14 +83,18 @@ public final class LyricTimeline {
     public static Frame frameAt(Prepared prepared, long positionMs) {
         if (prepared == null || prepared.groups.isEmpty()) return Frame.EMPTY;
         int index = activeGroupIndex(prepared.groups, positionMs);
-        if (index < 0) return new Frame("", "", textOf(prepared, 0), 0f, -1);
+        if (index < 0) return new Frame("", "", "", textOf(prepared, 0),
+                Collections.<Syllable>emptyList(), false, 0f, -1);
         Group group = prepared.groups.get(index);
+        String previous = index > 0 ? textOf(prepared, index - 1) : "";
         String current = textOf(prepared, index);
         String translation = firstSidecar(prepared.lines, group, true);
         String next = index + 1 < prepared.groups.size() ? textOf(prepared, index + 1) : "";
+        List<Syllable> currentSyllables = displaySyllables(prepared.lines, group);
         long span = Math.max(1L, group.endMs - group.startMs);
         float progress = Math.max(0f, Math.min(1f, (positionMs - group.startMs) / (float) span));
-        return new Frame(current, translation, next, progress, index);
+        return new Frame(previous, current, translation, next, currentSyllables,
+                prepared.animatablePerToken, progress, index);
     }
 
     private static String textOf(Prepared prepared, int groupIndex) {
@@ -111,6 +115,46 @@ public final class LyricTimeline {
             if (value != null && !value.trim().isEmpty()) return value.trim();
         }
         return "";
+    }
+
+    /** Timed segments whose concatenated text exactly matches {@link Frame#current}. */
+    private static List<Syllable> displaySyllables(List<LyricLine> lines, Group group) {
+        ArrayList<Syllable> result = new ArrayList<>();
+        for (int lineIndex = group.from; lineIndex < group.to; lineIndex++) {
+            LyricLine line = lines.get(lineIndex);
+            String visible = line.text().trim();
+            if (visible.isEmpty()) continue;
+            if (!result.isEmpty()) result.add(new Syllable("  ·  ", group.startMs, 0L));
+
+            int first = 0;
+            int last = line.syllables.size() - 1;
+            while (first <= last && safeText(line.syllables.get(first)).trim().isEmpty()) first++;
+            while (last >= first && safeText(line.syllables.get(last)).trim().isEmpty()) last--;
+            for (int index = first; index <= last; index++) {
+                Syllable source = line.syllables.get(index);
+                String text = safeText(source);
+                if (index == first) text = trimLeading(text);
+                if (index == last) text = trimTrailing(text);
+                if (!text.isEmpty()) result.add(new Syllable(text, source.startMs, source.durationMs));
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    private static String safeText(Syllable syllable) {
+        return syllable == null || syllable.text == null ? "" : syllable.text;
+    }
+
+    private static String trimLeading(String value) {
+        int start = 0;
+        while (start < value.length() && Character.isWhitespace(value.charAt(start))) start++;
+        return value.substring(start);
+    }
+
+    private static String trimTrailing(String value) {
+        int end = value.length();
+        while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) end--;
+        return value.substring(0, end);
     }
 
     private static boolean hasVisibleText(LyricLine line) {
@@ -236,18 +280,26 @@ public final class LyricTimeline {
     }
 
     public static final class Frame {
-        private static final Frame EMPTY = new Frame("", "", "", 0f, -1);
+        private static final Frame EMPTY = new Frame("", "", "", "",
+                Collections.<Syllable>emptyList(), false, 0f, -1);
+        public final String previous;
         public final String current;
         public final String translation;
         public final String next;
+        public final List<Syllable> currentSyllables;
+        public final boolean animatablePerToken;
         public final float progress;
         public final int groupIndex;
 
-        private Frame(String current, String translation, String next,
+        private Frame(String previous, String current, String translation, String next,
+                      List<Syllable> currentSyllables, boolean animatablePerToken,
                       float progress, int groupIndex) {
+            this.previous = previous;
             this.current = current;
             this.translation = translation;
             this.next = next;
+            this.currentSyllables = currentSyllables;
+            this.animatablePerToken = animatablePerToken;
             this.progress = progress;
             this.groupIndex = groupIndex;
         }

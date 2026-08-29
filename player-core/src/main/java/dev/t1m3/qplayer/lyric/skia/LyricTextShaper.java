@@ -218,6 +218,11 @@ final class LyricTextShaper implements AutoCloseable {
         }
     }
 
+    /** Shapes one unwrapped row for compact lyric surfaces. */
+    ShapedText shapeSingleLine(String text, Font font) {
+        return shapeText(text == null ? "" : text, font);
+    }
+
     private TextLine shapeLine(String text, Font baseFont) {
         return shaper().shapeLine(text, fontForText(text, baseFont));
     }

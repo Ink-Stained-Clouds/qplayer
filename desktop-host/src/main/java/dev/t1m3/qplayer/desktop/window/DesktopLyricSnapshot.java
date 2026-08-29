@@ -7,7 +7,7 @@ final class DesktopLyricSnapshot {
 
     static final DesktopLyricSnapshot EMPTY = new DesktopLyricSnapshot(
             null, "", "", 0L, false, System.nanoTime(), 0L,
-            26, 2, true, true);
+            26, 2, true, false, DesktopLyricPalette.capture(true));
 
     final LyricTimeline.Prepared timeline;
     final String title;
@@ -19,11 +19,13 @@ final class DesktopLyricSnapshot {
     final int fontSize;
     final int fontWeight;
     final boolean shadow;
-    final boolean dark;
+    final boolean playing;
+    final DesktopLyricPalette palette;
 
     DesktopLyricSnapshot(LyricTimeline.Prepared timeline, String title, String artist,
                          long positionMs, boolean running, long capturedNanos, long offsetMs,
-                         int fontSize, int fontWeight, boolean shadow, boolean dark) {
+                         int fontSize, int fontWeight, boolean shadow,
+                         boolean playing, DesktopLyricPalette palette) {
         this.timeline = timeline;
         this.title = title != null ? title : "";
         this.artist = artist != null ? artist : "";
@@ -34,7 +36,8 @@ final class DesktopLyricSnapshot {
         this.fontSize = fontSize;
         this.fontWeight = fontWeight;
         this.shadow = shadow;
-        this.dark = dark;
+        this.playing = playing;
+        this.palette = palette;
     }
 
     long predictedPosition(long nowNanos) {

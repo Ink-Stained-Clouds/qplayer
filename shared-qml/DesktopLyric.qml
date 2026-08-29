@@ -1,88 +1,83 @@
 import QtQuick 2.15
+import "components"
 
 Item {
     id: root
-    width: 760
-    height: 118
+    width: 900
+    height: 180
 
-    readonly property color foreground: "#FFFFFFFF"
-    readonly property color secondary: "#B8FFFFFF"
-    readonly property int lyricWeight: desktopLyric.fontWeight === 0 ? Font.Thin
-                                       : desktopLyric.fontWeight === 1 ? Font.Light
-                                       : desktopLyric.fontWeight === 3 ? Font.Medium
-                                       : Font.Normal
+    readonly property bool locked: desktopLyric.mousePassthrough
 
-    Rectangle {
-        id: surface
+    // The render thread scales this complete subtree directly on the Skia canvas.
+    // Keeping motion out of the QML transform list also avoids qml4j's global
+    // picture-cache invalidation affecting the independently rendered main view.
+    Item {
+        id: chromeCanvas
+        objectName: "desktopLyricChromeCanvas"
         anchors.fill: parent
-        radius: 0
-        color: desktopLyric.dark ? "#CC101114" : "#D9F7F7FA"
 
-        Text {
-            id: currentShadow
-            x: current.x + 1
-            y: current.y + 2
-            width: current.width
-            height: current.height
-            text: current.text
-            visible: desktopLyric.shadow
-            color: "#99000000"
-            font.pixelSize: current.font.pixelSize
-            font.weight: current.font.weight
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        // Top-left: restore/open the player.
+        DesktopLyricControlButton {
+            x: 12
+            y: 12
+            icon: "arrow_back"
+            onClicked: desktopLyric.openPlayer()
         }
 
-        Text {
-            id: current
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 32
-            anchors.rightMargin: 32
-            y: desktopLyric.translationText === "" ? 18 : 9
-            height: desktopLyric.translationText === "" ? 66 : 55
-            text: desktopLyric.currentText
-            color: desktopLyric.dark ? root.foreground : "#FF1C1C1E"
-            font.pixelSize: desktopLyric.fontSize
-            font.weight: root.lyricWeight
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        // Top-right: close desktop lyrics without closing the player.
+        DesktopLyricControlButton {
+            x: 850
+            y: 12
+            icon: "close"
+            onClicked: desktopLyric.closeDesktopLyric()
         }
 
-        Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 40
-            anchors.rightMargin: 40
-            y: 65
-            height: 28
-            visible: desktopLyric.translationText !== ""
-            text: desktopLyric.translationText
-            color: desktopLyric.dark ? root.secondary : "#A63C3C43"
-            font.pixelSize: Math.max(13, desktopLyric.fontSize * 0.52)
-            font.weight: Font.Normal
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        // Bottom-left: playback controls stay grouped as one spatial unit.
+        Item {
+            x: 12
+            y: 124
+            width: 124
+            height: 44
+
+            DesktopLyricControlButton {
+                anchors.left: parent.left
+                icon: "skip_previous"
+                onClicked: desktopLyric.previous()
+            }
+
+            DesktopLyricControlButton {
+                anchors.horizontalCenter: parent.horizontalCenter
+                icon: desktopLyric.playing ? "pause" : "play_arrow"
+                emphasized: true
+                onClicked: desktopLyric.togglePlayback()
+            }
+
+            DesktopLyricControlButton {
+                anchors.right: parent.right
+                icon: "skip_next"
+                onClicked: desktopLyric.next()
+            }
         }
 
-        Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 40
-            anchors.rightMargin: 40
-            y: 82
-            height: 22
-            visible: desktopLyric.translationText === "" && desktopLyric.nextText !== ""
-            text: desktopLyric.nextText
-            color: desktopLyric.dark ? "#70FFFFFF" : "#7048484A"
-            font.pixelSize: Math.max(12, desktopLyric.fontSize * 0.45)
-            font.weight: Font.Normal
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        // Bottom-right: the unlocked control participates in the canvas motion.
+        DesktopLyricControlButton {
+            x: 850
+            y: 124
+            icon: "lock_open"
+            visible: !root.locked
+            onClicked: desktopLyric.toggleMousePassthrough()
         }
+    }
+
+    // Passthrough must remain reversible, so its locked-state control stays
+    // outside the fading canvas at the same visual and native hit-test position.
+    DesktopLyricControlButton {
+        objectName: "desktopLyricLockedControl"
+        x: 850
+        y: 124
+        icon: "lock"
+        emphasized: true
+        visible: root.locked
+        onClicked: desktopLyric.toggleMousePassthrough()
     }
 }

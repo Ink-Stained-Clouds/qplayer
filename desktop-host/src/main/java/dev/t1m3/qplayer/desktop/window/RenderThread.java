@@ -26,6 +26,18 @@ import java.util.concurrent.locks.LockSupport;
  */
 final class RenderThread extends Thread {
 
+    enum FailureStage {
+        BACKEND_INITIALIZATION(true),
+        BACKEND_FRAME(true),
+        APPLICATION_FRAME(false);
+
+        final boolean backendFailure;
+
+        FailureStage(boolean backendFailure) {
+            this.backendFailure = backendFailure;
+        }
+    }
+
     private final DesktopWindow win;
     private final GraphicsBackend backend;
     private volatile boolean running = true;
@@ -52,11 +64,13 @@ final class RenderThread extends Thread {
     public void run() {
         boolean firstFrameDone = false;
         QmlView view = null;
+        FailureStage failureStage = FailureStage.BACKEND_INITIALIZATION;
         try {
             dev.t1m3.qplayer.util.Logger.info("render thread starting (backend {})", backend.kind());
             int[] fb = win.framebufferSize();
             backend.init(fb[0], fb[1]);
             dev.t1m3.qplayer.util.Logger.info("backend initialized {}x{}", fb[0], fb[1]);
+            failureStage = FailureStage.APPLICATION_FRAME;
 
             // The persistent QML view is built once and survives render-thread
             // respawns. On a respawn its Canvas offscreens were already closed+nulled
@@ -99,7 +113,9 @@ final class RenderThread extends Thread {
                         win.tickInput(); // smooth wheel-scroll easing
                         int[] size = win.consumePendingResize();
                         if (size != null) {
+                            failureStage = FailureStage.BACKEND_FRAME;
                             backend.resize(size[0], size[1]);
+                            failureStage = FailureStage.APPLICATION_FRAME;
                             sizeRoot(view, size[0], size[1], uiScale);
                         }
                         if (controller != null) controller.pump();
@@ -108,7 +124,9 @@ final class RenderThread extends Thread {
                         view.tickAnimations(System.nanoTime());
                         dq.flush();
 
+                        failureStage = FailureStage.BACKEND_FRAME;
                         Canvas canvas = backend.acquireCanvas();
+                        failureStage = FailureStage.APPLICATION_FRAME;
                         Renderer renderer = view.renderer();
                         renderer.setGpuContext(backend.recordingContext());
                         compositor.composite(canvas, renderer, view, controller, win.settings(),
@@ -119,7 +137,9 @@ final class RenderThread extends Thread {
                     }
                 }
 
+                failureStage = FailureStage.BACKEND_FRAME;
                 backend.present();
+                failureStage = FailureStage.APPLICATION_FRAME;
 
                 if (!firstFrameDone) {
                     firstFrameDone = true;
@@ -143,7 +163,7 @@ final class RenderThread extends Thread {
                 }
             }
         } catch (Throwable t) {
-            win.onRenderError(t);
+            win.onRenderError(t, failureStage);
         } finally {
             // LyricCompositor survives render-thread respawns, but SPlayer's cached
             // GPU Surfaces/snapshots do not. Release them while THIS DirectContext

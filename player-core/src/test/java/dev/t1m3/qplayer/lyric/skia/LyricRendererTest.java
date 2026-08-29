@@ -6,14 +6,40 @@ import dev.t1m3.qplayer.lyric.LyricTimeline;
 import dev.t1m3.qplayer.lyric.Syllable;
 import org.junit.Test;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.ZipException;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class LyricRendererTest {
+
+    @Test
+    public void brokenShaderResourceDisablesOnlyTheLiftEffect() {
+        AtomicBoolean compilerCalled = new AtomicBoolean();
+
+        assertNull(LyricRowRenderer.compileShaderResource(
+                () -> { throw new ZipException("invalid LOC header"); },
+                source -> {
+                    compilerCalled.set(true);
+                    return null;
+                }));
+        assertFalse(compilerCalled.get());
+    }
+
+    @Test
+    public void shaderCompilerFailureAlsoDegradesWithoutEscaping() {
+        assertNull(LyricRowRenderer.compileShaderResource(
+                () -> new ByteArrayInputStream(
+                        "not valid sksl".getBytes(StandardCharsets.UTF_8)),
+                source -> { throw new IllegalArgumentException("compile failed"); }));
+    }
 
     @Test
     public void repeatedPlainLrcPreparationDoesNotBecomePerSyllable() {
@@ -49,9 +75,29 @@ public class LyricRendererTest {
 
         LyricTimeline.Frame frame = LyricTimeline.frameAt(prepared, 6_000L);
 
+        assertEquals("第一行", frame.previous);
         assertEquals("第二行", frame.current);
         assertEquals("第三行", frame.next);
+        StringBuilder timedText = new StringBuilder();
+        for (Syllable syllable : frame.currentSyllables) timedText.append(syllable.text);
+        assertEquals("第二行", timedText.toString());
         assertEquals(1, frame.groupIndex);
+    }
+
+    @Test
+    public void desktopOverflowScrollStopsExactlyAtTheTrailingEdge() {
+        assertEquals(0f, DesktopLyricRenderer.scrollOffset(300f, 200f, -1f), 0.001f);
+        assertEquals(50f, DesktopLyricRenderer.scrollOffset(300f, 200f, 0.5f), 0.001f);
+        assertEquals(100f, DesktopLyricRenderer.scrollOffset(300f, 200f, 1f), 0.001f);
+        assertEquals(100f, DesktopLyricRenderer.scrollOffset(300f, 200f, 2f), 0.001f);
+        assertEquals(0f, DesktopLyricRenderer.scrollOffset(120f, 200f, 1f), 0.001f);
+    }
+
+    @Test
+    public void desktopLineChangeUsesBoundedNonLinearEaseOut() {
+        assertEquals(0f, DesktopLyricRenderer.transitionEasing(-1f), 0.001f);
+        assertTrue(DesktopLyricRenderer.transitionEasing(0.5f) > 0.5f);
+        assertEquals(1f, DesktopLyricRenderer.transitionEasing(2f), 0.001f);
     }
 
     @Test
@@ -68,6 +114,9 @@ public class LyricRendererTest {
                 LyricTimeline.prepare(Arrays.asList(main, background, next), false), 2_000L);
 
         assertEquals("主唱  ·  和声", frame.current);
+        StringBuilder timedText = new StringBuilder();
+        for (Syllable syllable : frame.currentSyllables) timedText.append(syllable.text);
+        assertEquals(frame.current, timedText.toString());
         assertEquals("下一句", frame.next);
     }
 

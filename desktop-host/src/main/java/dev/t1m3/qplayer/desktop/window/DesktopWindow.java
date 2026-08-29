@@ -177,7 +177,7 @@ public final class DesktopWindow {
     public void setLyricSettingsStore(dev.t1m3.qplayer.settings.SettingsStore store) {
         this.lyricWindow = new DesktopLyricWindow(store, resources, kind, qmlCompilationCache,
                 enabled -> postRenderTask(() -> settings.put("desktopLyricEnabled", enabled)),
-                this::postMainTask);
+                this::postMainTask, this::restoreFromTray);
         settings.onChange("desktopLyricEnabled", value -> postMainTask(() -> {
             DesktopLyricWindow target = lyricWindow;
             if (target != null) target.applyEnabled(Boolean.TRUE.equals(value));
@@ -446,15 +446,24 @@ public final class DesktopWindow {
         }
     }
 
-    void onRenderError(Throwable t) {
-        Logger.error("render thread crashed: {}", t);
+    void onRenderError(Throwable t, RenderThread.FailureStage stage) {
+        Logger.error("render thread crashed during {}: {}", stage, t);
         java.io.StringWriter sw = new java.io.StringWriter();
         t.printStackTrace(new java.io.PrintWriter(sw));
         Logger.error(sw.toString());
-        if (kind == GraphicsBackend.Kind.VULKAN && !graphicsFallbackAttempted) {
+        if (shouldFallbackToOpenGL(kind, graphicsFallbackAttempted, stage)) {
             graphicsFallbackAttempted = true;
             postMainTask(this::fallbackToOpenGL);
         }
+    }
+
+    static boolean shouldFallbackToOpenGL(GraphicsBackend.Kind backendKind,
+                                          boolean alreadyAttempted,
+                                          RenderThread.FailureStage stage) {
+        return backendKind == GraphicsBackend.Kind.VULKAN
+                && !alreadyAttempted
+                && stage != null
+                && stage.backendFailure;
     }
 
     // --- main-thread lifecycle -------------------------------------------------
@@ -677,7 +686,7 @@ public final class DesktopWindow {
      */
     private void fallbackToOpenGL() {
         if (kind != GraphicsBackend.Kind.VULKAN || quitRequested) return;
-        Logger.warn("Vulkan initialization failed; rebuilding the window with OpenGL");
+        Logger.warn("Vulkan backend failed; rebuilding the window with OpenGL");
         stopRenderThread();
         if (window != MemoryUtil.NULL) {
             org.lwjgl.glfw.Callbacks.glfwFreeCallbacks(window);
@@ -948,6 +957,7 @@ public final class DesktopWindow {
                     Logger.warn("main task failed: {}", t);
                 }
             }
+            if (lyricWindow != null) lyricWindow.updateMousePassthroughRegion();
             publishDesktopLyricsWithoutMainRenderer();
         }
     }

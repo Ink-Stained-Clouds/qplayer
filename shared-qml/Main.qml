@@ -258,12 +258,11 @@ Rectangle {
     }
 
     function goHome() {
-        // Home is an escape hatch, not another animated Back step. Drop the old
-        // route immediately (no exit), then animate only the recommendation page
-        // into view so no intermediate source page flashes on screen.
+        // Jump to the bottom/root destination underneath the current route stack,
+        // not to a hard-coded navigation tab. A playlist opened from Search or My
+        // Music must therefore return to Search/My Music with their state intact.
+        // Drop every overlay immediately, then animate that existing root back in.
         rootPageMotion.stopAnimations()
-        app.page = 0
-        app.nextPage = 0
         app.clearPages()
         rootPageMotion.enter()
     }

@@ -7,38 +7,99 @@ import io.github.timer_err.qml4j.engine.binding.Property;
 /** qml4j context object owned and mutated only by the desktop-lyric thread. */
 public final class DesktopLyricState extends QObject {
 
-    public final Property<String> currentText = new Property<>("");
-    public final Property<String> translationText = new Property<>("");
-    public final Property<String> nextText = new Property<>("");
-    public final Property<Integer> fontSize = new Property<>(26);
-    public final Property<Integer> fontWeight = new Property<>(2);
-    public final Property<Boolean> shadow = new Property<>(Boolean.TRUE);
-    public final Property<Boolean> dark = new Property<>(Boolean.TRUE);
-    private float progress;
-    private boolean darkValue = true;
+    public final Property<Boolean> playing = new Property<>(Boolean.FALSE);
+    public final Property<Boolean> pointerInside = new Property<>(Boolean.FALSE);
+    public final Property<Boolean> mousePassthrough = new Property<>(Boolean.FALSE);
+    public final Property<String> surfaceColor = new Property<>("#28282b");
+    public final Property<String> outlineColor = new Property<>("#49454f");
+    public final Property<String> primaryColor = new Property<>("#d0bcff");
+    public final Property<String> onSurfaceVariantColor = new Property<>("#cac4d0");
+    public final Property<String> secondaryContainerColor = new Property<>("#4a4458");
+    public final Property<String> onSecondaryContainerColor = new Property<>("#e8def8");
+
+    private final DesktopLyricWindow owner;
+    private LyricTimeline.Frame frame;
+    private String fallbackText = "";
+    private int fontSize = 26;
+    private int fontWeight = 2;
+    private boolean shadow = true;
+    private DesktopLyricPalette palette = DesktopLyricPalette.capture(true);
+    private long positionMs;
+
+    DesktopLyricState(DesktopLyricWindow owner) {
+        this.owner = owner;
+    }
 
     void update(DesktopLyricSnapshot snapshot, long nowNanos) {
-        LyricTimeline.Frame frame = LyricTimeline.frameAt(
-                snapshot.timeline, snapshot.predictedPosition(nowNanos));
-        String current = frame.current;
-        if (current.isEmpty()) current = fallback(snapshot);
-        currentText.set(current);
-        translationText.set(frame.translation);
-        nextText.set(frame.next);
-        progress = Math.max(0f, Math.min(1f, frame.progress));
-        fontSize.set(Math.max(18, Math.min(38, snapshot.fontSize)));
-        fontWeight.set(Math.max(0, Math.min(3, snapshot.fontWeight)));
-        shadow.set(snapshot.shadow);
-        darkValue = snapshot.dark;
-        dark.set(snapshot.dark);
+        positionMs = snapshot.predictedPosition(nowNanos);
+        LyricTimeline.Frame frame = LyricTimeline.frameAt(snapshot.timeline, positionMs);
+        this.frame = frame;
+        fallbackText = fallback(snapshot);
+        fontSize = Math.max(18, Math.min(38, snapshot.fontSize));
+        fontWeight = Math.max(0, Math.min(3, snapshot.fontWeight));
+        shadow = snapshot.shadow;
+        palette = snapshot.palette;
+        playing.set(snapshot.playing);
+        mousePassthrough.set(owner.isMousePassthrough());
+        pointerInside.set(owner.isPointerInside() && !owner.isMousePassthrough());
+        surfaceColor.set(palette.surface);
+        outlineColor.set(palette.outline);
+        primaryColor.set(palette.primary);
+        onSurfaceVariantColor.set(palette.onSurfaceVariant);
+        secondaryContainerColor.set(palette.secondaryContainer);
+        onSecondaryContainerColor.set(palette.onSecondaryContainer);
     }
 
-    float progress() {
-        return progress;
+    long positionMs() {
+        return positionMs;
     }
 
-    boolean darkValue() {
-        return darkValue;
+    LyricTimeline.Frame frame() {
+        return frame;
+    }
+
+    String fallbackText() {
+        return fallbackText;
+    }
+
+    int fontSizeValue() {
+        return fontSize;
+    }
+
+    int fontWeightValue() {
+        return fontWeight;
+    }
+
+    boolean shadowValue() {
+        return shadow;
+    }
+
+    DesktopLyricPalette palette() {
+        return palette;
+    }
+
+    public void previous() {
+        owner.requestPrevious();
+    }
+
+    public void togglePlayback() {
+        owner.requestTogglePlayback();
+    }
+
+    public void next() {
+        owner.requestNext();
+    }
+
+    public void toggleMousePassthrough() {
+        owner.requestToggleMousePassthrough();
+    }
+
+    public void openPlayer() {
+        owner.requestOpenPlayer();
+    }
+
+    public void closeDesktopLyric() {
+        owner.requestClose();
     }
 
     private static String fallback(DesktopLyricSnapshot snapshot) {

@@ -2,7 +2,8 @@ import QtQuick
 import md3.Core
 
 // Shared full-screen page navigation. Home is deliberately left of Back: Home
-// clears the complete nested route stack, while Back pops exactly one route.
+// clears the complete nested route stack to reveal the current root destination,
+// while Back pops exactly one route.
 Item {
     id: control
     signal home()
