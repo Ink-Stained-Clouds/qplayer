@@ -31,6 +31,10 @@ public class Track {
 
     public String title;
     public String artist;
+    /** Id of the first-listed artist (NETEASE source); 0 for LOCAL/CUSTOM_API or
+     *  when absent. Lets the now-playing UI (lyric page) jump to that artist's
+     *  page without a network round-trip. */
+    public long artistId;
     public String album;
     public long durationMs;
 

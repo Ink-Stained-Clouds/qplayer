@@ -39,6 +39,14 @@ Item {
     property int pauseMs: 1000
 
     implicitHeight: probe.implicitHeight
+    // Also bind the real height (not just implicitHeight) to the same value:
+    // a plain Item's height does NOT default to implicitHeight in qml4j, and
+    // hit-testing (MouseArea/anchors.fill targeting this component, or the
+    // component's own anchors.top/bottom math) reads the real height -- left
+    // unbound it silently stays 0 and swallows clicks even though the text
+    // still renders at its correct visual size. Any caller that sets an
+    // explicit height itself (most do) overrides this default as normal.
+    height: probe.implicitHeight
     clip: true
 
     // Hidden probe: measures the text's real unwrapped width, the same

@@ -409,6 +409,10 @@ public final class PlayerController {
     public final Property<Boolean> playing = new Property<>(false);
     public final Property<String> title = new Property<>("");
     public final Property<String> artist = new Property<>("");
+    /** Id of the current track's first-listed artist (NETEASE source only, 0
+     *  otherwise) -- lets the lyric page's artist name jump straight to that
+     *  artist's page. */
+    public final Property<Long> playingArtistId = new Property<>(0L);
     public final Property<String> album = new Property<>("");
     public final Property<String> coverUrl = new Property<>("");
     /** Absolute path to the current track's cover in the disk cache, or "" when not
@@ -564,6 +568,16 @@ public final class PlayerController {
     public final Property<Long> openArtistId = new Property<>(0L);
     public final Property<Boolean> artistPageOpen = new Property<>(false);
     public final Property<Boolean> albumPageOpen = new Property<>(false);
+    /** SongContextMenu's "查看歌手" picker -- a song can credit more than one
+     *  artist, so the menu no longer jumps straight to the first-listed one;
+     *  it hands the full list here and SongArtistsDialog.qml lets the user
+     *  pick which creator's page to open. */
+    public final Property<Boolean> songArtistPickerOpen = new Property<>(false);
+    public final Property<List<NeteaseSong.ArtistRef>> songArtistPickerList =
+            new Property<>(Collections.<NeteaseSong.ArtistRef>emptyList());
+    /** Guards the picker's background avatar fetch (below) against a newer
+     *  "查看歌手" click superseding a slower, still-in-flight older one. */
+    private volatile long songArtistPickerRevision;
     public final Property<String> artistName = new Property<>("");
     public final Property<String> artistCoverPath = new Property<>("");
     public final Property<String> artistBriefDesc = new Property<>("");
@@ -2238,6 +2252,7 @@ public final class PlayerController {
             currentFilePath.set(t.source == Track.Source.LOCAL && t.filePath != null ? t.filePath : "");
             title.set(orEmpty(t.title));
             artist.set(orEmpty(t.artist));
+            playingArtistId.set(t.artistId);
             album.set(orEmpty(t.album));
             coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
             durationMs.set(t.durationMs);
@@ -3198,6 +3213,7 @@ public final class PlayerController {
                         else if (isTrialOnly) showToast("当前歌曲仅可试听");
                         title.set(orEmpty(t.title));
                         artist.set(orEmpty(t.artist));
+                        playingArtistId.set(t.artistId);
                         album.set(orEmpty(t.album));
                         coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
                         durationMs.set(t.durationMs);
@@ -3242,6 +3258,7 @@ public final class PlayerController {
                     post(() -> {
                         title.set(orEmpty(t.title));
                         artist.set(orEmpty(t.artist));
+                        playingArtistId.set(t.artistId);
                         album.set(orEmpty(t.album));
                         coverUrl.set(orEmpty(t.coverUrl));
                         durationMs.set(t.durationMs);
@@ -3279,6 +3296,7 @@ public final class PlayerController {
         t.neteaseId = s.id;
         t.title = s.name;
         t.artist = s.artist;
+        t.artistId = s.artistId;
         t.album = s.album;
         t.coverUrl = s.coverUrl;
         t.coverThumbPath = s.coverThumbPath != null ? s.coverThumbPath : NeteaseClient.thumbUrl(s.coverUrl);
@@ -3514,6 +3532,7 @@ public final class PlayerController {
                     currentFilePath.set(cur.source == Track.Source.LOCAL && cur.filePath != null ? cur.filePath : "");
                     title.set(cur.title != null ? cur.title : "");
                     artist.set(cur.artist != null ? cur.artist : "");
+                    playingArtistId.set(cur.artistId);
                     album.set(cur.album != null ? cur.album : "");
                     coverUrl.set(thumbUrl(cur.coverUrl != null ? cur.coverUrl : "", "512"));
                     durationMs.set(cur.durationMs);
@@ -3949,6 +3968,8 @@ public final class PlayerController {
                 row.name = s.name;
                 row.artist = s.artist;
                 row.artistId = s.artistId;
+                row.artistIdsCsv = s.artistIdsCsv;
+                row.artistNamesCsv = s.artistNamesCsv;
                 row.coverThumbPath = s.coverThumbPath;
                 row.id = s.id;
                 row.menuEnabled = s.id != 0;
@@ -4137,6 +4158,84 @@ public final class PlayerController {
             }
             post(() -> homeLoading.set(false));
         });
+    }
+
+    /** Opens SongContextMenu's "查看歌手" picker. QML hands over the song's full
+     *  artist list as two parallel CSVs (ids comma-joined, names joined on
+     *  U+0001 so a name containing a comma can't desync the pairing) rather
+     *  than a structured object -- passing a List built in QML script back
+     *  across the bridge as a Java method parameter isn't a pattern used
+     *  anywhere else in this codebase, while plain-string method args are. */
+    public void openSongArtistPicker(String idsCsv, String namesCsv) {
+        if (idsCsv == null || idsCsv.isEmpty()) return;
+        String[] ids = idsCsv.split(",", -1);
+        String[] namesArr = namesCsv != null ? namesCsv.split(String.valueOf((char) 1), -1) : new String[0];
+        List<NeteaseSong.ArtistRef> refs = new ArrayList<>();
+        for (int i = 0; i < ids.length; i++) {
+            NeteaseSong.ArtistRef ref = new NeteaseSong.ArtistRef();
+            try {
+                ref.id = Long.parseLong(ids[i]);
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            ref.name = i < namesArr.length ? namesArr[i] : "";
+            refs.add(ref);
+        }
+        if (refs.isEmpty()) return;
+        songArtistPickerList.set(refs);
+        songArtistPickerOpen.set(true);
+        // A song's own artist credits carry no avatar (id/name only) -- fetch
+        // each one's profile picture in the background and patch it in as it
+        // arrives, same "show text now, images pop in" idea as everywhere else
+        // covers load lazily.
+        final long revision = ++songArtistPickerRevision;
+        worker.submit(() -> fetchSongArtistAvatars(refs, revision));
+    }
+
+    private void fetchSongArtistAvatars(List<NeteaseSong.ArtistRef> refs, long revision) {
+        for (NeteaseSong.ArtistRef ref : refs) {
+            if (songArtistPickerRevision != revision) return; // a newer picker open superseded this
+            if (ref.id == 0) continue;
+            try {
+                NeteaseClient.ArtistPage page = netease.artistDetail(ref.id);
+                NeteaseArtist artist = page != null ? page.artist : null;
+                if (artist == null || artist.coverUrl == null || artist.coverUrl.isEmpty()) continue;
+                ref.coverUrl = artist.coverUrl;
+                // 512px, not artist.coverThumbPath's fixed 128px: the picker's
+                // card tile stretches to fill the panel width/cols (can be
+                // ~330px logical for a 1-artist row), so the source needs
+                // real headroom to stay sharp even before accounting for
+                // >100% display scaling.
+                ref.coverThumbPath = thumbUrl(artist.coverUrl, "512");
+                if (songArtistPickerRevision != revision) return;
+                // Fresh ArtistRef instances, not the same mutated objects re-wrapped in
+                // a new ArrayList: List.equals() compares elements pairwise, and two
+                // lists holding the SAME (reference-equal) element objects come out
+                // "equal" even after those objects' own fields changed in place --
+                // Property.set() skips firing its change listeners for a value that
+                // equals the current one (the exact repeat-toast bug from
+                // [[qplayer-2026-07-status]]), so QML would never see this update.
+                List<NeteaseSong.ArtistRef> copy = new ArrayList<>(refs.size());
+                for (NeteaseSong.ArtistRef r : refs) {
+                    NeteaseSong.ArtistRef c = new NeteaseSong.ArtistRef();
+                    c.id = r.id;
+                    c.name = r.name;
+                    c.coverUrl = r.coverUrl;
+                    c.coverThumbPath = r.coverThumbPath;
+                    copy.add(c);
+                }
+                post(() -> {
+                    if (songArtistPickerRevision != revision) return;
+                    songArtistPickerList.set(copy);
+                });
+            } catch (Throwable e) {
+                Logger.warn("song-artist-picker avatar fetch failed for {}: {}", ref.id, e.toString());
+            }
+        }
+    }
+
+    public void closeSongArtistPicker() {
+        songArtistPickerOpen.set(false);
     }
 
     /** Open a playlist: detail (name) + its tracks. */

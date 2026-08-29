@@ -239,11 +239,20 @@ Rectangle {
     // stacked above the row-wide Ripple (declared after it) so it intercepts
     // taps only over the artist line; rowArtistId 0 (local tracks / unknown)
     // disables it and lets the tap fall through to the row-wide Ripple.
+    // Sized off the STRING (row.rowArtist.length), not artistText.implicitWidth:
+    // this delegate gets reused by VirtualSongList's window-sliding, and a
+    // reused delegate's Text.implicitWidth goes stale on reuse even though its
+    // plain string properties update correctly (see MarqueeText/tagPill's own
+    // width fix above and [[qplayer-qml4j-gotchas]] item 6) -- anchoring the
+    // hit area to artistText.left/right instead just inherited that Text
+    // item's own full anchored container width (nearly the whole row), not
+    // the actual rendered glyph extent, which is the "spans the whole row"
+    // bug this replaces.
     MouseArea {
         id: artistArea
         anchors.left: artistText.left
-        anchors.right: artistText.right
         anchors.verticalCenter: artistText.verticalCenter
+        width: Math.min(artistText.width, row.rowArtist.length * 12 + 8)
         height: 20
         enabled: row.rowArtistId !== 0
         hoverEnabled: enabled

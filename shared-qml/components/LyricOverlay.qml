@@ -333,6 +333,20 @@ Item {
         fontSize: 14
         fadeColor: Qt.rgba(0, 0, 0, 0.55)
     }
+    // Jump to the artist's page, closing the lyric page first (same as the
+    // rest of the app's "leave the overlay before navigating" convention).
+    // Disabled (no pointer/tap) for local/custom tracks, which have no
+    // netease artist id to open.
+    MouseArea {
+        anchors.fill: artistText
+        enabled: player.playingArtistId !== 0
+        hoverEnabled: enabled
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+            player.setLyricsOpen(false)
+            player.openArtist(player.playingArtistId)
+        }
+    }
 
     // --- bottom: transport (portrait) ---------------------------------
     Item {
@@ -511,6 +525,16 @@ Item {
                 fontSize: 13
                 centered: true
                 fadeColor: Qt.rgba(0, 0, 0, 0.55)
+            }
+            MouseArea {
+                anchors.fill: lArtist
+                enabled: player.playingArtistId !== 0
+                hoverEnabled: enabled
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    player.setLyricsOpen(false)
+                    player.openArtist(player.playingArtistId)
+                }
             }
             LinearProgress {
                 id: lProgress

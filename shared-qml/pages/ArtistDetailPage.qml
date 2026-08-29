@@ -106,12 +106,29 @@ Rectangle {
                         source: player.artistCoverPath
                     }
 
-                    Text {
+                    MarqueeText {
+                        id: nameText
                         anchors.left: avatar.right
                         anchors.leftMargin: 14
                         anchors.right: parent.right
                         anchors.rightMargin: page.pad
                         anchors.top: avatar.top
+                        anchors.topMargin: 4
+                        height: 26
+                        text: player.artistName
+                        textColor: Theme.color.onSurfaceColor
+                        fontSize: 18
+                        fontWeight: Font.Medium
+                        fadeColor: Theme.color.surface
+                    }
+
+                    Text {
+                        anchors.left: avatar.right
+                        anchors.leftMargin: 14
+                        anchors.right: parent.right
+                        anchors.rightMargin: page.pad
+                        anchors.top: nameText.bottom
+                        anchors.topMargin: 4
                         text: (page.albumCount > 0 || page.songCount > 0)
                               ? (page.albumCount + " 张专辑 · " + page.songCount + " 首热门歌曲")
                               : ""

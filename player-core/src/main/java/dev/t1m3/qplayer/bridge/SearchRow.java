@@ -18,6 +18,13 @@ public final class SearchRow {
     /** Id of the artist (netease rows only; 0 for local/custom) — lets the row
      *  open the artist's page. */
     public long artistId;
+    /** Every credited artist's id/name, CSV-encoded the same way as
+     *  {@link dev.t1m3.qplayer.netease.dto.NeteaseSong#artistIdsCsv} (netease
+     *  rows only; empty for local/custom) — lets "查看歌手" list all of a
+     *  song's creators instead of only the first. Plain Strings, not a nested
+     *  List field: see that field's javadoc for why. */
+    public String artistIdsCsv = "";
+    public String artistNamesCsv = "";
     public String coverThumbPath;
     /** Menu identity. Exactly one is populated for each source kind. Keeping these
      *  on the flattened row lets SongContextMenu work without reaching back into a

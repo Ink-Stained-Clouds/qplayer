@@ -928,14 +928,26 @@ public final class NeteaseClient {
                 : (s.has("artists") && s.get("artists").isJsonArray() ? s.getAsJsonArray("artists") : null);
         if (ar != null) {
             StringBuilder names = new StringBuilder();
+            StringBuilder idsCsv = new StringBuilder();
+            StringBuilder namesCsv = new StringBuilder();
             for (JsonElement ae : ar) {
                 if (!ae.isJsonObject()) continue;
                 JsonObject ao = ae.getAsJsonObject();
                 if (!ao.has("name") || ao.get("name").isJsonNull()) continue;
                 if (names.length() > 0) names.append(" / ");
-                names.append(ao.get("name").getAsString());
+                String artistName = ao.get("name").getAsString();
+                names.append(artistName);
+                long refId = ao.has("id") && !ao.get("id").isJsonNull() ? ao.get("id").getAsLong() : 0L;
+                if (idsCsv.length() > 0) {
+                    idsCsv.append(',');
+                    namesCsv.append((char) 1);
+                }
+                idsCsv.append(refId);
+                namesCsv.append(artistName);
             }
             if (names.length() > 0) out.artist = names.toString();
+            out.artistIdsCsv = idsCsv.toString();
+            out.artistNamesCsv = namesCsv.toString();
             // First-listed artist's id, so the UI can open their artist page.
             if (ar.size() > 0 && ar.get(0).isJsonObject()) {
                 JsonObject fo = ar.get(0).getAsJsonObject();

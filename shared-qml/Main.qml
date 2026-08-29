@@ -610,6 +610,8 @@ Rectangle {
 
     ListenTogetherDialog { id: togetherDialog }
 
+    SongArtistsDialog { id: songArtistsDialog }
+
     // New-version dialog: the host's startup check sets player.updateAvailable when a
     // newer GitHub release exists; the update button downloads the APK in-app (through
     // the mirror) and hands it to the system installer.

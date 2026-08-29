@@ -6,12 +6,38 @@ package dev.t1m3.qplayer.netease.dto;
  * fields directly.
  */
 public class NeteaseSong {
+    /** One credited artist -- id + name, so the UI can list every creator of a
+     *  song (not just the first-listed one) and let the user pick whose page
+     *  to open. */
+    public static class ArtistRef {
+        public long id;
+        public String name;
+        /** Avatar, filled in lazily (a song's own artist list has no picture
+         *  data) after {@code PlayerController#openSongArtistPicker} fetches
+         *  each artist's profile in the background. Null until then. */
+        public String coverUrl;
+        public String coverThumbPath;
+    }
+
     public long id;
     public String name;
     /** All artists joined with " / ". Null if absent. */
     public String artist;
     /** Id of the first-listed artist -- lets the UI open that artist's page. 0 if absent. */
     public long artistId;
+    /** Every credited artist's id, comma-joined, in listed order. Empty if absent.
+     *  A flat String rather than a List&lt;ArtistRef&gt; field deliberately: this
+     *  codebase has no proven case of a List-typed field NESTED inside a row
+     *  object (as opposed to a top-level bridge Property) surviving the QML
+     *  bridge correctly -- plain String fields are proven everywhere, so
+     *  SongContextMenu's "查看歌手" picker parses these two CSVs instead of
+     *  iterating a nested list. See {@link ArtistRef} / {@code
+     *  PlayerController#openSongArtistPicker}. */
+    public String artistIdsCsv = "";
+    /** Every credited artist's name, in the same order as {@link #artistIdsCsv},
+     *  joined on U+0001 (not comma) so a name containing a comma can't desync
+     *  the pairing. Empty if absent. */
+    public String artistNamesCsv = "";
     public String album;
     /** Id of the album -- lets the UI open the album page. 0 if absent. */
     public long albumId;

@@ -50,12 +50,13 @@ Menu {
         // custom-playlist rows hand over a Track (".neteaseId") instead.
         var songId = s.id !== undefined ? s.id : s.neteaseId
         if (!songId) { menu.model = items; return }
-        // Jump to the credited (first-listed) artist's page. artistId is only
-        // populated on a real NeteaseSong (search/playlist/album/artist rows),
-        // not the Track shape queue/custom-playlist rows use -- guarded so the
-        // entry silently disappears rather than opening a blank/id-0 page.
-        if (s.artistId) {
-            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistAction(s.artistId) })
+        // Show every credited artist and let the user pick whose page to open --
+        // a song can have more than one. `artistIdsCsv` is only populated on a
+        // real NeteaseSong/SearchRow (search/playlist/album/artist rows), not
+        // the Track shape queue/custom-playlist rows use -- guarded so the
+        // entry silently disappears rather than opening a blank/empty picker.
+        if (s.artistIdsCsv) {
+            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistPickerAction(s.artistIdsCsv, s.artistNamesCsv) })
         }
         if (player.loggedIn) {
             var pls = player.myPlaylists
@@ -126,8 +127,8 @@ Menu {
     function _copyAction(songId) {
         return function() { player.copySongLink(songId) }
     }
-    function _openArtistAction(artistId) {
-        return function() { player.openArtist(artistId) }
+    function _openArtistPickerAction(idsCsv, namesCsv) {
+        return function() { player.openSongArtistPicker(idsCsv, namesCsv) }
     }
     function _cacheAction(songId) {
         return function() { player.cacheSong(songId) }
