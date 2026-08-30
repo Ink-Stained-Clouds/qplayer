@@ -5085,6 +5085,72 @@ public final class PlayerController {
         });
     }
 
+    /**
+     * Manual test hook for the reverse-engineered multi-person "一起听"
+     * (LTMulti) endpoint family — NOT wired into the real listen-together
+     * UI/sync pipeline, and no longer exposed by any QML button (was
+     * briefly, during live testing; removed from ListenTogetherDialog.qml
+     * once the room/create call itself was confirmed reachable). Creates a
+     * multi-room for the current track and toasts/logs the raw server
+     * response.
+     *
+     * <p>Confirmed 2026-08-30 against a real account: room/create with
+     * type=1 succeeded on the first call and returned a genuine roomId, so
+     * the shared CHECK_TOKEN (see NeteaseClient) does get past netease's
+     * anti-fraud check — at least once. A retest ~23 minutes later still
+     * hit netease's own risk-control cooldown ("当前匹配存在风险，暂时无法
+     * 发起一起听"), so don't call this repeatedly — invite/heartbeat/exit
+     * are still unverified. Re-wire a temporary button when picking this
+     * back up.
+     */
+    public void debugCreateMultiRoom() {
+        if (!loggedIn.peek()) {
+            showToast("请先登录后使用一起听");
+            return;
+        }
+        Track current = currentTrack();
+        if (current == null || current.source != Track.Source.NETEASE || current.neteaseId == 0L) {
+            showToast("请先播放一首网易云歌曲");
+            return;
+        }
+        if (Boolean.TRUE.equals(listenTogetherBusy.peek())) return;
+        listenTogetherBusy.set(true);
+        final long songId = current.neteaseId;
+        togetherWorker.execute(() -> {
+            // type=1 confirmed working against a real account (2026-08-30);
+            // 0 was rejected server-side with "此类型暂不支持". Other values
+            // unexplored — repeated rapid calls trip netease's risk control
+            // ("当前匹配存在风险，暂时无法发起一起听"), so don't sweep here.
+            try {
+                NeteaseClient.MultiRoomResult result = netease.createMultiRoom(
+                        1, songId, Collections.<Long>emptyList(),
+                        Collections.<Long>emptyList(), false);
+                Logger.info("multi-room create: success={} roomId={} onlineCount={} "
+                                + "existRoomId={} existRoomType={} failedType={} failedMessage={}",
+                        result.success,
+                        result.room != null ? result.room.roomId : "",
+                        result.room != null ? result.room.onlineCount : -1,
+                        result.existRoomId, result.existRoomType,
+                        result.failedType, result.failedMessage);
+                String summary = result.success && result.room != null
+                        ? "多人房间创建成功：" + result.room.roomId + "（在线 " + result.room.onlineCount + " 人）"
+                        : "多人房间创建失败：" + (result.failedMessage.isEmpty()
+                                ? (result.failedType.isEmpty() ? "无错误详情，见日志" : result.failedType)
+                                : result.failedMessage);
+                post(() -> {
+                    listenTogetherBusy.set(false);
+                    showToast(summary);
+                });
+            } catch (Throwable e) {
+                Logger.warn("debug multi-room create failed: {}", e.getMessage());
+                post(() -> {
+                    listenTogetherBusy.set(false);
+                    showToast("多人房间请求失败：" + safeMessage(e));
+                });
+            }
+        });
+    }
+
     /** Join from the official app's shared URL (roomId + inviterId query items). */
     public void joinListenTogether(String invitation) {
         if (!loggedIn.peek()) {

@@ -114,6 +114,19 @@ final class NeteaseApi {
             "/api/listen/together/heartbeat", Transport.EAPI);
     static final Endpoint LISTEN_TOGETHER_END = endpoint(
             "/api/listen/together/end/v2", Transport.EAPI);
+    // Multi-person "一起听" (LTMulti) family — a distinct, newer feature from the
+    // classic two-person LISTEN_TOGETHER_* endpoints above, reverse-engineered
+    // from the official Android client (v9.5.81) since no community reference
+    // documents it. Paths/body fields below are transcribed from decompiled
+    // request-builder code, not guessed.
+    static final Endpoint LISTEN_TOGETHER_MULTI_ROOM_CREATE = endpoint(
+            "/api/listen/together/multi/room/create", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_MULTI_INVITE = endpoint(
+            "/api/listen/together/multi/invite", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_MULTI_MATCH_HEARTBEAT = endpoint(
+            "/api/listen/together/multi/match/heartbeat", Transport.EAPI);
+    static final Endpoint LISTEN_TOGETHER_MULTI_MATCH_EXIT = endpoint(
+            "/api/listen/together/multi/match/exit", Transport.EAPI);
     static final Endpoint LOGOUT = login(
             "/api/logout", Transport.EAPI);
     static final Endpoint QR_LOGIN_KEY = login(
