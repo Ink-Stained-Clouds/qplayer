@@ -30,6 +30,21 @@ Rectangle {
     property bool settingsOpen: currentOverlay === "settings"
     property bool accountOpen: currentOverlay === "account"
     property bool cacheListOpen: currentOverlay === "cachedSongs"
+    // Source-independent destinations (local files, cached songs, queue,
+    // settings and lyrics) remain usable without a plugin. Every online-source
+    // destination shares one setup affordance instead of each page inventing a
+    // different empty/loading state.
+    property bool showSourceSetupPrompt: {
+        if (!player.sourceSetupRequired) return false
+        if (app.currentOverlay !== "") {
+            return app.currentOverlay === "detail"
+                    || app.currentOverlay === "artist"
+                    || app.currentOverlay === "album"
+                    || app.currentOverlay === "account"
+        }
+        // Home already owns the same action alongside its retry state.
+        return app.page === 1 || app.page === 2
+    }
     property bool syncingPageState: false
     // forward: new top page enters over an unchanged previous page.
     // back: only the departing top page exits, revealing an unchanged previous page.
@@ -52,8 +67,29 @@ Rectangle {
     property bool albumLoaded: false
     property bool queueLoaded: false
     property bool settingsLoaded: false
+    property bool pluginSettingsLoaded: false
     property bool accountLoaded: false
     property bool cacheListLoaded: false
+    property var playerPluginActions: {
+        var out = []
+        var rows = player.pluginUiContributions || []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].placement === "playerAction") out.push(rows[i])
+        }
+        return out
+    }
+    function footerActions() {
+        var out = [{ action: "download", icon: "download", text: "已下载" }]
+        for (var i = 0; i < app.playerPluginActions.length; i++) {
+            var item = app.playerPluginActions[i]
+            out.push({ action: "plugin", icon: item.icon, text: item.label,
+                       pluginId: item.pluginId, contributionId: item.id })
+        }
+        out.push({ action: "account", icon: player.loggedIn ? "account_circle" : "login",
+                   text: player.loggedIn ? "账户" : "登录" })
+        out.push({ action: "settings", icon: "settings", text: "设置" })
+        return out
+    }
     // openArtist/openAlbum are called from reusable child components that cannot
     // see this root id. The controller publishes an event revision for every call
     // (not just false -> true), and the page manager turns it into a route push.
@@ -61,9 +97,26 @@ Rectangle {
     onPageNavigationWatchChanged: {
         if (pageNavigationWatch <= 0) return
         if (player.pageNavigationTarget === "artist")
-            app.pushPage("artist", player.openArtistId)
+            app.pushPage("artist", player.pageNavigationEntityId)
         else if (player.pageNavigationTarget === "album")
-            app.pushPage("album", player.openAlbumId)
+            app.pushPage("album", player.pageNavigationEntityId)
+    }
+    property real pluginSettingsNavigationWatch: player.pluginSettingsRevision
+    onPluginSettingsNavigationWatchChanged: {
+        if (pluginSettingsNavigationWatch > 0)
+            app.pushPage("pluginSettings", player.pluginSettingsId)
+    }
+    property real debugRouteWatch: player.debugRouteRevision
+    onDebugRouteWatchChanged: {
+        if (debugRouteWatch <= 0) return
+        var kind = player.debugRouteType
+        var id = player.debugRouteId
+        if (kind === "tab") app.switchTo(parseInt(id))
+        else if (kind === "settings") app.replacePage("settings", 0)
+        else if (kind === "lyrics") app.pushPage("lyrics", 0)
+        else if (kind === "detail") app.pushPage("detail", id)
+        else if (kind === "pop") app.popPage()
+        else if (kind === "home") app.goHome()
     }
     // Host-side closes are uncommon (normal back now pops the stack), but mirror
     // one if it happens so the route cannot remain logically open after its
@@ -137,7 +190,8 @@ Rectangle {
         // half-logged-in state with no path to retry or start over.
         if ((credentialNoticeDialog.opened && player.credentialNoticeType === 3)
                 || credentialFallbackConfirmDialog.opened
-                || credentialReloginUnavailableDialog.opened) return;
+                || credentialReloginUnavailableDialog.opened
+                || pluginDialogs.handleBack()) return;
         if (player.songArtistPickerOpen) { player.closeSongArtistPicker(); return; }
         if (app.showLog)            { app.showLog = false; return; }
         if (app.loginOpen)          { app.loginOpen = false; return; }
@@ -151,6 +205,7 @@ Rectangle {
         if (which === "artist") app.artistLoaded = true
         if (which === "album") app.albumLoaded = true
         if (which === "settings") app.settingsLoaded = true
+        if (which === "pluginSettings") app.pluginSettingsLoaded = true
         if (which === "account") app.accountLoaded = true
         if (which === "cachedSongs") app.cacheListLoaded = true
         if (which === "queue") app.queueLoaded = true
@@ -221,14 +276,24 @@ Rectangle {
         app.syncPageState(which)
     }
 
+    // Re-open the route we're returning to ONLY when its page no longer holds it.
+    // openMedia* clears the page's model and re-fetches, so calling it for the page
+    // that is already loaded makes every "back" flash and reload what the user just
+    // came from. Both id spaces are checked: provider routes carry a "provider:kind:id"
+    // media id, legacy ones a bare number.
     function restoreCurrentPage(route) {
         if (!route) return
-        if (route.type === "artist" && player.openArtistId != route.entityId)
-            player.openArtist(route.entityId)
-        else if (route.type === "album" && player.openAlbumId != route.entityId)
-            player.openAlbum(route.entityId)
-        else if (route.type === "detail" && player.openPlaylistId != route.entityId)
-            player.openPlaylist(route.entityId)
+        var id = "" + route.entityId
+        if (route.type === "artist") {
+            if (player.openSourceArtistId !== id && ("" + player.openArtistId) !== id)
+                player.openMediaArtist(id)
+        } else if (route.type === "album") {
+            if (player.openSourceAlbumId !== id && ("" + player.openAlbumId) !== id)
+                player.openMediaAlbum(id)
+        } else if (route.type === "detail") {
+            if (player.openSourcePlaylistId !== id && ("" + player.openPlaylistId) !== id)
+                player.openMediaPlaylist(id)
+        }
     }
 
     function popPage() {
@@ -417,15 +482,15 @@ Rectangle {
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                 visible: rail.showRailBrand
                 source: "app-icon.png"
-                // Decode straight to ~2x the drawn size. Without this the 256px
-                // source is resampled to 32 at draw time with plain bilinear
-                // (SamplingMode.LINEAR), which at an 8:1 ratio aliases the disc's
-                // grooves badly; sourceSize routes it through the loader's
+                // Decode straight to the drawn size in device pixels. Without this
+                // the 256px source is resampled to 32 at draw time with plain
+                // bilinear (SamplingMode.LINEAR), which at an 8:1 ratio aliases the
+                // disc's grooves badly; sourceSize routes it through the loader's
                 // mipmapped downscale instead. The artwork already carries its own
                 // rounded corners, so no radius here — clipping them a second time
                 // just re-aliases the edge.
-                sourceSize.width: 64
-                sourceSize.height: 64
+                sourceSize.width: Math.round(32 * player.pixelRatio)
+                sourceSize.height: Math.round(32 * player.pixelRatio)
             }
             Text {
                 anchors.left: railLogo.right
@@ -462,8 +527,8 @@ Rectangle {
                     x: app.expanded ? 24 : (parent.width - width) / 2
                     Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     source: "app-icon.png"
-                    sourceSize.width: 64
-                    sourceSize.height: 64
+                    sourceSize.width: Math.round(32 * player.pixelRatio)
+                    sourceSize.height: Math.round(32 * player.pixelRatio)
                 }
                 Text {
                     anchors.left: actionsLogo.right
@@ -483,10 +548,9 @@ Rectangle {
         // competing with page-level actions in the top bar. Labels fade with the
         // extended rail; the compact rail keeps the same icon targets.
         footer: Item {
-            // Logged-in users get the listen-together action next to the account
-            // entry on both the compact rail (tablets) and the extended rail
-            // (desktop). Collapse the extra row entirely while signed out.
-            implicitHeight: player.loggedIn ? 212 : 164
+            // Feature actions are contributed by plugins; the host only supplies
+            // stable navigation placement and an isolated UI launcher.
+            implicitHeight: 20 + app.footerActions().length * 48
 
             Rectangle {
                 x: 12
@@ -497,18 +561,7 @@ Rectangle {
             }
 
             Repeater {
-                model: player.loggedIn
-                    ? [
-                        { action: "download", icon: "download", text: "已下载" },
-                        { action: "together", icon: "group", text: "一起听" },
-                        { action: "account", icon: "account_circle", text: "账户" },
-                        { action: "settings", icon: "settings", text: "设置" }
-                      ]
-                    : [
-                        { action: "download", icon: "download", text: "已下载" },
-                        { action: "account", icon: "login", text: "登录" },
-                        { action: "settings", icon: "settings", text: "设置" }
-                      ]
+                model: app.footerActions()
 
                 Item {
                     id: footerAction
@@ -537,8 +590,7 @@ Rectangle {
                         text: modelData.icon
                         font.family: Theme.iconFont.name
                         font.pixelSize: 22
-                        color: modelData.action === "together" && player.listenTogetherInRoom
-                               ? Theme.color.primary : Theme.color.onSurfaceVariantColor
+                        color: Theme.color.onSurfaceVariantColor
                         Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     }
 
@@ -568,8 +620,9 @@ Rectangle {
                             if (modelData.action === "download") {
                                 player.refreshCachedSongs()
                                 app.replacePage("cachedSongs", 0)
-                            } else if (modelData.action === "together") {
-                                togetherDialog.open()
+                            } else if (modelData.action === "plugin") {
+                                player.requestPluginUi(modelData.pluginId,
+                                                       modelData.contributionId)
                             } else if (modelData.action === "account") {
                                 if (player.loggedIn) app.replacePage("account", 0)
                                 else app.loginOpen = true
@@ -619,13 +672,13 @@ Rectangle {
                 app.replacePage("cachedSongs", 0)
             }
         }
-        IconButton {
-            visible: !app.wide && player.loggedIn
-            type: "standard"
-            icon: "group"
-            contentColor: player.listenTogetherInRoom
-                          ? Theme.color.primary : Theme.color.onSurfaceVariantColor
-            onClicked: togetherDialog.open()
+        Repeater {
+            model: !app.wide ? app.playerPluginActions : []
+            delegate: IconButton {
+                type: "standard"
+                icon: modelData.icon
+                onClicked: player.requestPluginUi(modelData.pluginId, modelData.id)
+            }
         }
         IconButton {
             visible: !app.wide
@@ -675,7 +728,7 @@ Rectangle {
                     anchors.fill: parent
                     visible: app.page === 0
                     onOpenPlaylist: {
-                        player.openPlaylist(home.pendingPlaylist.id)
+                        player.openMediaPlaylist("" + home.pendingPlaylist.id)
                         app.replacePage("detail", home.pendingPlaylist.id)
                     }
                 }
@@ -693,7 +746,7 @@ Rectangle {
                         LibraryPage {
                             id: libraryPage
                             onOpenPlaylist: {
-                                player.openPlaylist(libraryPage.pendingPlaylist.id)
+                                player.openMediaPlaylist("" + libraryPage.pendingPlaylist.id)
                                 app.replacePage("detail", libraryPage.pendingPlaylist.id)
                             }
                             onRequestLogin: app.loginOpen = true
@@ -792,6 +845,20 @@ Rectangle {
             ManagedPageLoader {
                 pageManager: app
                 motion: rootPageMotion
+                routeType: "pluginSettings"
+                active: app.pluginSettingsLoaded
+                sourceComponent: Component {
+                    PluginSettingsPage {
+                        pluginId: player.pluginSettingsId
+                        onHome: app.goHome()
+                        onBack: app.popPage()
+                    }
+                }
+            }
+
+            ManagedPageLoader {
+                pageManager: app
+                motion: rootPageMotion
                 routeType: "cachedSongs"
                 active: app.cacheListLoaded
                 sourceComponent: Component {
@@ -800,6 +867,12 @@ Rectangle {
                         onBack: app.popPage()
                     }
                 }
+            }
+
+            SourceSetupPrompt {
+                anchors.fill: parent
+                visible: app.showSourceSetupPrompt
+                z: 3000
             }
         }
     }
@@ -858,37 +931,17 @@ Rectangle {
         onClosed: app.loginOpen = false
     }
 
-    ListenTogetherDialog { id: togetherDialog }
-
-    SongArtistsDialog { id: songArtistsDialog }
-
-    // New-version dialog: the host's startup check sets player.updateAvailable when a
-    // newer GitHub release exists; the update button downloads the APK in-app (through
-    // the mirror) and hands it to the system installer.
-    Dialog {
-        id: updateDialog
-        title: "发现新版本"
-        icon: "system_update"
-        text: "新版本 " + player.updateVersion + " 现已发布"
-        acceptText: "立即更新"
-        rejectText: "稍后"
-        onAccepted: player.startUpdateDownload()
-
-        Flickable {
-            width: parent.width
-            height: Math.min(notesText.height, 260)
-            contentHeight: notesText.height
-            clip: true
-            Text {
-                id: notesText
-                width: parent.width
-                text: player.updateNotes
-                color: Theme.color.onSurfaceVariantColor
-                fontSize: 13
-                wrapMode: Text.Wrap
-            }
-        }
+    SongArtistsDialog {
+        id: songArtistsDialog
+        active: player.songArtistPickerOpen && player.lyricSlide <= 0.001
     }
+
+    // App-wide because onboarding can install a plugin before SettingsPage has
+    // ever been instantiated.
+    PluginDialogs { id: pluginDialogs }
+    PluginDialog { id: pluginContributionDialog }
+    PluginUpdateDialog { id: pluginUpdateDialog }
+    AppUpdateDialog { id: appUpdateDialog }
 
     Dialog {
         id: graphicsFallbackDialog
@@ -1010,9 +1063,6 @@ Rectangle {
     onGraphicsFallbackWatchChanged: {
         if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
     }
-
-    property bool updateWatch: player.updateAvailable
-    onUpdateWatchChanged: if (player.updateAvailable) updateDialog.open()
 
     // In-app update download progress, driven by the host (-1 idle, 0..100, -2 fail).
     property int updateProgWatch: player.updateProgress

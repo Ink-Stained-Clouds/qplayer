@@ -395,6 +395,12 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
      *  set before the GL thread first lays out (i.e. right after construction). */
     public void setController(PlayerController c) {
         this.controller = c;
+        if (c != null) {
+            c.setRenderWake(() -> {
+                setRenderMode(RENDERMODE_CONTINUOUSLY);
+                requestRender();
+            });
+        }
     }
 
     /** Expose app settings to QML as the {@code settings} context global. Set before
@@ -511,7 +517,10 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                             hideImeOnUiThread();
                         }
                     });
-                    if (controller != null) view.context("player", controller);
+                    if (controller != null) {
+                        view.context("player", controller);
+                        view.networkPolicy(controller::allowRemoteQmlResource);
+                    }
                     if (settings != null) view.context("settings", settings);
                     // hostWindow (the desktop-only custom title bar bridge) must still
                     // resolve to something here: qml4j's compiler rejects an undeclared
@@ -567,6 +576,16 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 long t1b = System.nanoTime();
                 surface.present();
                 profileFrame(t0, t1, t1b, System.nanoTime());
+                boolean needContinuous = controller != null && (
+                        controller.isPlaying()
+                        || Boolean.TRUE.equals(controller.lyricsOpen.peek())
+                        || (controller.lyricSlide.peek() != null
+                            && controller.lyricSlide.peek() > 0.001));
+                if (!needContinuous && compositor.skippedLayout()) {
+                    setRenderMode(RENDERMODE_WHEN_DIRTY);
+                } else {
+                    setRenderMode(RENDERMODE_CONTINUOUSLY);
+                }
                 if (!readyFired) {
                     readyFired = true;
                     SplashListener l = splashListener;
@@ -608,15 +627,21 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         }
         profLastFrameNanos = t2;
         if (++profFrames >= 120) {
-            dev.t1m3.qplayer.util.Logger.info(
-                "frame: {}fps tick {}ms render {}ms present {}ms max-gap {}ms skip {}/{} bumps tick {} (per120)",
-                Math.round(1000.0 / (profGapMs / profFrames)),
-                round1(profLayoutMs / profFrames),
-                round1(profRenderMs / profFrames),
-                round1(profPresentMs / profFrames),
-                round1(profMaxGapMs),
-                profSkips, profFrames,
-                profBumpTick);
+            long usedMb = (Runtime.getRuntime().totalMemory()
+                    - Runtime.getRuntime().freeMemory()) / (1024L * 1024L);
+            int fps = (int) Math.round(1000.0 / (profGapMs / profFrames));
+            String line = "frame: " + fps + "fps tick " + round1(profLayoutMs / profFrames)
+                    + "ms render " + round1(profRenderMs / profFrames)
+                    + "ms present " + round1(profPresentMs / profFrames)
+                    + "ms max-gap " + round1(profMaxGapMs) + "ms skip " + profSkips
+                    + "/" + profFrames + " bumps " + profBumpTick
+                    + " heap " + usedMb + "MB (per120)";
+            // logcat is cheap at 0.5 Hz; the in-app ring is not (it used to
+            // relayout the whole tree). Always emit to logcat for adb profiling.
+            android.util.Log.i("qplayer.frame", line);
+            if (controller != null && controller.isLogVisible()) {
+                dev.t1m3.qplayer.util.Logger.info("{}", line);
+            }
             profFrames = 0;
             profSkips = 0;
             profBumpTick = 0;

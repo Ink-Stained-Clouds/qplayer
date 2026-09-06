@@ -1,10 +1,10 @@
 package dev.t1m3.qplayer.bridge;
 
 import dev.t1m3.qplayer.audio.AudioBackend;
-import dev.t1m3.qplayer.customapi.CustomSong;
 import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.netease.NeteaseClient;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
+import dev.t1m3.qplayer.plugin.PluginCredentialVault;
 import dev.t1m3.qplayer.store.AppDirs;
 import org.junit.Rule;
 import org.junit.Test;
@@ -27,131 +27,45 @@ public class PlayerControllerPlaybackTest {
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
-    public void togetherQueueReplacementNeverFallsBackToTheOldNumericIndex() {
-        // A reordered queue keeps the currently audible song by id, even though it
-        // moved from index 1 to index 0.
-        assertEquals(20L, PlayerController.togetherReplacementTarget(
-                Arrays.asList(20L, 30L, 40L), 20L, 0L));
+    public void encryptedCredentialNoticeWaitsForValidatedLogin() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("credential-notice-gate").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
 
-        // A matching GOTO is authoritative once its target is in the new queue.
-        assertEquals(40L, PlayerController.togetherReplacementTarget(
-                Arrays.asList(20L, 30L, 40L), 20L, 40L));
+            java.lang.reflect.Method received = PlayerController.class.getDeclaredMethod(
+                    "showPluginCredentialNotice", PluginCredentialVault.CredentialEvent.class);
+            received.setAccessible(true);
+            received.invoke(controller, PluginCredentialVault.CredentialEvent.ENCRYPTED);
 
-        // The new queue arrived before its GOTO. Defer instead of playing whatever
-        // happens to occupy the previous numeric index and echoing that mistake.
-        assertEquals(0L, PlayerController.togetherReplacementTarget(
-                Arrays.asList(30L, 40L, 50L), 20L, 0L));
-        assertEquals(0L, PlayerController.togetherReplacementTarget(
-                Arrays.asList(30L, 40L, 50L), 20L, 20L));
-    }
+            assertEquals(0L, controller.credentialNoticeRevision.peek().longValue());
 
-    @Test
-    public void togetherRemoteCommandNeverReplaysAnOlderSnapshot() {
-        assertTrue(PlayerController.isNewTogetherRemoteCommand(
-                200L, "goto:new", 100L, "goto:old", -1L, ""));
-        assertFalse(PlayerController.isNewTogetherRemoteCommand(
-                99L, "goto:older", 100L, "goto:old", -1L, ""));
+            java.lang.reflect.Method publish = PlayerController.class.getDeclaredMethod(
+                    "publishPendingCredentialEncryptedNotice");
+            publish.setAccessible(true);
+            publish.invoke(controller);
 
-        // A command already queued on the main thread is part of the ordering floor;
-        // a replica returning an intermediate snapshot must not enqueue behind it.
-        assertFalse(PlayerController.isNewTogetherRemoteCommand(
-                150L, "goto:middle", 100L, "goto:old", 200L, "goto:new"));
-        assertFalse(PlayerController.isNewTogetherRemoteCommand(
-                200L, "goto:new", 100L, "goto:old", 200L, "goto:new"));
+            assertEquals(1, controller.credentialNoticeType.peek().intValue());
+            assertEquals(1L, controller.credentialNoticeRevision.peek().longValue());
 
-        // Millisecond timestamps can collide; a distinct command observed at the
-        // same sequence is still allowed, while exact signatures are deduplicated.
-        assertTrue(PlayerController.isNewTogetherRemoteCommand(
-                200L, "pause:new", 200L, "goto:new", -1L, ""));
-    }
+            received.invoke(controller, PluginCredentialVault.CredentialEvent.ENCRYPTED);
+            java.lang.reflect.Method clear = PlayerController.class.getDeclaredMethod(
+                    "clearPublishedAccount");
+            clear.setAccessible(true);
+            clear.invoke(controller);
+            publish.invoke(controller);
 
-    @Test
-    public void togetherLiveTrackSwitchCannotReuseTheOutgoingPosition() {
-        NeteaseClient.TogetherCommand command = new NeteaseClient.TogetherCommand();
-        command.commandType = "GOTO";
-        command.progressMs = 198000L;
-
-        // A live remote switch starts the replacement at zero even if the server
-        // snapshot still carries the previous track's 3:18 play head.
-        assertEquals(0L, PlayerController.togetherAppliedProgress(
-                command, false, true, 197500L));
-
-        // Joining an existing room must still synchronize to its current position.
-        assertEquals(198000L, PlayerController.togetherAppliedProgress(
-                command, true, true, 0L));
-
-        // Same-track GOTO and explicit PROGRESS commands retain seek semantics.
-        assertEquals(198000L, PlayerController.togetherAppliedProgress(
-                command, false, false, 0L));
-        command.commandType = "PROGRESS";
-        assertEquals(198000L, PlayerController.togetherAppliedProgress(
-                command, false, true, 0L));
-    }
-
-    @Test
-    public void togetherNaturalAdvanceElectsOneStableLeader() {
-        NeteaseClient.TogetherRoom room = new NeteaseClient.TogetherRoom();
-        room.creatorId = 42L;
-        NeteaseClient.TogetherUser peer = new NeteaseClient.TogetherUser();
-        peer.userId = 17L;
-        room.users.add(peer);
-
-        // The creator remains authoritative even when it is not the smallest id.
-        assertEquals(42L, PlayerController.togetherLeaderId(room, 17L));
-        assertTrue(PlayerController.shouldWaitForTogetherLeader(true, 17L, 42L));
-        assertFalse(PlayerController.shouldWaitForTogetherLeader(true, 42L, 42L));
-
-        // Partial legacy room payloads without creatorId still elect the same
-        // participant on both clients through a deterministic smallest-id fallback.
-        room.creatorId = 0L;
-        assertEquals(17L, PlayerController.togetherLeaderId(room, 42L));
-        assertEquals(17L, PlayerController.togetherLeaderId(room, 17L));
-        assertFalse(PlayerController.shouldWaitForTogetherLeader(false, 42L, 17L));
-    }
-
-    @Test
-    public void togetherTrackSwitcherTakesControlFromTheCreator() {
-        NeteaseClient.TogetherCommand command = new NeteaseClient.TogetherCommand();
-        command.userId = 17L;
-        command.commandType = "GOTO";
-        assertEquals(17L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
-
-        // Timeline and transport changes do not affect who owns natural advance.
-        command.commandType = "PROGRESS";
-        assertEquals(42L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
-        command.commandType = "PAUSE";
-        assertEquals(42L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
-
-        // NEXT/PREV are track selections too, including commands from official
-        // clients that do not encode them as GOTO.
-        command.commandType = "NEXT";
-        assertEquals(17L, PlayerController.togetherLeaderAfterRemoteCommand(42L, command));
-    }
-
-    @Test
-    public void togetherRiskControlUsesBoundedExponentialBackoff() {
-        assertEquals(30_000L, PlayerController.togetherRateLimitBackoffMs(1));
-        assertEquals(60_000L, PlayerController.togetherRateLimitBackoffMs(2));
-        assertEquals(120_000L, PlayerController.togetherRateLimitBackoffMs(3));
-        assertEquals(120_000L, PlayerController.togetherRateLimitBackoffMs(20));
-        assertFalse(PlayerController.togetherRateLimitShouldPause(3));
-        assertTrue(PlayerController.togetherRateLimitShouldPause(4));
-    }
-
-    @Test
-    public void togetherRiskControlRecognizesServerAndTransportFailures() {
-        assertTrue(PlayerController.isTogetherRateLimited(
-                new java.io.IOException("操作频繁，请稍后再试")));
-        assertTrue(PlayerController.isTogetherRateLimited(
-                new RuntimeException("wrapper",
-                        new java.io.IOException("HTTP 429: Too Many Requests"))));
-        assertTrue(PlayerController.isTogetherRateLimited(
-                new java.io.IOException("rate limit exceeded")));
-
-        assertFalse(PlayerController.isTogetherRateLimited(
-                new java.io.IOException("连接超时，请稍后再试")));
-        assertFalse(PlayerController.isTogetherRateLimited(
-                new java.io.IOException("同步一起听状态失败")));
+            assertEquals(1L, controller.credentialNoticeRevision.peek().longValue());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
     }
 
     @Test
@@ -496,17 +410,12 @@ public class PlayerControllerPlaybackTest {
             Track local = new Track();
             local.title = "local";
             local.filePath = "/music/local.flac";
-            CustomSong custom = new CustomSong();
-            custom.id = "external-7";
-            custom.name = "custom";
-
             controller.searchResults.set(Arrays.asList(netease));
             controller.localSearchResults.set(Arrays.asList(local));
-            controller.customSearchResults.set(Arrays.asList(custom));
             controller.rebuildSearchRows();
 
             java.util.List<SearchRow> rows = controller.searchRows.peek();
-            assertEquals(3, rows.size());
+            assertEquals(2, rows.size());
             assertTrue(rows.get(0).menuEnabled);
             assertEquals(42L, rows.get(0).id);
             assertEquals(7L, rows.get(0).artistId);
@@ -514,15 +423,6 @@ public class PlayerControllerPlaybackTest {
             assertEquals("first\u0001second", rows.get(0).artistNamesCsv);
             assertTrue(rows.get(1).menuEnabled);
             assertEquals("/music/local.flac", rows.get(1).filePath);
-            assertTrue(rows.get(2).menuEnabled);
-            assertEquals("external-7", rows.get(2).customId);
-
-            controller.addCustomApiToCustomPlaylist("external-7");
-            assertTrue(controller.isCustomApiInCustomPlaylist("external-7"));
-            assertEquals(Track.Source.CUSTOM_API,
-                    controller.customPlaylistTracks.peek().get(0).source);
-            controller.removeCustomApiFromCustomPlaylist("external-7");
-            assertFalse(controller.isCustomApiInCustomPlaylist("external-7"));
         } finally {
             if (controller != null) controller.shutdown();
             AppDirs.setBase(oldBase);
@@ -580,19 +480,15 @@ public class PlayerControllerPlaybackTest {
             netease.id = 1L;
             Track local = new Track();
             local.filePath = "/music/old.flac";
-            CustomSong custom = new CustomSong();
-            custom.id = "old-custom";
             controller.searchResults.set(Arrays.asList(netease));
             controller.localSearchResults.set(Arrays.asList(local));
-            controller.customSearchResults.set(Arrays.asList(custom));
             controller.rebuildSearchRows();
-            assertEquals(3, controller.searchRows.peek().size());
+            assertEquals(2, controller.searchRows.peek().size());
 
             controller.prepareSearch("new keyword");
 
             assertTrue(controller.searchResults.peek().isEmpty());
             assertTrue(controller.localSearchResults.peek().isEmpty());
-            assertTrue(controller.customSearchResults.peek().isEmpty());
             assertTrue(controller.searchRows.peek().isEmpty());
             assertEquals(Integer.valueOf(0), controller.resultCount.peek());
         } finally {

@@ -19,20 +19,20 @@ Rectangle {
     property string rowArtist: ""
     // Id of rowArtist's (first-listed) artist -- 0 for local tracks / unknown,
     // which disables the artist-name tap target below.
-    property double rowArtistId: 0
+    property var rowArtistId: 0
     // Full credited-artist list. Clicking a multi-artist line opens the shared
     // picker; a single id goes straight to the artist page in PlayerController.
     property string rowArtistIdsCsv: ""
     property string rowArtistNamesCsv: ""
     property string coverThumbPath: ""
-    // Small per-row source badge (e.g. "网易云"/"本地"/"自定义源") for lists that
+    // Small per-row source badge (provider name / "本地") for lists that
     // mix rows from more than one source — see SearchPage.qml. Empty (default)
     // shows nothing, so every other VirtualSongList caller is unaffected.
     property string tag: ""
     property bool highlighted: false
     property bool removable: false
     // Long-press context menu. `song` is the raw model item (needs `.id`); the
-    // menu only arms when `menuEnabled` (netease-backed lists opt in — local rows
+    // menu only arms when `menuEnabled` (provider-backed lists opt in — local rows
     // have no playlist-track id). `inOwnedPlaylist` + `ownerPlaylistId` unlock the
     // "从此歌单移除" entry, set only by the owned-playlist detail list.
     property var song: null
@@ -124,10 +124,12 @@ Rectangle {
             fillMode: Image.PreserveAspectCrop
             // See CoverImage.qml: decode-time downscale (mipmap-quality)
             // instead of a plain bilinear draw-time scale, which aliases
-            // into moiré. Fixed size (the leading box is always 48x48), so
-            // no reuse-staleness risk from VirtualSongList's windowing.
-            sourceSize.width: width
-            sourceSize.height: height
+            // into moiré, scaled by the device pixel ratio so it decodes at
+            // display resolution instead of 1x. Fixed size (the leading box is
+            // always 48x48), so no reuse-staleness risk from VirtualSongList's
+            // windowing.
+            sourceSize.width: Math.round(48 * player.pixelRatio)
+            sourceSize.height: Math.round(48 * player.pixelRatio)
             // Fade the art in as it loads, like the lyric-page cover. Keyed on source
             // presence (not load status, which would deadlock — opacity 0 skips the
             // paint that advances the decode). A reused row whose source swaps path→path
@@ -265,12 +267,14 @@ Rectangle {
         anchors.verticalCenter: artistText.verticalCenter
         width: Math.min(artistText.width, artistProbe.implicitWidth)
         height: 20
-        enabled: row.rowArtistIdsCsv !== "" || row.rowArtistId !== 0
+        enabled: row.rowArtistIdsCsv !== "" || (row.rowArtistId !== 0 && row.rowArtistId !== "")
         hoverEnabled: enabled
         cursorShape: Qt.PointingHandCursor
         onClicked: {
             if (row.rowArtistIdsCsv !== "")
                 player.openSongArtistPicker(row.rowArtistIdsCsv, row.rowArtistNamesCsv)
+            else if (("" + row.rowArtistId).indexOf(":") >= 0)
+                player.openMediaArtist("" + row.rowArtistId)
             else
                 player.openArtist(row.rowArtistId)
         }

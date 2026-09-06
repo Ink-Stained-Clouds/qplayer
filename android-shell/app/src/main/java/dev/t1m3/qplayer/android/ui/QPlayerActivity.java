@@ -10,10 +10,12 @@ import dev.t1m3.qplayer.android.settings.PrefsSettingsStore;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.os.Build;
@@ -73,6 +75,7 @@ public final class QPlayerActivity extends Activity {
     private static final int REQ_NOTIF = 2;
     private static final int REQ_COVER_PICK = 3;
     private static final int REQ_WEB_LOGIN = 4;
+    private static final int REQ_PLUGIN_PICK = 5;
 
     /** Playlist id awaiting a picked cover image, set right before launching the
      *  gallery picker and consumed in {@link #onActivityResult}. */
@@ -87,10 +90,13 @@ public final class QPlayerActivity extends Activity {
      *  insets to re-dispatch after the system bars are hidden/shown. */
     private android.view.View rootView;
     private Consumer<Boolean> lyricsOpenListener;
+    private BroadcastReceiver debugReceiver;
 
     /** Singleton controller — survives Activity recreations (PiP, config changes)
      *  so playback state and the foreground service stay connected across them. */
     private static volatile PlayerController sharedController;
+
+    static PlayerController sharedController() { return sharedController; }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -107,6 +113,8 @@ public final class QPlayerActivity extends Activity {
         long updatesBytes = dirSizeBytes(updatesDir);
         dev.t1m3.qplayer.util.Logger.info("updates cache: {} bytes before sweep", updatesBytes);
         deleteRecursive(updatesDir);
+        deleteRecursive(dev.t1m3.qplayer.store.AppDirs.cacheDir()
+                .resolve("plugin-imports").toFile());
 
         AudioBackend backend = new AndroidAudioBackend(this);
         reader = new AndroidMetadataReader(this);
@@ -146,7 +154,8 @@ public final class QPlayerActivity extends Activity {
         }));
         controller.setInstaller(this::downloadAndInstallUpdate);
         controller.setCoverPicker(this::pickPlaylistCover);
-        controller.setWebLoginLauncher(this::openNeteaseWebLogin);
+        controller.setPluginPicker(this::pickPluginPackage);
+        controller.setWebLoginLauncher(this::openWebLogin);
 
         // Playback control runs on the main thread (alive in the background, unlike
         // the GL render thread); the service mirrors state to the media session and
@@ -217,6 +226,10 @@ public final class QPlayerActivity extends Activity {
         QmlEngine engine = new QmlEngine(
                 new DexClassLoaderBackend(getClass().getClassLoader(), 26, dexCache));
         float density = getResources().getDisplayMetrics().density;
+        // QML is authored in dp and qml4j does not scale Image.sourceSize by the
+        // density, so covers need it to decode at display resolution rather than at
+        // 1x and be upscaled -- see CoverImage.qml.
+        controller.setPixelRatio(density);
         glView = new QmlGLSurfaceView(this, engine, qml, resources, density);
         glView.setController(controller);
         glView.setSettings(settings);
@@ -248,10 +261,71 @@ public final class QPlayerActivity extends Activity {
         updateImmersive();
 
         controller.loadHome();
+        registerDebugReceiver();
         // The audio-permission dialog is deferred to onSceneReady: requesting it
         // here pops a system dialog during the QML compile, and the resulting
         // pause/resume + the concurrent MediaStore scan racing the dex compile
         // crashes on first launch. Once the scene has rendered, it's safe.
+    }
+
+    /** {@code adb shell am broadcast -a dev.t1m3.qplayer.DEBUG --es cmd status} */
+    public static final String DEBUG_ACTION = "dev.t1m3.qplayer.DEBUG";
+
+    private void registerDebugReceiver() {
+        if (debugReceiver != null) return;
+        debugReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (controller == null || intent == null) return;
+                String cmd = intent.getStringExtra("cmd");
+                String arg = intent.getStringExtra("arg");
+                if (cmd == null) cmd = "";
+                if (arg == null) arg = "";
+                android.util.Log.i("qplayer.debug", "cmd=" + cmd + " arg=" + arg);
+                if ("swipe".equalsIgnoreCase(cmd) || "fling".equalsIgnoreCase(cmd)) {
+                    final String dir = arg;
+                    runOnUiThread(() -> debugSwipe(dir));
+                    return;
+                }
+                controller.debugCommand(cmd, arg);
+                if ("status".equalsIgnoreCase(cmd)) {
+                    android.util.Log.i("qplayer.debug", controller.debugStatus());
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(DEBUG_ACTION);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(debugReceiver, filter);
+        }
+    }
+
+    private void debugSwipe(String dir) {
+        if (glView == null) return;
+        int w = glView.getWidth();
+        int h = glView.getHeight();
+        if (w <= 0 || h <= 0) return;
+        float x = w * 0.62f;
+        float y0;
+        float y1;
+        String d = dir == null ? "" : dir.trim().toLowerCase(java.util.Locale.ROOT);
+        if ("down".equals(d)) {
+            y0 = h * 0.28f;
+            y1 = h * 0.78f;
+        } else {
+            y0 = h * 0.72f;
+            y1 = h * 0.22f;
+        }
+        long down = android.os.SystemClock.uptimeMillis();
+        glView.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                down, down, android.view.MotionEvent.ACTION_DOWN, x, y0, 0));
+        for (int i = 1; i <= 10; i++) {
+            float y = y0 + (y1 - y0) * i / 10f;
+            glView.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                    down, down + i * 16L, android.view.MotionEvent.ACTION_MOVE, x, y, 0));
+        }
+        glView.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                down, down + 180L, android.view.MotionEvent.ACTION_UP, x, y1, 0));
     }
 
     private static String bundledFontWeightName(
@@ -504,11 +578,32 @@ public final class QPlayerActivity extends Activity {
         }
     }
 
-    private void openNeteaseWebLogin() {
+    private void pickPluginPackage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES,
+                new String[]{"application/octet-stream", "application/zip"});
+        try {
+            startActivityForResult(intent, REQ_PLUGIN_PICK);
+        } catch (Throwable error) {
+            dev.t1m3.qplayer.util.Logger.error(
+                    "no document provider to pick a plugin: {}", error.toString());
+        }
+    }
+
+    private void openWebLogin(String loginUrl, String cookieUrl,
+            String credentialCookieName, String providerName) {
         runOnUiThread(() -> {
             try {
                 startActivityForResult(
-                        new Intent(this, NeteaseWebLoginActivity.class), REQ_WEB_LOGIN);
+                        new Intent(this, SourceWebLoginActivity.class)
+                                .putExtra(SourceWebLoginActivity.EXTRA_LOGIN_URL, loginUrl)
+                                .putExtra(SourceWebLoginActivity.EXTRA_COOKIE_URL, cookieUrl)
+                                .putExtra(SourceWebLoginActivity.EXTRA_CREDENTIAL_COOKIE,
+                                        credentialCookieName)
+                                .putExtra(SourceWebLoginActivity.EXTRA_PROVIDER_NAME, providerName),
+                        REQ_WEB_LOGIN);
             } catch (Throwable e) {
                 controller.failWebLogin("无法打开系统 WebView，请使用粘贴 Cookie 登录");
             }
@@ -521,10 +616,30 @@ public final class QPlayerActivity extends Activity {
         if (requestCode == REQ_WEB_LOGIN) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 controller.completeWebLogin(data.getStringExtra(
-                        NeteaseWebLoginActivity.EXTRA_COOKIE_HEADER));
+                        SourceWebLoginActivity.EXTRA_COOKIE_HEADER));
             } else {
                 controller.cancelWebLogin();
             }
+            return;
+        }
+        if (requestCode == REQ_PLUGIN_PICK) {
+            if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) return;
+            android.net.Uri uri = data.getData();
+            new Thread(() -> {
+                try (InputStream input = getContentResolver().openInputStream(uri)) {
+                    if (input == null) return;
+                    java.nio.file.Path imports = dev.t1m3.qplayer.store.AppDirs.cacheDir()
+                            .resolve("plugin-imports");
+                    java.nio.file.Files.createDirectories(imports);
+                    java.nio.file.Path target = imports.resolve(
+                            java.util.UUID.randomUUID().toString() + ".qplug");
+                    java.nio.file.Files.copy(input, target);
+                    controller.inspectTemporaryPluginPackage(target.toString());
+                } catch (Throwable error) {
+                    dev.t1m3.qplayer.util.Logger.warn(
+                            "read picked plugin failed: {}", error.toString());
+                }
+            }, "qplayer-plugin-pick").start();
             return;
         }
         if (requestCode != REQ_COVER_PICK || resultCode != Activity.RESULT_OK || data == null) return;
@@ -857,6 +972,10 @@ public final class QPlayerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (debugReceiver != null) {
+            try { unregisterReceiver(debugReceiver); } catch (Throwable ignored) {}
+            debugReceiver = null;
+        }
         if (controller != null && lyricsOpenListener != null) {
             controller.lyricsOpen.removeListener(lyricsOpenListener);
             lyricsOpenListener = null;

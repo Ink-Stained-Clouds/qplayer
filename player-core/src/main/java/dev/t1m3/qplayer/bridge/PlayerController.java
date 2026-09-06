@@ -4,28 +4,58 @@ import dev.t1m3.qplayer.audio.AudioBackend;
 import dev.t1m3.qplayer.audio.MetadataReader;
 import dev.t1m3.qplayer.cache.DiskCache;
 import dev.t1m3.qplayer.cache.PlaylistCacheIndex;
-import dev.t1m3.qplayer.cache.SongMetaIndex;
-import dev.t1m3.qplayer.customapi.CustomApiClient;
-import dev.t1m3.qplayer.customapi.CustomApiConfig;
-import dev.t1m3.qplayer.customapi.CustomSong;
+import dev.t1m3.qplayer.cache.MediaMetaIndex;
+import dev.t1m3.qplayer.cache.MediaPlaylistCacheIndex;
 import dev.t1m3.qplayer.library.LibraryScanner;
 import dev.t1m3.qplayer.lyric.LyricLine;
 import dev.t1m3.qplayer.lyric.LyricParser;
 import dev.t1m3.qplayer.lyric.TtmlParser;
 import dev.t1m3.qplayer.lyric.WordTimeLrcParser;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
+import dev.t1m3.qplayer.media.LyricsPayload;
+import dev.t1m3.qplayer.media.AccountProfile;
+import dev.t1m3.qplayer.media.Album;
+import dev.t1m3.qplayer.media.Artist;
+import dev.t1m3.qplayer.media.LoginChallenge;
+import dev.t1m3.qplayer.media.LoginMethod;
+import dev.t1m3.qplayer.media.MediaId;
+import dev.t1m3.qplayer.media.Page;
+import dev.t1m3.qplayer.media.Playlist;
+import dev.t1m3.qplayer.media.ProviderHome;
+import dev.t1m3.qplayer.media.Song;
+import dev.t1m3.qplayer.media.StreamDescriptor;
 import dev.t1m3.qplayer.model.Track;
+import dev.t1m3.qplayer.plugin.CorePluginHostApi;
+import dev.t1m3.qplayer.plugin.PluginManager;
+import dev.t1m3.qplayer.plugin.PluginAccountService;
+import dev.t1m3.qplayer.plugin.PluginInstaller;
+import dev.t1m3.qplayer.plugin.PluginCredentialVault;
+import dev.t1m3.qplayer.plugin.PluginCatalogEntry;
+import dev.t1m3.qplayer.plugin.PluginCatalogService;
+import dev.t1m3.qplayer.plugin.PluginCompatibility;
+import dev.t1m3.qplayer.plugin.PluginUiContributionRow;
+import dev.t1m3.qplayer.plugin.PluginUiDescription;
+import dev.t1m3.qplayer.plugin.PluginPackageVerifier;
+import dev.t1m3.qplayer.plugin.PluginPermission;
+import dev.t1m3.qplayer.plugin.PluginProviderService;
+import dev.t1m3.qplayer.plugin.PluginRegistry;
+import dev.t1m3.qplayer.plugin.PluginRow;
+import dev.t1m3.qplayer.plugin.PluginManifest;
+import dev.t1m3.qplayer.plugin.PluginSetupState;
+import dev.t1m3.qplayer.plugin.ProviderCapability;
+import dev.t1m3.qplayer.plugin.VerifiedPluginPackage;
 import dev.t1m3.qplayer.netease.NeteaseClient;
 import dev.t1m3.qplayer.netease.dto.NeteaseAlbum;
 import dev.t1m3.qplayer.netease.dto.NeteaseArtist;
 import dev.t1m3.qplayer.netease.dto.NeteaseLyric;
-import dev.t1m3.qplayer.unblock.SongUnblocker;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.netease.dto.NeteaseUser;
 import dev.t1m3.qplayer.store.AppDirs;
 import dev.t1m3.qplayer.store.StorageFiles;
+import dev.t1m3.qplayer.util.GitHubDownloadUrls;
 import dev.t1m3.qplayer.util.Logger;
+import dev.t1m3.qplayer.util.QrMatrix;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -52,9 +82,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The single QML-facing object. Registered as a context global
@@ -84,7 +116,7 @@ public final class PlayerController {
     private final NeteaseClient netease;
     private volatile ColorExtractor colorExtractor;
     private volatile java.util.function.Consumer<String> clipboard;
-    private volatile Runnable webLoginLauncher;
+    private volatile WebLoginLauncher webLoginLauncher;
     private volatile boolean monetEnabled = true;
     private static final String DEFAULT_SEED = "#6750A4";
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -102,25 +134,8 @@ public final class PlayerController {
                 t.setDaemon(true);
                 return t;
             }, new ThreadPoolExecutor.DiscardOldestPolicy());
-    // Custom-API play-url and lyric resolves get their own single-threaded queue,
-    // separate from `worker` above. Search has an independently bounded executor
-    // below, so rapid queries cannot delay a user-selected track's resolve.
-    private final ExecutorService customWorker = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "qplayer-custom-api");
-        t.setDaemon(true);
-        return t;
-    });
-    // Custom-source searches are independently coalesced as well. They must not
-    // fill customWorker's queue ahead of a play-url/lyric resolve, since repeated
-    // searches could otherwise make tapping a result appear to freeze playback.
-    private final ExecutorService customSearchWorker = new ThreadPoolExecutor(
-            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1), r -> {
-                Thread t = new Thread(r, "qplayer-custom-search");
-                t.setDaemon(true);
-                return t;
-            }, new ThreadPoolExecutor.DiscardOldestPolicy());
     // Bulk, non-urgent disk-cache downloads (full audio files, thumbnails) get their
-    // own queue for the exact same head-of-line-blocking reason customWorker above
+    // own queue so a full-track download never blocks interactive work
     // was split off: a full-track FLAC download is tens of MB and can take many
     // seconds, and every track played queues one right after it starts. Anything
     // that shares `worker` with these — a quick loadRecent()/search() the user is
@@ -134,7 +149,7 @@ public final class PlayerController {
     });
     // resolveAndPlayNetease submits the now-playing track's cover download to
     // `worker` before its lyric fetch -- same head-of-line-blocking shape as
-    // customWorker/cacheWorker above, just within one track's own resolve instead
+    // the cache worker above, just within one track's own resolve instead
     // of across tracks: a single-thread worker forces the lyric request to sit
     // queued behind the cover's own network round trip before it can even start,
     // on top of the lyric API call's own latency, while playback itself starts
@@ -174,24 +189,32 @@ public final class PlayerController {
                 t.setDaemon(true);
                 return t;
             }, new ThreadPoolExecutor.DiscardOldestPolicy());
-    /** Listen-Together owns a serial network clock: API polling, heartbeats and
-     *  reports must stay ordered, and must never queue behind cover/search work. */
-    private final ScheduledExecutorService togetherWorker =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "qplayer-listen-together");
-                t.setDaemon(true);
-                return t;
-            });
-
     /** Unified disk cache (audio / lyrics / images) with LRU eviction. */
     public final DiskCache diskCache = new DiskCache(200); // default 200 MB
     /** id -> title/artist/cover lookup for songs seen before, so search() has
      *  something to show when the live network call fails (offline, or the API
      *  is just down) — DiskCache itself only knows bare ids, no display text. */
-    private final SongMetaIndex songMetaIndex = new SongMetaIndex();
+    private final MediaMetaIndex mediaMetaIndex = new MediaMetaIndex();
     /** playlistId -> summary + song-list snapshot, so 我的歌单 and a
      *  previously-opened playlist still render with no network. */
     private final PlaylistCacheIndex playlistCacheIndex = new PlaylistCacheIndex();
+    private final MediaPlaylistCacheIndex mediaPlaylistCacheIndex = new MediaPlaylistCacheIndex();
+    /** Source runtimes outlive the QML renderer and remain active in the tray/background. */
+    private final PluginRegistry pluginRegistry = new PluginRegistry();
+    private final CorePluginHostApi pluginHostApi = new CorePluginHostApi();
+    private final PluginManager pluginManager = new PluginManager(
+            AppDirs.pluginsDir(), pluginRegistry, pluginHostApi);
+    private final PluginProviderService pluginProviders =
+            new PluginProviderService(pluginManager, pluginHostApi);
+    private final PluginAccountService pluginAccounts =
+            new PluginAccountService(pluginManager, pluginHostApi);
+    private final PluginInstaller pluginInstaller = new PluginInstaller(pluginRegistry);
+    private final PluginPackageVerifier pluginVerifier = new PluginPackageVerifier();
+    private final PluginCatalogService pluginCatalog = new PluginCatalogService(pluginVerifier);
+    private final PluginSetupState pluginSetupState = new PluginSetupState();
+    private volatile PluginPicker pluginPicker;
+    private volatile VerifiedPluginPackage pendingPluginPackage;
+    private volatile boolean pendingPluginPackageTemporary;
 
     private final List<Track> library = new CopyOnWriteArrayList<>();
     private final List<Track> queue = new CopyOnWriteArrayList<>();
@@ -213,16 +236,9 @@ public final class PlayerController {
      *  both renderers, but it is replaced whenever the current track changes. */
     private final Map<String, Integer> lyricOffsets =
             java.util.Collections.synchronizedMap(new HashMap<String, Integer>());
-    // Same idea as lyricMem, keyed by the custom-API source's String id instead
-    // of a netease long songId — kept separate since the key types differ.
-    private final Map<String, List<LyricLine>> customLyricMem = java.util.Collections.synchronizedMap(
-            new java.util.LinkedHashMap<String, List<LyricLine>>(16, 0.75f, true) {
-                @Override protected boolean removeEldestEntry(Map.Entry<String, List<LyricLine>> e) {
-                    return size() > LYRIC_MEM_MAX;
-                }
-            });
     private final Queue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> likedSet = new HashSet<>();
+    private final Set<String> pluginLikedSet = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Random rng = new Random();
 
     // Playback control runs on the host's main thread (always alive — unlike the GL
@@ -236,12 +252,15 @@ public final class PlayerController {
     /** Playlist that produced the current queue, or 0 for search/local/custom queues.
      *  Heart mode needs the original playlist id in addition to its seed song. */
     private volatile long currentQueuePlaylistId;
+    private volatile String currentQueueMediaPlaylistId = "";
     // Intended play/pause state. The backend (MediaPlayer) prepares asynchronously, so
     // backend.isPlaying() is briefly false right after play() — reporting that to the
     // media session shows a stale "paused". The session uses this intent instead.
     private volatile boolean playingIntent = false;
-    private volatile Boolean pendingTogetherDesiredPlaying;
-    private volatile long pendingTogetherTargetSongId;
+    /** One-shot desired state for a plugin-selected track whose source is still
+     * preparing asynchronously. This is transport-neutral host plumbing. */
+    private volatile Boolean pendingPluginDesiredPlaying;
+    private volatile String pendingPluginTargetMediaId = "";
     // The lyric renderer needs a stricter state than playingIntent: play() expresses
     // intent before an async source has opened/decoded/primed, while lyrics may already
     // be available. Only onStarted marks the media clock as genuinely running.
@@ -324,11 +343,19 @@ public final class PlayerController {
     private volatile String currentSearchQuery = "";
     private volatile int searchNextOffset;
     private volatile boolean searchPageInFlight;
-    // Same guard, for searchCustom() against dev.t1m3.qplayer.customapi.CustomApiClient.
-    private volatile String currentCustomSearchKey = "";
-    // User-configured third-party music API (independent of the netease source
-    // above); pushed in from Settings via setCustomApiConfig(). Never null.
-    private volatile CustomApiConfig customApiConfig = new CustomApiConfig();
+    /** Render-thread-owned provider buckets. Keeping one bucket per manifest order
+     * prevents late async results from visually reordering other providers. */
+    private final Map<String, List<Song>> pluginSearchByProvider = new LinkedHashMap<>();
+    private final Map<String, String> pluginProviderNames = new LinkedHashMap<>();
+    private final Map<String, String> pluginSearchCursors = new LinkedHashMap<>();
+    private final AtomicLong pluginSearchGeneration = new AtomicLong();
+    private volatile boolean pluginSearchPageInFlight;
+    private final Map<String, List<LyricLine>> pluginLyricMem = Collections.synchronizedMap(
+            new LinkedHashMap<String, List<LyricLine>>(16, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, List<LyricLine>> e) {
+                    return size() > LYRIC_MEM_MAX;
+                }
+            });
 
     // True after loadQueue() restores a previous session's track — toggle() will
     // call playAt() instead of resume() so the URL is freshly resolved.
@@ -345,7 +372,6 @@ public final class PlayerController {
     // playAt() call, same one-shot pattern as pendingResumeMs/-Index above.
     private volatile boolean pendingNaturalEnd = false;
     private volatile String playLevel = "exhigh";
-    private volatile boolean unblockEnabled = true;
     // --- Volume fade in/out (Settings toggle) ------------------------------
     // Drives backend.setVolume() directly, never the public volume Property/
     // setVolume(float) (those are the user's own slider — a fade must not
@@ -390,6 +416,7 @@ public final class PlayerController {
     // when a track actually starts. Stops a persistently-failing track from looping
     // error→re-resolve→error forever instead of advancing.
     private volatile long errorRetryId = -1;
+    private volatile String errorRetryMediaId = "";
     /** Number of consecutive tracks that failed before audio actually started.
      *  Bounds automatic skipping when an entire queue is unavailable. */
     private volatile int consecutivePlaybackFailures;
@@ -413,6 +440,8 @@ public final class PlayerController {
      *  otherwise) -- lets the lyric page's artist name jump straight to that
      *  artist's page. */
     public final Property<Long> playingArtistId = new Property<>(0L);
+    public final Property<String> playingArtistIdsCsv = new Property<>("");
+    public final Property<String> playingArtistNamesCsv = new Property<>("");
     public final Property<String> album = new Property<>("");
     public final Property<String> coverUrl = new Property<>("");
     /** Absolute path to the current track's cover in the disk cache, or "" when not
@@ -484,21 +513,50 @@ public final class PlayerController {
     public final Property<List<Track>> tracks = new Property<>(Collections.<Track>emptyList());
     public final Property<Integer> libraryCount = new Property<>(0);
 
+    // --- Source plugins ---------------------------------------------------
+    public final Property<List<PluginRow>> sourcePlugins =
+            new Property<>(Collections.<PluginRow>emptyList());
+    public final Property<String> primarySourcePlugin = new Property<>("");
+    /** True when the selected provider owns the online discovery/detail surface. */
+    public final Property<Boolean> sourceContentActive = new Property<>(false);
+    public final Property<String> pendingPluginName = new Property<>("");
+    public final Property<String> pendingPluginId = new Property<>("");
+    public final Property<String> pendingPluginVersion = new Property<>("");
+    public final Property<String> pendingPluginPermissions = new Property<>("");
+    public final Property<Boolean> pendingPluginTrusted = new Property<>(false);
+    public final Property<Long> pluginInstallPromptRevision = new Property<>(0L);
+    public final Property<Boolean> pluginInstallBusy = new Property<>(false);
+    public final Property<String> pendingPluginRemovalId = new Property<>("");
+    public final Property<String> pendingPluginRemovalName = new Property<>("");
+    public final Property<Long> pluginRemovalPromptRevision = new Property<>(0L);
+    public final Property<List<PluginCatalogEntry>> pluginCatalogEntries =
+            new Property<>(Collections.<PluginCatalogEntry>emptyList());
+    public final Property<Boolean> pluginCatalogLoading = new Property<>(false);
+    public final Property<List<PluginUiContributionRow>> pluginUiContributions =
+            new Property<>(Collections.<PluginUiContributionRow>emptyList());
+    /** Per-plugin settings navigation event. */
+    public final Property<String> pluginSettingsId = new Property<>("");
+    public final Property<Long> pluginSettingsRevision = new Property<>(0L);
+    /** No enabled primary provider is available. Home renders a setup action instead
+     * of pretending an online request is still connecting. */
+    public final Property<Boolean> sourceSetupRequired = new Property<>(true);
+    /** Auto-open only until the user installs a source or explicitly chooses local-only. */
+    public final Property<Boolean> sourceSetupPending = new Property<>(false);
+    /** Monotonic event used by Home/Settings to reopen the global setup dialog. */
+    public final Property<Long> sourceSetupRevision = new Property<>(0L);
+    /** Older provider credentials or queued online tracks can be migrated after install. */
+    public final Property<Boolean> legacySourceMigrationAvailable = new Property<>(false);
+
     // --- Netease content (Repeater model: player.xxx; delegate reads modelData) ---
     public final Property<List<NeteaseSong>> searchResults = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<Integer> resultCount = new Property<>(0);
     public final Property<Boolean> searchLoading = new Property<>(false);
     public final Property<Boolean> searchHasMore = new Property<>(false);
-    /** Search results from the user-configured custom API source (independent of
-     *  {@link #searchResults}'s netease source), shown in their own SearchPage.qml
-     *  section. Empty when the custom source isn't configured/enabled. */
-    public final Property<List<CustomSong>> customSearchResults = new Property<>(Collections.<CustomSong>emptyList());
-    /** Unified view over {@link #searchResults} + {@link #localSearchResults} +
-     *  {@link #customSearchResults} (netease, then local, then custom) for
+    /** Unified view over online plugin results and {@link #localSearchResults} for
      *  SearchPage.qml's single results list. Rebuilt by {@link #rebuildSearchRows()}
      *  whenever any of the three source lists changes. In "album"/"artist"
      *  {@link #searchMode}, rebuilt from {@link #searchAlbumResults}/
-     *  {@link #searchArtistResults} instead (netease-only -- local/custom have
+     *  {@link #searchArtistResults} instead (local files have
      *  no album/artist entities of their own). */
     public final Property<List<SearchRow>> searchRows = new Property<>(Collections.<SearchRow>emptyList());
     /** SearchPage's type filter: "song" (default) | "album" | "artist". Selects
@@ -507,6 +565,10 @@ public final class PlayerController {
     public final Property<String> searchMode = new Property<>("song");
     public final Property<List<NeteaseAlbum>> searchAlbumResults = new Property<>(Collections.<NeteaseAlbum>emptyList());
     public final Property<List<NeteaseArtist>> searchArtistResults = new Property<>(Collections.<NeteaseArtist>emptyList());
+    public final Property<List<Album>> sourceSearchAlbumResults =
+            new Property<>(Collections.<Album>emptyList());
+    public final Property<List<Artist>> sourceSearchArtistResults =
+            new Property<>(Collections.<Artist>emptyList());
     /** Local-library matches for the same query text, shown alongside searchResults. */
     public final Property<List<Track>> localSearchResults = new Property<>(Collections.<Track>emptyList());
     /** Hot search keywords shown when search input is empty. */
@@ -515,14 +577,26 @@ public final class PlayerController {
     public final Property<List<String>> searchHistory = new Property<>(Collections.<String>emptyList());
     public final Property<List<NeteaseSong>> recommendations = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
+    public final Property<List<Song>> sourceRecommendations =
+            new Property<>(Collections.<Song>emptyList());
+    public final Property<List<Playlist>> sourceRecommendPlaylists =
+            new Property<>(Collections.<Playlist>emptyList());
     /** True while {@link #loadHome} is in flight — lets HomePage.qml tell "still
      *  loading" from "tried and failed" (both look like empty lists otherwise) so
      *  it can show a tap-to-retry affordance instead of a permanent spinner. */
     public final Property<Boolean> homeLoading = new Property<>(Boolean.FALSE);
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteaseSong>> recentSongs = new Property<>(Collections.<NeteaseSong>emptyList());
+    public final Property<List<Playlist>> sourceMyPlaylists =
+            new Property<>(Collections.<Playlist>emptyList());
+    public final Property<List<Song>> sourceRecentSongs =
+            new Property<>(Collections.<Song>emptyList());
+    public final Property<Boolean> sourcePlaylistMutationAvailable = new Property<>(false);
+    public final Property<Boolean> sourceHeartRecommendationAvailable = new Property<>(false);
     /** Currently opened playlist. */
     public final Property<List<NeteaseSong>> playlistTracks = new Property<>(Collections.<NeteaseSong>emptyList());
+    public final Property<List<Song>> sourcePlaylistTracks =
+            new Property<>(Collections.<Song>emptyList());
     public final Property<String> playlistTitle = new Property<>("");
     /** Cover for the currently open playlist — netease CDN thumb, or empty while
      *  loading/absent. {@code CoverImage.source} accepts this directly (http url). */
@@ -559,10 +633,12 @@ public final class PlayerController {
     /** Id of the open playlist, mirrored to QML (the volatile above isn't exposed).
      *  Lets the detail page pass the id back for delete / remove-track actions. */
     public final Property<Long> openPlaylistId = new Property<>(0L);
+    public final Property<String> openSourcePlaylistId = new Property<>("");
     /** Currently opened artist (drill-in from a song row's artist name / an
      *  album's artist credit). Main.qml owns the actual navigation stack; the
      *  open flags mirror only its currently visible route for host/QML state. */
     public final Property<Long> openArtistId = new Property<>(0L);
+    public final Property<String> openSourceArtistId = new Property<>("");
     public final Property<Boolean> artistPageOpen = new Property<>(false);
     public final Property<Boolean> albumPageOpen = new Property<>(false);
     /** Every artist/album navigation request bumps this revision, including a
@@ -571,6 +647,7 @@ public final class PlayerController {
      *  pushes a route carrying {@link #openArtistId} or {@link #openAlbumId}. */
     public final Property<String> pageNavigationTarget = new Property<>("");
     public final Property<Long> pageNavigationRevision = new Property<>(0L);
+    public final Property<String> pageNavigationEntityId = new Property<>("");
     private long pageNavigationSequence;
     /** Shared song-credit picker for SongRow and SongContextMenu. Multiple
      *  artists are exposed here for SongArtistsDialog; a single artist bypasses
@@ -587,25 +664,35 @@ public final class PlayerController {
      *  playlist cover's fetch resolution: a phone/narrow window's card grid
      *  doesn't need the same pixels a desktop wide layout displays at. */
     public final Property<Boolean> wideLayout = new Property<>(false);
+    /** See {@link #setPixelRatio(double)}. */
+    public final Property<Double> pixelRatio = new Property<>(1.0);
     public final Property<String> artistName = new Property<>("");
     public final Property<String> artistCoverPath = new Property<>("");
     public final Property<String> artistBriefDesc = new Property<>("");
     public final Property<Boolean> artistLoading = new Property<>(false);
     public final Property<List<NeteaseSong>> artistSongs = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<NeteaseAlbum>> artistAlbums = new Property<>(Collections.<NeteaseAlbum>emptyList());
+    public final Property<List<Song>> sourceArtistSongs =
+            new Property<>(Collections.<Song>emptyList());
+    public final Property<List<Album>> sourceArtistAlbums =
+            new Property<>(Collections.<Album>emptyList());
     /** Guards against a slower, superseded fetch overwriting a newer {@link #openArtist} call. */
     private volatile long currentArtistId;
     /** Currently opened album (drill-in from a song row's album name / an
      *  artist's album list). */
     public final Property<Long> openAlbumId = new Property<>(0L);
+    public final Property<String> openSourceAlbumId = new Property<>("");
     public final Property<String> albumName = new Property<>("");
     public final Property<String> albumCoverPath = new Property<>("");
     public final Property<String> albumArtistName = new Property<>("");
     public final Property<Long> albumArtistId = new Property<>(0L);
+    public final Property<String> albumArtistMediaId = new Property<>("");
     /** Release year, pre-formatted ("2019年") so QML doesn't need Date parsing; empty if unknown. */
     public final Property<String> albumPublishYear = new Property<>("");
     public final Property<Boolean> albumLoading = new Property<>(false);
     public final Property<List<NeteaseSong>> albumTracks = new Property<>(Collections.<NeteaseSong>emptyList());
+    public final Property<List<Song>> sourceAlbumTracks =
+            new Property<>(Collections.<Song>emptyList());
     /** Guards against a slower, superseded fetch overwriting a newer {@link #openAlbum} call. */
     private volatile long currentAlbumId;
     /** Snapshot of the live play queue for the queue page; current track is {@link #index}. */
@@ -632,47 +719,23 @@ public final class PlayerController {
      *  Java List length (which the engine doesn't expose to QML). */
     public final Property<Integer> likedCount = new Property<>(0);
     public final Property<Integer> playlistCount = new Property<>(0);
+    /** Standardized login metadata for the current primary source. */
+    public final Property<String> loginProviderName = new Property<>("音源账号");
+    public final Property<Boolean> pluginLoginActive = new Property<>(false);
+    public final Property<List<LoginMethod>> loginMethods =
+            new Property<>(Collections.<LoginMethod>emptyList());
+    public final Property<Boolean> pluginQrLoginAvailable = new Property<>(false);
+    public final Property<Boolean> pluginCredentialLoginAvailable = new Property<>(false);
+    public final Property<String> loginWebInstructions = new Property<>(
+            "将在系统 WebView 中打开官方网站。登录成功后，QPlayer 会自动读取登录凭据、验证账号并加密保存。");
+    public final Property<String> loginCredentialInstructions = new Property<>(
+            "在官方网站登录后，复制请求头中的 Cookie 值并粘贴到下方。凭据仅用于验证，成功后会加密保存。");
+    public final Property<String> loginCredentialLabel = new Property<>("Cookie 请求头");
 
-    // --- Listen Together --------------------------------------------------
-    public final Property<Boolean> listenTogetherInRoom = new Property<>(false);
-    public final Property<Boolean> listenTogetherBusy = new Property<>(false);
-    public final Property<String> listenTogetherRoomId = new Property<>("");
-    public final Property<String> listenTogetherMembers = new Property<>("");
-    public final Property<String> listenTogetherStatusText = new Property<>("尚未加入房间");
-    public final Property<String> listenTogetherInvitation = new Property<>("");
-
-    private volatile boolean togetherActive;
-    private volatile String togetherRoomId = "";
-    private volatile long togetherUserId;
-    private volatile long togetherClientSeq;
-    private volatile long togetherQueueVersion;
-    private volatile long togetherTickCount;
-    private volatile long togetherSuppressReportsUntil;
-    /** NetEase risk control must pause the whole sync clock. Retrying the same
-     *  rejected report every one-second tick only extends the restriction. */
-    private volatile long togetherRateLimitUntil;
-    private volatile int togetherRateLimitFailures;
-    private static final long TOGETHER_RATE_LIMIT_BASE_MS = 30_000L;
-    private static final long TOGETHER_RATE_LIMIT_MAX_MS = 120_000L;
-    private static final int TOGETHER_RATE_LIMIT_MAX_RETRIES = 3;
-    /** The room creator is the initial natural-advance authority. Any participant
-     *  that later switches tracks takes ownership; followers wait for that user's
-     *  GOTO instead of racing a second autoAdvance at the same song boundary. */
-    private volatile long togetherLeaderUserId;
-    private static final long TOGETHER_AUTO_ADVANCE_GRACE_MS = 3500L;
-    private final AtomicLong togetherAutoAdvanceGeneration = new AtomicLong();
-    private volatile long togetherPendingAutoAdvanceSongId;
-    private volatile int togetherPendingAutoAdvanceIndex = -1;
-    private volatile long togetherLastRemoteSeq = -1L;
-    private volatile String togetherLastRemoteCommand = "";
-    /** Remote command queued onto the host main thread but not applied yet. Without
-     *  this guard, a slow frame can enqueue the same snapshot on consecutive polls. */
-    private volatile String togetherPendingRemoteCommand = "";
-    private volatile long togetherPendingRemoteSeq = -1L;
-    private volatile String togetherLastQueueSignature = "";
-    private volatile long togetherLastSongId;
-    private volatile boolean togetherLastPlaying;
-    private volatile long togetherLastSeekRevision;
+    /** Generic plugin playback coordination; no protocol or provider semantics. */
+    private volatile String pluginAutoAdvanceBlocker = "";
+    private final AtomicLong playbackEndRevision = new AtomicLong();
+    private volatile boolean appShuttingDown;
 
     // --- Debug ------------------------------------------------------------
     public final Property<String> logText = new Property<>("");
@@ -689,6 +752,9 @@ public final class PlayerController {
     public final Property<Integer> credentialReloginResult = new Property<>(0);
     public final Property<Long> credentialReloginRevision = new Property<>(0L);
     private volatile boolean credentialReloginBusy;
+    private volatile boolean pendingCredentialEncryptedNotice;
+    private volatile boolean legacyCredentialMigrationAttempted;
+    private final AtomicLong legacyCredentialMigrationGeneration = new AtomicLong();
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
      *  exact same text as last time. qml4j's property-changed notification
@@ -726,25 +792,36 @@ public final class PlayerController {
         // hop to the render thread to touch the Property.
         netease.setErrorListener(msg -> post(() -> toast.set(msg)));
         netease.setCredentialListener(this::showCredentialNotice);
-        credentialOwnerOnlyFallback.set(netease.usesOwnerOnlyCredentialProtection());
+        pluginHostApi.setCredentialListener(this::showPluginCredentialNotice);
+        pluginHostApi.setAppBridge(new CorePluginHostApi.AppBridge() {
+            @Override public CompletableFuture<Object> call(String pluginId, String method,
+                                                              Map<String, Object> arguments) {
+                return pluginAppCall(pluginId, method, arguments);
+            }
+            @Override public void unavailable(String pluginId) {
+                pluginAppUnavailable(pluginId);
+            }
+        });
+        credentialOwnerOnlyFallback.set(pluginHostApi.usesOwnerOnlyCredentialProtection());
         backend.setVolume(volume.peek());
         backend.setOnComplete(() -> onMain(this::autoAdvance));
         // Re-baseline the media session's position once audio actually starts (the
         // backend prepares asynchronously, so the position at play() time is stale).
         backend.setOnStarted(() -> {
             errorRetryId = -1;
+            errorRetryMediaId = "";
             consecutivePlaybackFailures = 0;
             stoppedLyricPositionMs = Math.max(0L, backend.position());
             playbackStarted = true;
             post(() -> loading.set(false));
-            Boolean togetherDesired = pendingTogetherDesiredPlaying;
-            long target = pendingTogetherTargetSongId;
+            Boolean pluginDesired = pendingPluginDesiredPlaying;
             Track startedTrack = currentTrack();
-            if (togetherDesired != null && startedTrack != null
-                    && startedTrack.neteaseId == target) {
-                pendingTogetherDesiredPlaying = null;
-                pendingTogetherTargetSongId = 0L;
-                if (!togetherDesired) {
+            if (pluginDesired != null && startedTrack != null
+                    && !pendingPluginTargetMediaId.isEmpty()
+                    && pendingPluginTargetMediaId.equals(startedTrack.canonicalId())) {
+                pendingPluginDesiredPlaying = null;
+                pendingPluginTargetMediaId = "";
+                if (!pluginDesired) {
                     cancelFadeAtGain(1f);
                     backend.pause();
                     playingIntent = false;
@@ -779,28 +856,846 @@ public final class PlayerController {
         backend.setOnError(() -> onMain(this::onPlaybackError));
         worker.submit(this::loadSearchHistory);
         loadLyricOffsets();
-        songMetaIndex.load();
+        mediaMetaIndex.load();
+        mediaPlaylistCacheIndex.load();
         playlistCacheIndex.load();
         diskCache.loadActivelyCached();
+        pluginManager.startEnabled();
         loadQueue();
         loadCustomPlaylist();
-        togetherWorker.scheduleAtFixedRate(this::listenTogetherTick,
-                1L, 1L, TimeUnit.SECONDS);
-        if (netease.isLoggedIn()) {
+        legacySourceMigrationAvailable.set(detectLegacySourceMigration());
+        publishPlugins();
+        refreshPluginCatalog();
+        if (!onlineSourcesArePluginOnly() && primaryProvider() == null && netease.isLoggedIn()) {
             loggedIn.set(true);
             refreshLogin();
         }
     }
 
+    /** Enable/disable an installed provider without coupling it to a QML scene. */
+    public void setSourcePluginEnabled(String pluginId, boolean enabled) {
+        worker.submit(() -> {
+            try {
+                if (enabled) pluginManager.enable(pluginId);
+                else pluginManager.disable(pluginId);
+                post(this::publishPlugins);
+            } catch (Throwable error) {
+                showToast("插件状态更新失败：" + error.getMessage());
+            }
+        });
+    }
+
+    public void setPrimarySourcePlugin(String pluginId) {
+        worker.submit(() -> {
+            try {
+                pluginRegistry.setPrimaryProvider(pluginId);
+                post(this::publishPlugins);
+            } catch (Throwable error) {
+                showToast("无法切换主音源：" + error.getMessage());
+            }
+        });
+    }
+
+    /** One-step setup action for an already installed but disabled/non-primary
+     * provider. Keeping both registry writes on the worker avoids the enable/primary
+     * race that two independent QML button calls would create. */
+    public void activateSourcePlugin(String pluginId) {
+        if (pluginId == null || pluginId.isEmpty()) return;
+        worker.submit(() -> {
+            try {
+                PluginRegistry.Entry entry = pluginRegistry.get(pluginId);
+                if (entry == null) throw new IllegalArgumentException("音源插件尚未安装");
+                if (!entry.enabled) pluginManager.enable(pluginId);
+                pluginRegistry.setPrimaryProvider(pluginId);
+                post(this::publishPlugins);
+            } catch (Throwable error) {
+                showToast("无法启用音源插件：" + safeMessage(error));
+            }
+        });
+    }
+
+    public void requestSourcePluginRemoval(String pluginId) {
+        PluginRegistry.Entry entry = pluginRegistry.get(pluginId);
+        if (entry == null || Boolean.TRUE.equals(pluginInstallBusy.peek())) return;
+        pendingPluginRemovalId.set(entry.id);
+        pendingPluginRemovalName.set(entry.name);
+        pluginRemovalPromptRevision.set(pluginRemovalPromptRevision.peek() + 1L);
+    }
+
+    public void cancelSourcePluginRemoval() {
+        pendingPluginRemovalId.set("");
+        pendingPluginRemovalName.set("");
+    }
+
+    public void confirmSourcePluginRemoval() {
+        final String pluginId = pendingPluginRemovalId.peek();
+        if (pluginId == null || pluginId.isEmpty()
+                || Boolean.TRUE.equals(pluginInstallBusy.peek())) return;
+        pluginInstallBusy.set(true);
+        worker.submit(() -> {
+            try {
+                pluginManager.remove(pluginId);
+                post(() -> {
+                    cancelSourcePluginRemoval();
+                    pluginInstallBusy.set(false);
+                    publishPlugins();
+                });
+                showToast("音源插件已移除");
+            } catch (Throwable error) {
+                post(() -> pluginInstallBusy.set(false));
+                showToast("移除插件失败：" + safeMessage(error));
+            }
+        });
+    }
+
+    private void publishPlugins() {
+        String primary = pluginRegistry.primaryProvider();
+        List<PluginRow> rows = new ArrayList<>();
+        for (PluginRegistry.Entry entry : pluginRegistry.entries()) {
+            PluginRow row = new PluginRow();
+            row.id = entry.id;
+            row.name = entry.name;
+            row.version = entry.activeVersion;
+            row.enabled = entry.enabled;
+            row.primary = entry.id.equals(primary);
+            row.signed = entry.signed;
+            row.permissions = String.join(" · ", entry.grantedPermissions);
+            rows.add(row);
+        }
+        sourcePlugins.set(rows);
+        pluginUiContributions.set(pluginManager.uiContributions());
+        publishCatalogInstalledState();
+        primarySourcePlugin.set(primary);
+        boolean sourceReady = primaryProvider() != null;
+        sourceContentActive.set(sourceReady);
+        sourceSetupRequired.set(!sourceReady);
+        if (sourceReady) pluginSetupState.acknowledge();
+        sourceSetupPending.set(!sourceReady && !pluginSetupState.acknowledged());
+        sourcePlaylistMutationAvailable.set(primaryProviderWith(
+                ProviderCapability.PLAYLIST_MUTATION) != null);
+        sourceHeartRecommendationAvailable.set(primaryProviderWith(
+                ProviderCapability.HEART_RECOMMENDATION) != null);
+        pluginLikedSet.clear();
+        currentLiked.set(false);
+        routeInstalledPluginTracks();
+        refreshPrimaryPluginLoginMetadata();
+        if (!primary.isEmpty()) loadHome();
+    }
+
+    /** Open the app-wide source setup flow from Home or any future empty state. */
+    public void requestSourceSetup() {
+        if (pluginCatalogEntries.peek() == null || pluginCatalogEntries.peek().isEmpty()) {
+            refreshPluginCatalog();
+        }
+        sourceSetupRevision.set(sourceSetupRevision.peek() + 1L);
+    }
+
+    /** Navigate to one host-owned plugin settings page. The page may represent
+     * either an installed plugin or an entry that is only available in catalog. */
+    public void requestPluginSettings(String pluginId) {
+        if (pluginId == null || pluginId.trim().isEmpty()) return;
+        pluginSettingsId.set(pluginId.trim());
+        pluginSettingsRevision.set(pluginSettingsRevision.peek() + 1L);
+    }
+
+    /** Provider-neutral services for plugin-owned app features. Protocol state,
+     * room semantics and synchronization policy deliberately stay in JavaScript. */
+    private CompletableFuture<Object> pluginAppCall(String pluginId, String method,
+                                                     Map<String, Object> arguments) {
+        Map<String, Object> args = arguments != null ? arguments : Collections.emptyMap();
+        switch (method) {
+            case "playback.read":
+                return onMainResult(() -> pluginPlaybackSnapshot(pluginId));
+            case "playback.play":
+                return onMainResult(() -> { mediaResume(); return Boolean.TRUE; });
+            case "playback.pause":
+                return onMainResult(() -> { mediaPause(); return Boolean.TRUE; });
+            case "playback.seek": {
+                long target = boundedPluginLong(args.get("positionMs"), 0L, 31L * 24L * 60L * 60L * 1000L);
+                return onMainResult(() -> { mediaSeek(target); return Boolean.TRUE; });
+            }
+            case "playback.select": {
+                String songId = pluginSongId(pluginId, args.get("songId"));
+                long target = boundedPluginLong(args.get("positionMs"), 0L,
+                        31L * 24L * 60L * 60L * 1000L);
+                boolean shouldPlay = !Boolean.FALSE.equals(args.get("playing"));
+                return onMainResult(() -> selectPluginTrack(songId, target, shouldPlay));
+            }
+            case "playback.next":
+                return onMainResult(() -> { performAutoAdvance(); return Boolean.TRUE; });
+            case "playback.blockAutoAdvance": {
+                boolean block = Boolean.TRUE.equals(args.get("blocked"));
+                return onMainResult(() -> {
+                    if (block) pluginAutoAdvanceBlocker = pluginId;
+                    else if (pluginId.equals(pluginAutoAdvanceBlocker)) {
+                        pluginAutoAdvanceBlocker = "";
+                        if (pendingNaturalEnd && !queue.isEmpty()) performAutoAdvance();
+                    }
+                    return Boolean.TRUE;
+                });
+            }
+            case "queue.replace": {
+                List<Song> songs = pluginProviders.validateSongs(pluginId, args.get("songs"));
+                String songId = pluginSongId(pluginId, args.get("currentSongId"));
+                long target = boundedPluginLong(args.get("positionMs"), 0L,
+                        31L * 24L * 60L * 60L * 1000L);
+                boolean shouldPlay = !Boolean.FALSE.equals(args.get("playing"));
+                return onMainResult(() -> replacePluginQueue(songs, songId, target, shouldPlay));
+            }
+            case "notifications.toast":
+                showToast(pluginText(args.get("message"), 500));
+                return CompletableFuture.completedFuture(Boolean.TRUE);
+            case "clipboard.write": {
+                String text = pluginText(args.get("text"), 16 * 1024);
+                java.util.function.Consumer<String> sink = clipboard;
+                if (sink == null) return failedPluginCall("clipboard is unavailable");
+                sink.accept(text);
+                return CompletableFuture.completedFuture(Boolean.TRUE);
+            }
+            default:
+                return failedPluginCall("host method is not implemented: " + method);
+        }
+    }
+
+    private Map<String, Object> pluginPlaybackSnapshot(String pluginId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        Track current = currentTrack();
+        String currentId = current != null && pluginId.equals(providerOf(current))
+                ? nativeSongId(current) : "";
+        List<String> ids = new ArrayList<>();
+        boolean queueOwned = true;
+        for (Track track : queue) {
+            if (!pluginId.equals(providerOf(track))) { queueOwned = false; break; }
+            ids.add(nativeSongId(track));
+        }
+        result.put("currentSongId", currentId);
+        result.put("queueSongIds", queueOwned ? ids : Collections.emptyList());
+        result.put("positionMs", Math.max(0L, backend.position()));
+        result.put("durationMs", Math.max(0L, backend.duration()));
+        result.put("playing", playingIntent);
+        result.put("transitioning", pendingPluginDesiredPlaying != null);
+        result.put("seekRevision", seekRevision.get());
+        result.put("endRevision", playbackEndRevision.get());
+        return result;
+    }
+
+    private Boolean selectPluginTrack(String canonicalId, long target, boolean shouldPlay) {
+        int targetIndex = -1;
+        for (int i = 0; i < queue.size(); i++) {
+            if (canonicalId.equals(queue.get(i).canonicalId())) { targetIndex = i; break; }
+        }
+        if (targetIndex < 0) throw new IllegalArgumentException("target song is not in the queue");
+        Track current = currentTrack();
+        if (current == null || !canonicalId.equals(current.canonicalId())) {
+            pendingPluginDesiredPlaying = shouldPlay;
+            pendingPluginTargetMediaId = canonicalId;
+            pendingResumeMs = target;
+            pendingResumeIndex = targetIndex;
+            playAt(targetIndex);
+        } else {
+            mediaSeek(target);
+            if (shouldPlay) mediaResume(); else mediaPause();
+        }
+        return Boolean.TRUE;
+    }
+
+    private Boolean replacePluginQueue(List<Song> songs, String canonicalId, long target,
+                                       boolean shouldPlay) {
+        List<Track> tracks = new ArrayList<>(songs.size());
+        for (Song song : songs) tracks.add(toTrackPlugin(song));
+        int targetIndex = -1;
+        for (int i = 0; i < tracks.size(); i++) {
+            if (canonicalId.equals(tracks.get(i).canonicalId())) { targetIndex = i; break; }
+        }
+        if (targetIndex < 0) throw new IllegalArgumentException("target song is not in replacement queue");
+        queue.clear();
+        queue.addAll(tracks);
+        currentQueuePlaylistId = 0L;
+        currentQueueMediaPlaylistId = "";
+        post(() -> queueTracks.set(new ArrayList<>(queue)));
+        return selectPluginTrack(canonicalId, target, shouldPlay);
+    }
+
+    private static String nativeSongId(Track track) {
+        try { return MediaId.parse(track.canonicalId()).nativeId(); }
+        catch (IllegalArgumentException ignored) { return ""; }
+    }
+
+    private static String pluginSongId(String pluginId, Object raw) {
+        String value = pluginText(raw, 2048);
+        if (value.isEmpty()) return "";
+        if (value.indexOf(':') >= 0) {
+            MediaId id = MediaId.parse(value).requireKind(dev.t1m3.qplayer.media.MediaKind.SONG);
+            if (!pluginId.equals(id.provider())) throw new IllegalArgumentException("song provider mismatch");
+            return id.toString();
+        }
+        return MediaId.of(pluginId, dev.t1m3.qplayer.media.MediaKind.SONG, value).toString();
+    }
+
+    private static String pluginText(Object raw, int limit) {
+        String value = raw == null ? "" : String.valueOf(raw);
+        if (value.length() > limit) throw new IllegalArgumentException("plugin text is too long");
+        return value;
+    }
+
+    private static long boundedPluginLong(Object raw, long min, long max) {
+        if (!(raw instanceof Number)) return min;
+        long value = ((Number) raw).longValue();
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private CompletableFuture<Object> onMainResult(java.util.concurrent.Callable<Object> action) {
+        CompletableFuture<Object> future = new CompletableFuture<>();
+        onMain(() -> {
+            try { future.complete(action.call()); }
+            catch (Throwable error) { future.completeExceptionally(error); }
+        });
+        return future;
+    }
+
+    private static CompletableFuture<Object> failedPluginCall(String message) {
+        CompletableFuture<Object> future = new CompletableFuture<>();
+        future.completeExceptionally(new UnsupportedOperationException(message));
+        return future;
+    }
+
+    private void pluginAppUnavailable(String pluginId) {
+        onMain(() -> {
+            if (!pluginId.equals(pluginAutoAdvanceBlocker)) return;
+            pluginAutoAdvanceBlocker = "";
+            if (!appShuttingDown && pendingNaturalEnd && !queue.isEmpty()) performAutoAdvance();
+        });
+    }
+
+    /** Remember an explicit local-only choice so onboarding is not forced again on
+     * every launch. Home keeps a persistent setup button for changing that choice. */
+    public void dismissSourceSetup() {
+        pluginSetupState.acknowledge();
+        sourceSetupPending.set(false);
+    }
+
+    private boolean detectLegacySourceMigration() {
+        if (netease.hasStoredLegacyCredentials()) return true;
+        for (Track track : queue) if (isLegacyOnlineTrack(track)) return true;
+        for (Track track : customPlaylist) if (isLegacyOnlineTrack(track)) return true;
+        return false;
+    }
+
+    private static boolean isLegacyOnlineTrack(Track track) {
+        if (track == null || track.source == Track.Source.LOCAL) return false;
+        try {
+            return "netease".equals(MediaId.parse(track.canonicalId()).provider());
+        } catch (IllegalArgumentException ignored) {
+            return track.source == Track.Source.NETEASE;
+        }
+    }
+
+    private void publishCatalogInstalledState() {
+        List<PluginCatalogEntry> current = pluginCatalogEntries.peek();
+        if (current == null || current.isEmpty()) return;
+        markCatalogInstalledState(current);
+        pluginCatalogEntries.set(new ArrayList<>(current));
+        publishPluginUpdatePrompt();
+    }
+
+    private void markCatalogInstalledState(List<PluginCatalogEntry> entries) {
+        Map<String, PluginRegistry.Entry> installed = new HashMap<>();
+        for (PluginRegistry.Entry value : pluginRegistry.entries()) installed.put(value.id, value);
+        for (PluginCatalogEntry entry : entries) {
+            PluginRegistry.Entry current = installed.get(entry.id);
+            entry.installed = current != null;
+            entry.installedVersion = current != null ? current.activeVersion : "";
+            entry.updateAvailable = current != null
+                    && PluginCompatibility.compare(entry.version, current.activeVersion) > 0;
+        }
+    }
+
+    // --- Plugin update prompt ----------------------------------------------
+    // A newer plugin release is announced with a dialog, but never on top of the
+    // app's own update dialog: a QPlayer release can change what a plugin needs
+    // (minHostVersion), so updating the app first is the order that cannot get
+    // stuck, and two stacked update dialogs on startup is the collision this
+    // exists to avoid. QML re-checks on the app dialog's close, so whichever
+    // check finishes first, the plugin prompt still gets its turn.
+
+    /** True while a plugin update prompt is waiting to be shown or is showing. */
+    public final Property<Boolean> pluginUpdateAvailable = new Property<>(false);
+    public final Property<String> pluginUpdateId = new Property<>("");
+    public final Property<String> pluginUpdateName = new Property<>("");
+    public final Property<String> pluginUpdateVersion = new Property<>("");
+    public final Property<String> pluginUpdateInstalledVersion = new Property<>("");
+
+    /** id@version already offered in this session, so a periodic catalog refresh
+     *  does not re-prompt for something the user dismissed. */
+    private final java.util.Set<String> promptedPluginUpdates =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** QML calls this once the prompt has been accepted or dismissed. */
+    public void acknowledgePluginUpdate() {
+        pluginUpdateAvailable.set(false);
+        pluginUpdateId.set("");
+        pluginUpdateName.set("");
+        pluginUpdateVersion.set("");
+        pluginUpdateInstalledVersion.set("");
+        // Another installed plugin may also be out of date; offer the next one.
+        publishPluginUpdatePrompt();
+    }
+
+    /**
+     * QML calls this when the app updater pre-empts a plugin prompt that was
+     * already on screen. Unlike {@link #acknowledgePluginUpdate()} this does not
+     * consume the offer: the key is released so the same plugin is proposed
+     * again once the app dialog is gone.
+     */
+    public void deferPluginUpdate() {
+        promptedPluginUpdates.remove(pluginUpdateId.peek() + "@" + pluginUpdateVersion.peek());
+        pluginUpdateAvailable.set(false);
+    }
+
+    /** QML calls this when the app-update dialog closes, releasing the hold. */
+    public void appUpdatePromptClosed() {
+        appUpdatePromptDismissed = true;
+        publishPluginUpdatePrompt();
+    }
+
+    private volatile boolean appUpdatePromptDismissed;
+
+    private void publishPluginUpdatePrompt() {
+        if (Boolean.TRUE.equals(pluginUpdateAvailable.peek())) return;
+        if (Boolean.TRUE.equals(updateAvailable.peek()) && !appUpdatePromptDismissed) return;
+        List<PluginCatalogEntry> entries = pluginCatalogEntries.peek();
+        if (entries == null) return;
+        for (PluginCatalogEntry entry : entries) {
+            if (!entry.updateAvailable) continue;
+            if (!promptedPluginUpdates.add(entry.id + "@" + entry.version)) continue;
+            pluginUpdateId.set(entry.id);
+            pluginUpdateName.set(entry.name);
+            pluginUpdateVersion.set(entry.version);
+            pluginUpdateInstalledVersion.set(entry.installedVersion);
+            pluginUpdateAvailable.set(true);
+            return;
+        }
+    }
+
+    public void refreshPluginCatalog() {
+        if (Boolean.TRUE.equals(pluginCatalogLoading.peek())) return;
+        pluginCatalogLoading.set(true);
+        worker.submit(() -> {
+            try {
+                List<PluginCatalogEntry> entries = pluginCatalog.loadLatest(updateMirror);
+                markCatalogInstalledState(entries);
+                final List<PluginCatalogEntry> publishedEntries = entries;
+                post(() -> {
+                    pluginCatalogEntries.set(publishedEntries);
+                    pluginCatalogLoading.set(false);
+                    publishPluginUpdatePrompt();
+                });
+            } catch (Throwable error) {
+                post(() -> pluginCatalogLoading.set(false));
+                Logger.warn("plugin release lookup failed: {}", error.getMessage());
+                showToast("获取插件列表失败");
+            }
+        });
+    }
+
+    public void installCatalogPlugin(String pluginId) {
+        if (pluginId == null || pluginId.isEmpty() || Boolean.TRUE.equals(pluginInstallBusy.peek())) return;
+        PluginCatalogEntry selected = null;
+        for (PluginCatalogEntry entry : pluginCatalogEntries.peek()) {
+            if (pluginId.equals(entry.id)) { selected = entry; break; }
+        }
+        if (selected == null) { showToast("插件列表中不存在该项目"); return; }
+        final PluginCatalogEntry entry = selected;
+        pluginInstallBusy.set(true);
+        worker.submit(() -> {
+            try {
+                VerifiedPluginPackage verified = pluginCatalog.downloadAndVerify(
+                        entry, GitHubDownloadUrls.candidates(entry.downloadUrl, updateMirror));
+                pendingPluginPackage = verified;
+                pendingPluginPackageTemporary = true;
+                post(() -> {
+                    pendingPluginName.set(verified.manifest().name);
+                    pendingPluginId.set(verified.manifest().id);
+                    pendingPluginVersion.set(verified.manifest().version);
+                    pendingPluginPermissions.set(verified.manifest().permissions.isEmpty()
+                            ? "无额外权限" : String.join("、", verified.manifest().permissions));
+                    pendingPluginTrusted.set(true);
+                    pluginInstallBusy.set(false);
+                    pluginInstallPromptRevision.set(pluginInstallPromptRevision.peek() + 1L);
+                });
+            } catch (Throwable error) {
+                post(() -> pluginInstallBusy.set(false));
+                showToast("下载插件失败：" + safeMessage(error));
+            }
+        });
+    }
+
+    /** Delayed, non-destructive legacy migration: old queue records already carry
+     * canonical ids after schema-v2 loading, but remain on their compatibility
+     * route until a matching provider is actually installed and enabled. Once it
+     * is available, route them through the plugin without rewriting or deleting
+     * the old state file first. The next normal atomic save records PLUGIN. */
+    private void routeInstalledPluginTracks() {
+        boolean queueChanged = false;
+        for (Track track : queue) queueChanged |= routeInstalledPluginTrack(track);
+        boolean customChanged = false;
+        for (Track track : customPlaylist) customChanged |= routeInstalledPluginTrack(track);
+        if (queueChanged) {
+            queueTracks.set(new ArrayList<>(queue));
+            worker.submit(this::saveQueue);
+        }
+        if (customChanged) {
+            customPlaylistTracks.set(new ArrayList<>(customPlaylist));
+            worker.submit(this::saveCustomPlaylist);
+        }
+    }
+
+    private boolean routeInstalledPluginTrack(Track track) {
+        if (track == null || track.source == Track.Source.LOCAL) return false;
+        String id = track.canonicalId();
+        try {
+            String provider = MediaId.parse(id).requireKind(
+                    dev.t1m3.qplayer.media.MediaKind.SONG).provider();
+            if (pluginHasCapability(provider, ProviderCapability.RESOLVE_STREAM)
+                    && track.source != Track.Source.PLUGIN) {
+                track.source = Track.Source.PLUGIN;
+                track.streamUrl = null;
+                track.streamHeaders.clear();
+                return true;
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return false;
+    }
+
+    private PluginManifest primaryProvider() {
+        String primary = pluginRegistry.primaryProvider();
+        if (primary == null || primary.isEmpty()) return null;
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (primary.equals(manifest.id)) return manifest;
+        }
+        return null;
+    }
+
+    private PluginManifest primaryProviderWith(ProviderCapability capability) {
+        PluginManifest provider = primaryProvider();
+        return provider != null && provider.capabilitySet().contains(capability) ? provider : null;
+    }
+
+    private void refreshPrimaryPluginLoginMetadata() {
+        String primary = pluginRegistry.primaryProvider();
+        PluginManifest selected = null;
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (primary.equals(manifest.id)
+                    && manifest.capabilitySet().contains(ProviderCapability.LOGIN)) {
+                selected = manifest;
+                break;
+            }
+        }
+        if (selected == null) {
+            pendingPluginLoginProvider = "";
+            pluginQrMethodId = "";
+            pluginWebMethodId = "";
+            pluginCredentialMethodId = "";
+            loginProviderName.set("音源账号");
+            pluginLoginActive.set(false);
+            loginMethods.set(Collections.<LoginMethod>emptyList());
+            pluginQrLoginAvailable.set(false);
+            pluginCredentialLoginAvailable.set(false);
+            webLoginAvailable.set(false);
+            return;
+        }
+        final PluginManifest provider = selected;
+        loginProviderName.set(provider.name);
+        pluginLoginActive.set(true);
+        pluginAccounts.methods(provider.id).whenComplete((methods, error) -> post(() -> {
+            if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+            if (error != null) {
+                Logger.warn("plugin {} login metadata failed: {}", provider.id, safeMessage(error));
+                return;
+            }
+            LoginMethod qr = null, web = null, credential = null;
+            for (LoginMethod method : methods) {
+                if ("qr".equals(method.type) && qr == null) qr = method;
+                else if ("web".equals(method.type) && web == null) web = method;
+                else if ("credential".equals(method.type) && credential == null) credential = method;
+            }
+            pendingPluginLoginProvider = provider.id;
+            pluginQrMethodId = qr != null ? qr.id : "";
+            pluginWebMethodId = web != null ? web.id : "";
+            pluginCredentialMethodId = credential != null ? credential.id : "";
+            activeWebLoginMethod = web;
+            loginProviderName.set(provider.name);
+            loginMethods.set(methods);
+            pluginQrLoginAvailable.set(qr != null);
+            pluginCredentialLoginAvailable.set(credential != null);
+            webLoginAvailable.set(web != null && webLoginLauncher != null);
+            if (web != null && !web.instructions.isEmpty()) {
+                loginWebInstructions.set(web.instructions);
+            }
+            if (credential != null) {
+                if (!credential.instructions.isEmpty()) {
+                    loginCredentialInstructions.set(credential.instructions);
+                }
+                loginCredentialLabel.set(credential.credentialLabel);
+            }
+            refreshPluginAccount(provider.id, null);
+            migrateLegacyCredentialsIfAvailable(provider.id);
+        }));
+    }
+
+    private void migrateLegacyCredentialsIfAvailable(String provider) {
+        if (legacyCredentialMigrationAttempted || !"netease".equals(provider)
+                || pluginCredentialMethodId.isEmpty()) return;
+        String credential = netease.legacyCookieHeaderForMigration();
+        if (credential == null || credential.isEmpty()) return;
+        legacyCredentialMigrationAttempted = true;
+        final long generation = legacyCredentialMigrationGeneration.incrementAndGet();
+        pluginAccounts.submit(provider, pluginCredentialMethodId, credential)
+                .whenComplete((challenge, error) -> post(() -> {
+                    if (generation != legacyCredentialMigrationGeneration.get()) {
+                        // Logout won the race. If the delayed submit nevertheless
+                        // persisted the credential, remove it again instead of
+                        // resurrecting the account after the user logged out.
+                        if (error == null && challenge != null && challenge.account != null
+                                && challenge.account.loggedIn) {
+                            pluginAccounts.logout(provider);
+                        }
+                        pendingCredentialEncryptedNotice = false;
+                        netease.logout();
+                        return;
+                    }
+                    if (error != null || challenge == null || challenge.account == null
+                            || !challenge.account.loggedIn) {
+                        pendingCredentialEncryptedNotice = false;
+                        legacyCredentialMigrationAttempted = false;
+                        Logger.warn("legacy credential migration to plugin failed: {}",
+                                safeMessage(error));
+                        return;
+                    }
+                    // The source plugin has persisted and verified the credential;
+                    // keeping the old envelope would silently log the user back in
+                    // after a later plugin logout.
+                    netease.logout();
+                    publishPluginAccount(provider, challenge.account);
+                    Logger.info("legacy source credential migrated and removed from core storage");
+                    showToast("登录凭据已迁移到音源插件");
+                }));
+    }
+
+    @FunctionalInterface
+    public interface PluginPicker { void pick(); }
+
+    public void setPluginPicker(PluginPicker picker) { this.pluginPicker = picker; }
+
+    // --- Plugin dialogs -----------------------------------------------------
+    // A plugin contributes no QML. It returns a validated description from its
+    // ui.<contribution> handler and QPlayer renders it with md3.Core, so the
+    // dialog follows the app theme and no third-party document is ever loaded.
+    // Every action (open, refresh, a button id) re-invokes the handler and
+    // replaces the description — the plugin owns the state, the host owns the
+    // pixels.
+
+    /** True while a plugin dialog is on screen. */
+    public final Property<Boolean> pluginDialogOpen = new Property<>(false);
+    /** Canonical JSON from {@link PluginUiDescription}; "" before the first reply. */
+    public final Property<String> pluginDialogJson = new Property<>("");
+    /** True while a user-initiated action is in flight (background refreshes do not set it). */
+    public final Property<Boolean> pluginDialogBusy = new Property<>(false);
+    public final Property<String> pluginDialogError = new Property<>("");
+    /** Title shown before the plugin's first description arrives. */
+    public final Property<String> pluginDialogTitle = new Property<>("");
+
+    private volatile String dialogPluginId = "";
+    private volatile String dialogContributionId = "";
+
+    public void requestPluginUi(String pluginId, String contributionId) {
+        if (pluginId == null || contributionId == null) return;
+        String label = contributionId;
+        for (PluginUiContributionRow row : pluginUiContributions.peek()) {
+            if (row.pluginId.equals(pluginId) && row.id.equals(contributionId)) {
+                label = row.label;
+                break;
+            }
+        }
+        dialogPluginId = pluginId;
+        dialogContributionId = contributionId;
+        pluginDialogTitle.set(label);
+        pluginDialogJson.set("");
+        pluginDialogError.set("");
+        pluginDialogBusy.set(false);
+        pluginDialogOpen.set(true);
+        invokePluginDialog("open", Collections.<String, Object>emptyMap(), true);
+    }
+
+    /** A button press: {@code actionId} is the button's own id. */
+    public void pluginDialogAction(String actionId, String inputsJson) {
+        if (actionId == null || actionId.isEmpty()) return;
+        Map<String, Object> inputs;
+        try {
+            Map<String, Object> parsed = new Gson().fromJson(
+                    inputsJson == null || inputsJson.isEmpty() ? "{}" : inputsJson,
+                    new com.google.gson.reflect.TypeToken<java.util.LinkedHashMap<String, Object>>() {}.getType());
+            inputs = parsed != null ? parsed : Collections.<String, Object>emptyMap();
+        } catch (RuntimeException error) {
+            inputs = Collections.emptyMap();
+        }
+        invokePluginDialog(actionId, inputs, true);
+    }
+
+    /** Driven by the description's refreshMs; never blocks the buttons. */
+    public void pluginDialogRefresh() {
+        if (Boolean.TRUE.equals(pluginDialogBusy.peek())) return;
+        invokePluginDialog("refresh", Collections.<String, Object>emptyMap(), false);
+    }
+
+    public void closePluginDialog() {
+        dialogPluginId = "";
+        dialogContributionId = "";
+        pluginDialogOpen.set(false);
+        pluginDialogJson.set("");
+        pluginDialogError.set("");
+        pluginDialogBusy.set(false);
+    }
+
+    private void invokePluginDialog(String action, Map<String, Object> inputs, boolean showBusy) {
+        final String pluginId = dialogPluginId;
+        final String contributionId = dialogContributionId;
+        if (pluginId.isEmpty() || contributionId.isEmpty()) return;
+        if (showBusy) pluginDialogBusy.set(true);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("inputs", inputs);
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("action", action);
+        arguments.put("payload", payload);
+        pluginManager.invoke(pluginId, "ui." + contributionId, arguments)
+                .whenComplete((value, failure) -> post(() -> {
+                    // A reply that arrives after the user closed or switched dialogs
+                    // must not repaint the new one.
+                    if (!pluginId.equals(dialogPluginId)
+                            || !contributionId.equals(dialogContributionId)) return;
+                    if (showBusy) pluginDialogBusy.set(false);
+                    if (failure != null) {
+                        pluginDialogError.set(safeMessage(failure));
+                        return;
+                    }
+                    try {
+                        pluginDialogJson.set(PluginUiDescription.normalize(value));
+                        pluginDialogError.set("");
+                    } catch (RuntimeException error) {
+                        pluginDialogError.set(safeMessage(error));
+                    }
+                }));
+    }
+
+    public void requestPluginImport() {
+        PluginPicker picker = pluginPicker;
+        if (picker == null) {
+            showToast("当前平台暂不支持选择插件包");
+            return;
+        }
+        picker.pick();
+    }
+
+    /** Inspect on a worker before QML presents the mandatory code-execution warning. */
+    public void inspectPluginPackage(String path) {
+        inspectPluginPackage(path, false);
+    }
+
+    /** Host-only variant for a package copied out of a content URI. */
+    public void inspectTemporaryPluginPackage(String path) {
+        inspectPluginPackage(path, true);
+    }
+
+    private void inspectPluginPackage(String path, boolean deleteAfterInspection) {
+        if (path == null || path.trim().isEmpty()) return;
+        post(() -> pluginInstallBusy.set(true));
+        worker.submit(() -> {
+            try {
+                VerifiedPluginPackage verified = pluginVerifier.verify(
+                        java.nio.file.Paths.get(path), null, true);
+                pendingPluginPackage = verified;
+                pendingPluginPackageTemporary = deleteAfterInspection;
+                String permissions = verified.manifest().permissions.isEmpty()
+                        ? "无额外权限"
+                        : String.join("、", verified.manifest().permissions);
+                post(() -> {
+                    pendingPluginName.set(verified.manifest().name);
+                    pendingPluginId.set(verified.manifest().id);
+                    pendingPluginVersion.set(verified.manifest().version);
+                    pendingPluginPermissions.set(permissions);
+                    pendingPluginTrusted.set(verified.signed());
+                    pluginInstallBusy.set(false);
+                    pluginInstallPromptRevision.set(pluginInstallPromptRevision.peek() + 1L);
+                });
+            } catch (Throwable error) {
+                pendingPluginPackage = null;
+                post(() -> pluginInstallBusy.set(false));
+                showToast("插件包无效：" + error.getMessage());
+            } finally {
+                if (deleteAfterInspection && pendingPluginPackage == null) {
+                    try { java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(path)); }
+                    catch (java.io.IOException ignored) {}
+                }
+            }
+        });
+    }
+
+    /** Called only after the user accepts the non-dismissable warning dialog. */
+    public void confirmPendingPluginInstall() {
+        final VerifiedPluginPackage verified = pendingPluginPackage;
+        if (verified == null || Boolean.TRUE.equals(pluginInstallBusy.peek())) return;
+        pluginInstallBusy.set(true);
+        worker.submit(() -> {
+            try {
+                Set<PluginPermission> grants = verified.manifest().permissionSet();
+                pluginManager.installAndEnable(pluginInstaller, verified, grants);
+                pendingPluginPackage = null;
+                post(() -> {
+                    pluginInstallBusy.set(false);
+                    publishPlugins();
+                });
+                showToast("插件已安装：" + verified.manifest().name);
+            } catch (Throwable error) {
+                pendingPluginPackage = null;
+                post(() -> pluginInstallBusy.set(false));
+                showToast("插件安装失败：" + error.getMessage());
+            } finally {
+                if (pendingPluginPackageTemporary) {
+                    try { java.nio.file.Files.deleteIfExists(verified.file()); }
+                    catch (java.io.IOException ignored) {}
+                    pendingPluginPackageTemporary = false;
+                }
+            }
+        });
+    }
+
+    public void cancelPendingPluginInstall() {
+        VerifiedPluginPackage previous = pendingPluginPackage;
+        pendingPluginPackage = null;
+        if (pendingPluginPackageTemporary && previous != null) {
+            try { java.nio.file.Files.deleteIfExists(previous.file()); }
+            catch (java.io.IOException ignored) {}
+        }
+        pendingPluginPackageTemporary = false;
+        pendingPluginName.set("");
+        pendingPluginId.set("");
+        pendingPluginVersion.set("");
+        pendingPluginPermissions.set("");
+        pendingPluginTrusted.set(false);
+    }
+
     private void showCredentialNotice(NeteaseClient.CredentialEvent event) {
+        if (event == NeteaseClient.CredentialEvent.ENCRYPTED) {
+            pendingCredentialEncryptedNotice = true;
+            return;
+        }
+        pendingCredentialEncryptedNotice = false;
         final int type;
-        if (event == NeteaseClient.CredentialEvent.ENCRYPTED) type = 1;
-        else if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) type = 2;
+        if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) type = 2;
         else type = 3;
         post(() -> {
-            if (event == NeteaseClient.CredentialEvent.ENCRYPTED) {
-                credentialOwnerOnlyFallback.set(false);
-            } else if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) {
+            if (event == NeteaseClient.CredentialEvent.KEYSTORE_FALLBACK) {
                 credentialOwnerOnlyFallback.set(true);
             }
             credentialNoticeType.set(type);
@@ -808,19 +1703,46 @@ public final class PlayerController {
         });
     }
 
+    private void showPluginCredentialNotice(PluginCredentialVault.CredentialEvent event) {
+        if (event == PluginCredentialVault.CredentialEvent.ENCRYPTED) {
+            pendingCredentialEncryptedNotice = true;
+            return;
+        }
+        pendingCredentialEncryptedNotice = false;
+        final int type;
+        if (event == PluginCredentialVault.CredentialEvent.KEYSTORE_FALLBACK) type = 2;
+        else type = 3;
+        post(() -> {
+            if (event == PluginCredentialVault.CredentialEvent.KEYSTORE_FALLBACK) {
+                credentialOwnerOnlyFallback.set(true);
+            }
+            credentialNoticeType.set(type);
+            credentialNoticeRevision.set(credentialNoticeRevision.peek() + 1L);
+        });
+    }
+
+    private void publishPendingCredentialEncryptedNotice() {
+        if (!pendingCredentialEncryptedNotice) return;
+        pendingCredentialEncryptedNotice = false;
+        credentialOwnerOnlyFallback.set(false);
+        credentialNoticeType.set(1);
+        credentialNoticeRevision.set(credentialNoticeRevision.peek() + 1L);
+    }
+
     /** Retry a potentially interactive key-store unlock without blocking rendering. */
     public void retryCredentialUnlock() {
         showToast("正在等待系统密钥库解锁…");
         worker.submit(() -> {
-            if (netease.retryCredentialLoad() && netease.isLoggedIn()) {
-                refreshLogin();
+            if (pluginHostApi.retryCredentialUnlock()) {
+                String provider = pluginRegistry.primaryProvider();
+                if (provider != null && !provider.isEmpty()) refreshPluginAccount(provider, null);
             }
         });
     }
 
     /** Abandon the inaccessible envelope and persistently use owner-only encryption. */
     public boolean fallbackCredentialsToOwnerOnly() {
-        if (!netease.fallbackUnreadableCredentials()) return false;
+        if (!pluginHostApi.fallbackUnreadableCredentials()) return false;
         credentialOwnerOnlyFallback.set(true);
         clearAccountStateAfterCredentialReset();
         return true;
@@ -832,7 +1754,7 @@ public final class PlayerController {
         credentialReloginBusy = true;
         showToast("正在检查系统密钥库…");
         worker.submit(() -> {
-            boolean ready = netease.resetUnreadableCredentialsForPlatformLogin();
+            boolean ready = pluginHostApi.resetUnreadableCredentialsForPlatformLogin();
             post(() -> {
                 credentialReloginBusy = false;
                 if (ready) {
@@ -867,10 +1789,10 @@ public final class PlayerController {
         credentialProtectionBusy.set(true);
         showToast("正在等待系统密钥库…");
         worker.submit(() -> {
-            boolean enabled = netease.enableSystemCredentialProtection();
+            boolean enabled = pluginHostApi.enableSystemCredentialProtection();
             post(() -> {
                 credentialOwnerOnlyFallback.set(
-                        netease.usesOwnerOnlyCredentialProtection());
+                        pluginHostApi.usesOwnerOnlyCredentialProtection());
                 credentialProtectionBusy.set(false);
                 if (!enabled) showToast("未能启用系统加密，已保留普通加密");
             });
@@ -900,16 +1822,27 @@ public final class PlayerController {
         this.clipboard = sink;
     }
 
-    /** Install the shell's in-process system WebView login launcher. */
-    public void setWebLoginLauncher(Runnable launcher) {
-        this.webLoginLauncher = launcher;
-        webLoginAvailable.set(launcher != null);
+    public boolean allowRemoteQmlResource(String url) {
+        return pluginHostApi.allowsAnyReturnedUrl(url);
     }
 
-    /** Copy a shareable netease link for the song to the system clipboard. */
+    @FunctionalInterface
+    public interface WebLoginLauncher {
+        void launch(String loginUrl, String cookieUrl, String credentialCookieName,
+                    String providerName);
+    }
+
+    /** Install the shell's in-process system WebView login launcher. */
+    public void setWebLoginLauncher(WebLoginLauncher launcher) {
+        this.webLoginLauncher = launcher;
+        webLoginAvailable.set(launcher != null
+                && (pendingPluginLoginProvider.isEmpty() || !pluginWebMethodId.isEmpty()));
+    }
+
+    /** Copy a canonical reference for a delayed-migration numeric song row. */
     public void copySongLink(long songId) {
         if (songId == 0) return;
-        String url = "https://music.163.com/song?id=" + songId;
+        String url = "netease:song:" + songId;
         java.util.function.Consumer<String> c = clipboard;
         if (c != null) {
             c.accept(url);
@@ -919,10 +1852,10 @@ public final class PlayerController {
         }
     }
 
-    /** Copy a shareable netease playlist link to the system clipboard. */
+    /** Copy a canonical reference for a delayed-migration numeric playlist row. */
     public void copyPlaylistLink(long playlistId) {
         if (playlistId == 0) return;
-        String url = "https://music.163.com/playlist?id=" + playlistId;
+        String url = "netease:playlist:" + playlistId;
         java.util.function.Consumer<String> c = clipboard;
         if (c != null) {
             c.accept(url);
@@ -1039,9 +1972,13 @@ public final class PlayerController {
      *  source is armed at silence for a real fade-in, or at full gain when a manual
      *  next/previous explicitly suppresses that fade. */
     private void playBackend(String source, long startMs) {
+        playBackend(source, Collections.<String, String>emptyMap(), startMs);
+    }
+
+    private void playBackend(String source, Map<String, String> headers, long startMs) {
         float initialGain = fadeEnabled && !suppressNextFadeIn ? 0f : 1f;
         cancelFadeAtGain(initialGain);
-        backend.play(source, startMs);
+        backend.play(source, headers != null ? headers : Collections.<String, String>emptyMap(), startMs);
     }
 
     private void applyEffectiveVolume(float gain) {
@@ -1131,6 +2068,117 @@ public final class PlayerController {
         if (visible) lastLogVersion = -1;
     }
 
+    /** Hosts gate expensive per-frame diagnostics (Android's 120-frame summary)
+     *  on this so a closed overlay never hits logcat / the ring buffer. */
+    public boolean isLogVisible() {
+        return logVisible;
+    }
+
+    /** Host debug automation (adb broadcast). QML watches the revision and
+     *  applies {@link #debugRouteType}/{@link #debugRouteId}. */
+    public final Property<String> debugRouteType = new Property<>("");
+    public final Property<String> debugRouteId = new Property<>("");
+    public final Property<Long> debugRouteRevision = new Property<>(0L);
+
+    /** Drive navigation/playback from a host debug channel without tapping QML. */
+    public void debugCommand(String command, String arg) {
+        if (command == null || command.isEmpty()) return;
+        String cmd = command.trim().toLowerCase(java.util.Locale.ROOT);
+        final String a = arg != null ? arg : "";
+        switch (cmd) {
+            case "status":
+                Logger.info("debug {}", debugStatus());
+                break;
+            case "toggle":
+                toggle();
+                break;
+            case "next":
+                next();
+                break;
+            case "prev":
+                prev();
+                break;
+            case "play":
+                onMain(() -> playRecommendation(0));
+                break;
+            case "home":
+                loadHome();
+                pushDebugRoute("tab", "0");
+                break;
+            case "search":
+                if (!a.isEmpty()) search(a);
+                pushDebugRoute("tab", "1");
+                break;
+            case "library":
+                loadMyPlaylists();
+                pushDebugRoute("tab", "2");
+                break;
+            case "local":
+                pushDebugRoute("tab", "3");
+                break;
+            case "settings":
+                pushDebugRoute("settings", "");
+                break;
+            case "lyrics":
+                post(() -> setLyricsOpen(true));
+                pushDebugRoute("lyrics", "");
+                break;
+            case "lyrics-close":
+            case "close-lyrics":
+                post(() -> setLyricsOpen(false));
+                pushDebugRoute("pop", "");
+                break;
+            case "playlist":
+                openDebugPlaylist(a);
+                break;
+            case "back":
+                pressBack();
+                break;
+            default:
+                Logger.warn("unknown debug command {}", cmd);
+        }
+    }
+
+    public String debugStatus() {
+        List<Song> recs = sourceRecommendations.peek();
+        List<Playlist> playlists = sourceRecommendPlaylists.peek();
+        return "playing=" + playing.peek()
+                + " loggedIn=" + loggedIn.peek()
+                + " setup=" + sourceSetupRequired.peek()
+                + " title=" + title.peek()
+                + " queue=" + queue.size()
+                + " recs=" + (recs == null ? 0 : recs.size())
+                + " playlists=" + (playlists == null ? 0 : playlists.size())
+                + " homeLoading=" + homeLoading.peek()
+                + " lyrics=" + lyricsOpen.peek();
+    }
+
+    private void pushDebugRoute(String type, String id) {
+        post(() -> {
+            debugRouteType.set(type);
+            debugRouteId.set(id);
+            Long rev = debugRouteRevision.peek();
+            debugRouteRevision.set((rev == null ? 0L : rev) + 1L);
+        });
+    }
+
+    private void openDebugPlaylist(String arg) {
+        List<Playlist> playlists = sourceRecommendPlaylists.peek();
+        if (playlists == null || playlists.isEmpty()) {
+            playlists = sourceMyPlaylists.peek();
+        }
+        if (playlists == null || playlists.isEmpty()) {
+            Logger.warn("debug playlist: none loaded");
+            return;
+        }
+        int i = 0;
+        try { if (!arg.isEmpty()) i = Integer.parseInt(arg.trim()); } catch (NumberFormatException ignored) {}
+        if (i < 0 || i >= playlists.size()) i = 0;
+        String id = playlists.get(i).id;
+        openMediaPlaylist(id);
+        pushDebugRoute("detail", id);
+    }
+
     /** Publish a new lyric list and derive {@link #lyricsCoverOnly}. */
     private void applyLyrics(List<LyricLine> ly) {
         lyrics.set(ly);
@@ -1171,8 +2219,17 @@ public final class PlayerController {
         if (idx != lyricIndex.peek()) lyricIndex.set(idx);
     }
 
+    private volatile Runnable renderWake;
+
+    /** Android GLSurfaceView uses this to leave WHEN_DIRTY when a host task lands. */
+    public void setRenderWake(Runnable wake) {
+        this.renderWake = wake;
+    }
+
     private void post(Runnable r) {
         uiQueue.add(r);
+        Runnable wake = renderWake;
+        if (wake != null) wake.run();
     }
 
     public void clearLog() {
@@ -1181,6 +2238,15 @@ public final class PlayerController {
 
     public void setWideLayout(boolean wide) {
         wideLayout.set(wide);
+    }
+
+    /** Physical pixels per QML logical pixel, pushed by each shell (GLFW window
+     *  content scale on desktop, display density on Android). QML is authored in
+     *  logical units and qml4j does NOT scale Image.sourceSize by it, so anything
+     *  that decodes to a display size has to multiply by this itself or it decodes
+     *  at 1x and gets upscaled into a blurry draw -- see CoverImage.qml. */
+    public void setPixelRatio(double ratio) {
+        if (ratio > 0 && ratio != pixelRatio.peek()) pixelRatio.set(ratio);
     }
 
     /** Resolution to fetch/cache a grid-card cover at (playlist / album) --
@@ -1256,7 +2322,6 @@ public final class PlayerController {
         searchArtistResults.set(Collections.<NeteaseArtist>emptyList());
         searchResults.set(Collections.<NeteaseSong>emptyList());
         localSearchResults.set(Collections.<Track>emptyList());
-        customSearchResults.set(Collections.<CustomSong>emptyList());
         rebuildSearchRows();
     }
 
@@ -1299,14 +2364,7 @@ public final class PlayerController {
     /** gh-proxy.com prefix — the API check uses it (it's the one mirror that proxies
      *  api.github.com). */
     private static final String MIRROR_PREFIX = "https://gh-proxy.com/";
-    /** Download mirrors for the APK, fastest-first; the host tries them in order and
-     *  falls through to the next (then the direct url) when one is down or refuses.
-     *  Public instances come and go, so resilience matters more than any single one. */
-    private static final String[] DOWNLOAD_MIRRORS = {
-            "https://gh.ddlc.top/", "https://ghfast.top/", "https://gh-proxy.com/"
-    };
-
-    /** When true, the APK download url is routed through {@link #MIRROR_PREFIX}. */
+    /** When true, application and plugin GitHub downloads prefer proxy URLs. */
     private volatile boolean updateMirror = false;
 
     /** Toggle the GitHub download mirror (driven by the settings switch). */
@@ -1400,15 +2458,7 @@ public final class PlayerController {
     /** Build the ordered download urls: mirrors first (when enabled) then the direct
      *  github url, or direct-first when the mirror is off. Duplicates collapsed. */
     private String[] downloadCandidates(String apk) {
-        List<String> urls = new ArrayList<>();
-        if (updateMirror) {
-            for (String m : DOWNLOAD_MIRRORS) urls.add(m + apk);
-            urls.add(apk);
-        } else {
-            urls.add(apk);
-            for (String m : DOWNLOAD_MIRRORS) urls.add(m + apk);
-        }
-        return urls.toArray(new String[0]);
+        return GitHubDownloadUrls.candidates(apk, updateMirror);
     }
 
     /** Host injects the running app version (e.g. "0.5.2") for the update compare. */
@@ -1636,69 +2686,9 @@ public final class PlayerController {
      *  can re-queue it without touching the (render-thread) Property directly. */
     private final List<Track> cachedSongTracks = new ArrayList<>();
 
-    /** Cache a netease song to disk for offline replay (song long-press menu):
-     *  audio + thumbnail + full cover + lyrics, so a song cached without ever
-     *  being played is still fully offline-ready. No-op with a toast when already
-     *  cached; otherwise reuses the same url-resolution pipeline as playback
-     *  (official url, then unblock sources) on the worker thread, then downloads
-     *  everything through {@link #cacheSongAsync}. */
+    /** Compatibility entry for a pre-plugin numeric menu row. */
     public void cacheSong(long songId) {
-        if (songId == 0) {
-            showToast("无法缓存");
-            return;
-        }
-        if (diskCache.hasAudio(songId)) {
-            showToast("这首歌已缓存");
-            return;
-        }
-        Track t = findLiveTrack(songId);
-        if (t != null && t.streamUrl != null && !t.trial) {
-            cacheSongAsync(t, () -> showToast(diskCache.hasAudio(songId)
-                    ? "缓存完成" : "缓存失败"));
-            showToast("已开始缓存");
-            return;
-        }
-        final String title = t != null ? t.title : "";
-        final String artist = t != null ? t.artist : "";
-        final String album = t != null ? t.album : "";
-        final String cover = t != null ? t.coverUrl : "";
-        final long duration = t != null ? t.durationMs : 0;
-        final long artistId = t != null ? t.artistId : 0L;
-        final String artistIdsCsv = t != null ? t.artistIdsCsv : "";
-        final String artistNamesCsv = t != null ? t.artistNamesCsv : "";
-        worker.submit(() -> {
-            try {
-                NeteaseClient.UrlInfo info = netease.songUrlInfo(songId, playLevel);
-                String url = (info != null && !info.trial) ? info.url : null;
-                if (url == null && unblockEnabled) {
-                    url = SongUnblocker.resolve(songId, title, artist);
-                }
-                // 与真实播放一致：官方源被 VIP 限流时走换源，换源成功即缓存
-                // （只有两者都拿不到非试听 URL 才算失败）。
-                if (url == null) {
-                    showToast("无法缓存：仅可试听");
-                    return;
-                }
-                Track c = new Track();
-                c.source = Track.Source.NETEASE;
-                c.neteaseId = songId;
-                c.title = title;
-                c.artist = artist;
-                c.artistId = artistId;
-                c.artistIdsCsv = artistIdsCsv;
-                c.artistNamesCsv = artistNamesCsv;
-                c.album = album;
-                c.coverUrl = cover;
-                c.durationMs = duration;
-                c.streamUrl = url;
-                cacheSongAsync(c, () -> showToast(diskCache.hasAudio(songId)
-                        ? "缓存完成" : "缓存失败"));
-                showToast("已开始缓存");
-            } catch (Throwable e) {
-                Logger.warn("cache song {} failed: {}", songId, e.getMessage());
-                showToast("缓存失败");
-            }
-        });
+        showToast("旧音源条目无法联网缓存，请通过音源插件重新打开歌曲");
     }
 
     /** Rebuild {@link #cachedSongs} from the audio cache dir + the metadata index.
@@ -1706,24 +2696,9 @@ public final class PlayerController {
      *  listing + a membership check per indexed song — no per-file I/O beyond that. */
     public void refreshCachedSongs() {
         try {
-            java.util.Set<Long> ids = new java.util.HashSet<>();
-            java.io.File dir = new java.io.File(diskCache.baseDir(), DiskCache.AUDIO);
-            java.io.File[] files = dir.listFiles();
-            if (files != null) {
-                for (java.io.File f : files) {
-                    String n = f.getName();
-                    if (n.endsWith(".cache")) {
-                        try {
-                            ids.add(Long.parseLong(n.substring(0, n.length() - ".cache".length())));
-                        } catch (NumberFormatException ignore) {
-                        }
-                    }
-                }
-            }
             List<Track> out = new ArrayList<>();
-            for (NeteaseSong s : songMetaIndex.all()) {
-                if (ids.contains(s.id)) {
-                    Track t = toTrack(s);
+            for (Track t : mediaMetaIndex.all()) {
+                if (diskCache.hasAudio(t.canonicalId())) {
                     // Prefer an on-disk thumbnail so the cached list renders fully
                     // offline; toTrack's fallback is the network thumb URL. The
                     // 1024px image is the one cacheSongAsync actually downloads
@@ -1734,9 +2709,9 @@ public final class PlayerController {
                     // playlist/search view, so a cached song's own thumbnail
                     // routinely gets evicted from THUMB64 by unrelated browsing
                     // long before its audio does -- check IMAGE first.
-                    String localThumb = diskCache.getImage(thumbUrl(s.coverUrl, "1024"));
-                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "512"));
-                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(s.coverUrl, "64"));
+                    String localThumb = diskCache.getImage(thumbUrl(t.coverUrl, "1024"));
+                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(t.coverUrl, "512"));
+                    if (localThumb == null) localThumb = diskCache.getThumb64(thumbUrl(t.coverUrl, "64"));
                     if (localThumb != null) t.coverThumbPath = localThumb;
                     out.add(t);
                 }
@@ -1788,6 +2763,54 @@ public final class PlayerController {
         }
     }
 
+    public boolean isMediaInCustomPlaylist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return false;
+        for (Track track : customPlaylist) {
+            if (mediaId.equals(track.canonicalId())) return true;
+        }
+        return false;
+    }
+
+    public void addMediaToCustomPlaylist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty() || isMediaInCustomPlaylist(mediaId)) return;
+        Song song = findPluginSong(mediaId);
+        if (song == null) {
+            showToast("添加失败：歌曲信息已失效");
+            return;
+        }
+        customPlaylist.add(toTrackPlugin(song));
+        customPlaylistTracks.set(new ArrayList<>(customPlaylist));
+        showToast("已加入播放列表");
+        worker.submit(this::saveCustomPlaylist);
+    }
+
+    public void removeMediaFromCustomPlaylist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        for (Track track : customPlaylist) {
+            if (mediaId.equals(track.canonicalId())) {
+                customPlaylist.remove(track);
+                customPlaylistTracks.set(new ArrayList<>(customPlaylist));
+                showToast("已移出播放列表");
+                worker.submit(this::saveCustomPlaylist);
+                return;
+            }
+        }
+    }
+
+    private Song findPluginSong(String mediaId) {
+        for (List<Song> values : pluginSearchByProvider.values()) {
+            for (Song song : values) if (mediaId.equals(song.id)) return song;
+        }
+        List<List<Song>> visibleLists = java.util.Arrays.asList(
+                sourceRecommendations.peek(), sourcePlaylistTracks.peek(),
+                sourceArtistSongs.peek(), sourceAlbumTracks.peek());
+        for (List<Song> values : visibleLists) {
+            if (values == null) continue;
+            for (Song song : values) if (mediaId.equals(song.id)) return song;
+        }
+        return null;
+    }
+
     // --- Custom playlist: local tracks (issue #15's local-library favorites ask —
     // the add/remove-by-id methods above are netease-only, since a local Track has
     // no neteaseId; filePath is the local equivalent of a stable identity). ---
@@ -1822,52 +2845,6 @@ public final class PlayerController {
         if (filePath == null || filePath.isEmpty()) return;
         for (Track t : customPlaylist) {
             if (t.source == Track.Source.LOCAL && filePath.equals(t.filePath)) {
-                customPlaylist.remove(t);
-                customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                showToast("已移出播放列表");
-                worker.submit(this::saveCustomPlaylist);
-                return;
-            }
-        }
-    }
-
-    /** True when a third-party custom-API result is already in the local playlist. */
-    public boolean isCustomApiInCustomPlaylist(String customId) {
-        if (customId == null || customId.isEmpty()) return false;
-        for (Track t : customPlaylist) {
-            if (t.source == Track.Source.CUSTOM_API && customId.equals(t.customId)) return true;
-        }
-        return false;
-    }
-
-    /** Add a custom-API search result to the local playlist by its source-stable id. */
-    public void addCustomApiToCustomPlaylist(String customId) {
-        if (customId == null || customId.isEmpty() || isCustomApiInCustomPlaylist(customId)) return;
-        CustomSong found = null;
-        List<CustomSong> results = customSearchResults.peek();
-        if (results != null) {
-            for (CustomSong song : results) {
-                if (customId.equals(song.id)) {
-                    found = song;
-                    break;
-                }
-            }
-        }
-        if (found == null) {
-            showToast("添加失败");
-            return;
-        }
-        customPlaylist.add(toTrackCustom(found));
-        customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        showToast("已加入播放列表");
-        worker.submit(this::saveCustomPlaylist);
-    }
-
-    /** Remove a custom-API entry from the local playlist by its source-stable id. */
-    public void removeCustomApiFromCustomPlaylist(String customId) {
-        if (customId == null || customId.isEmpty()) return;
-        for (Track t : customPlaylist) {
-            if (t.source == Track.Source.CUSTOM_API && customId.equals(t.customId)) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
                 showToast("已移出播放列表");
@@ -1945,16 +2922,20 @@ public final class PlayerController {
         try {
             java.nio.file.Path file = AppDirs.stateFile("custom-playlist.json");
             StringBuilder sb = new StringBuilder();
-            sb.append("{\"tracks\":[");
+            sb.append("{\"schemaVersion\":2,\"tracks\":[");
             List<Track> snap = new ArrayList<>(customPlaylist);
             for (int i = 0; i < snap.size(); i++) {
                 Track t = snap.get(i);
                 if (i > 0) sb.append(',');
                 sb.append("{\"source\":\"").append(t.source).append('"');
+                String mediaId = t.canonicalId();
+                if (!mediaId.isEmpty()) sb.append(",\"mediaId\":").append(jsonStr(mediaId));
                 if (t.neteaseId != 0) sb.append(",\"neteaseId\":").append(t.neteaseId);
                 sb.append(",\"title\":").append(jsonStr(t.title));
                 sb.append(",\"artist\":").append(jsonStr(t.artist));
                 if (t.artistId != 0) sb.append(",\"artistId\":").append(t.artistId);
+                if (t.artistMediaId != null && !t.artistMediaId.isEmpty())
+                    sb.append(",\"artistMediaId\":").append(jsonStr(t.artistMediaId));
                 if (t.artistIdsCsv != null && !t.artistIdsCsv.isEmpty()) {
                     sb.append(",\"artistIdsCsv\":").append(jsonStr(t.artistIdsCsv));
                     sb.append(",\"artistNamesCsv\":").append(jsonStr(t.artistNamesCsv));
@@ -1986,11 +2967,19 @@ public final class PlayerController {
                 com.google.gson.JsonObject o = el.getAsJsonObject();
                 Track t = new Track();
                 String src = o.has("source") ? o.get("source").getAsString() : "NETEASE";
-                t.source = "LOCAL".equals(src) ? Track.Source.LOCAL : Track.Source.NETEASE;
+                t.source = "LOCAL".equals(src) ? Track.Source.LOCAL
+                        : "CUSTOM_API".equals(src) ? Track.Source.CUSTOM_API
+                        : "PLUGIN".equals(src) ? Track.Source.PLUGIN
+                        : Track.Source.NETEASE;
                 t.neteaseId = o.has("neteaseId") ? o.get("neteaseId").getAsLong() : 0;
+                if (o.has("mediaId") && !o.get("mediaId").isJsonNull()) {
+                    t.applyCanonicalId(o.get("mediaId").getAsString());
+                }
                 t.title    = o.has("title")    && !o.get("title").isJsonNull()    ? o.get("title").getAsString()    : "";
                 t.artist   = o.has("artist")   && !o.get("artist").isJsonNull()   ? o.get("artist").getAsString()   : "";
                 t.artistId = o.has("artistId") ? o.get("artistId").getAsLong() : 0L;
+                t.artistMediaId = o.has("artistMediaId") && !o.get("artistMediaId").isJsonNull()
+                        ? o.get("artistMediaId").getAsString() : "";
                 t.artistIdsCsv = o.has("artistIdsCsv") && !o.get("artistIdsCsv").isJsonNull()
                         ? o.get("artistIdsCsv").getAsString() : "";
                 t.artistNamesCsv = o.has("artistNamesCsv") && !o.get("artistNamesCsv").isJsonNull()
@@ -2006,8 +2995,9 @@ public final class PlayerController {
                     // will simply fail like any other missing local file would.
                 } else {
                     t.coverUrl = o.has("coverUrl") && !o.get("coverUrl").isJsonNull() ? o.get("coverUrl").getAsString() : "";
-                    t.coverThumbPath = NeteaseClient.thumbUrl(t.coverUrl);
+                    t.coverThumbPath = trackCoverUrl(t, "128");
                 }
+                t.canonicalId();
                 loaded.add(t);
             }
             if (!loaded.isEmpty()) {
@@ -2092,14 +3082,26 @@ public final class PlayerController {
     }
 
     public void playRecommendation(int i) {
+        if (Boolean.TRUE.equals(sourceContentActive.peek())) {
+            playPluginSongList(sourceRecommendations.peek(), i);
+            return;
+        }
         playSongList(recommendations.peek(), i);
     }
 
     public void playRecentSong(int i) {
+        if (Boolean.TRUE.equals(sourceContentActive.peek())) {
+            playPluginSongList(sourceRecentSongs.peek(), i);
+            return;
+        }
         playSongList(recentSongs.peek(), i);
     }
 
     public void playPlaylistTrack(int i) {
+        if (!openSourcePlaylistId.peek().isEmpty()) {
+            playPluginSongList(sourcePlaylistTracks.peek(), i, openSourcePlaylistId.peek());
+            return;
+        }
         playSongList(playlistTracks.peek(), i, currentPlaylistId);
     }
 
@@ -2169,6 +3171,59 @@ public final class PlayerController {
         });
     }
 
+    public void startMediaIntelligenceMode(String playlistMediaId) {
+        if (!loggedIn.peek()) {
+            showToast("请先登录后使用心动推荐");
+            return;
+        }
+        if (playlistMediaId == null || playlistMediaId.isEmpty()
+                || Boolean.TRUE.equals(intelligenceLoading.peek())) return;
+        final MediaId playlistId;
+        try {
+            playlistId = MediaId.parse(playlistMediaId).requireKind(
+                    dev.t1m3.qplayer.media.MediaKind.PLAYLIST);
+        } catch (IllegalArgumentException error) {
+            showToast("无效的歌单标识");
+            return;
+        }
+        if (!pluginHasCapability(playlistId.provider(), ProviderCapability.HEART_RECOMMENDATION)) {
+            showToast("当前音源不支持心动推荐");
+            return;
+        }
+        MediaId seed = null;
+        Track current = currentTrack();
+        if (playlistMediaId.equals(currentQueueMediaPlaylistId) && current != null) {
+            try {
+                MediaId candidate = MediaId.parse(current.canonicalId()).requireKind(
+                        dev.t1m3.qplayer.media.MediaKind.SONG);
+                if (playlistId.provider().equals(candidate.provider())) seed = candidate;
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        if (seed == null && !sourcePlaylistTracks.peek().isEmpty()) {
+            try { seed = MediaId.parse(sourcePlaylistTracks.peek().get(0).id); }
+            catch (IllegalArgumentException ignored) { }
+        }
+        if (seed == null) {
+            showToast("歌单中暂无可推荐歌曲");
+            return;
+        }
+        intelligenceLoading.set(true);
+        final MediaId selectedSeed = seed;
+        pluginProviders.heartRecommendations(selectedSeed, playlistId, 100)
+                .whenComplete((songs, error) -> post(() -> {
+                    intelligenceLoading.set(false);
+                    if (error != null) {
+                        showToast("获取心动推荐失败：" + safeMessage(error));
+                    } else if (songs == null || songs.isEmpty()) {
+                        showToast("暂时没有心动推荐");
+                    } else {
+                        playPluginSongList(songs, 0, playlistMediaId);
+                        showToast("已开启心动推荐");
+                    }
+                }));
+    }
+
     /** Fetch a playlist from its card context menu and start it from the first song.
      *  This deliberately does not open the detail page or replace its loading state. */
     public void playPlaylist(long playlistId) {
@@ -2198,6 +3253,71 @@ public final class PlayerController {
         });
     }
 
+    /** Source-neutral playlist playback entry point used by cards and menus. */
+    public void playMediaPlaylist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (mediaId.indexOf(':') < 0) {
+            try { playPlaylist(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
+            return;
+        }
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
+        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        pluginProviders.playlist(id).whenComplete((playlist, error) -> post(() -> {
+            Playlist resolved = playlist;
+            if (error != null || resolved == null) {
+                resolved = mediaPlaylistCacheIndex.get(id.toString());
+                if (resolved == null) {
+                    showToast("播放歌单失败：" + safeMessage(error));
+                    return;
+                }
+            }
+            if (resolved.songs.isEmpty()) {
+                showToast("歌单中暂无歌曲");
+                return;
+            }
+            mediaPlaylistCacheIndex.upsert(resolved);
+            worker.submit(mediaPlaylistCacheIndex::save);
+            playPluginSongList(resolved.songs, 0, id.toString());
+        }));
+    }
+
+    public void copyMediaReference(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (mediaId.indexOf(':') < 0) {
+            try { copyPlaylistLink(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
+            return;
+        }
+        java.util.function.Consumer<String> sink = clipboard;
+        if (sink != null) {
+            sink.accept(mediaId);
+            showToast("已复制媒体标识");
+        } else {
+            showToast(mediaId);
+        }
+    }
+
+    public void shareMedia(String mediaId) {
+        final MediaId id;
+        try { id = MediaId.parse(mediaId); }
+        catch (IllegalArgumentException error) { showToast("无效的媒体标识"); return; }
+        if (!pluginHasCapability(id.provider(), ProviderCapability.SHARE)) {
+            copyMediaReference(mediaId);
+            return;
+        }
+        pluginProviders.share(id).whenComplete((url, error) -> post(() -> {
+            if (error != null || url == null || url.isEmpty()) {
+                showToast("获取分享链接失败：" + safeMessage(error));
+                return;
+            }
+            java.util.function.Consumer<String> sink = clipboard;
+            if (sink != null) {
+                sink.accept(url);
+                showToast("已复制链接");
+            } else showToast(url);
+        }));
+    }
+
     /** Play a single netease song id (no surrounding queue). */
     public void playNetease(long songId) {
         Track t = new Track();
@@ -2217,13 +3337,24 @@ public final class PlayerController {
         playQueue(q, i, playlistId);
     }
 
-    /** Queue the custom-API-source search results and start at {@code i} — the
-     *  CUSTOM_API counterpart to {@link #playSearchResult(int)}. */
-    public void playCustomSearchResult(int i) {
-        List<CustomSong> songs = customSearchResults.peek();
+    private void playPluginSongList(List<Song> songs, int i) {
+        playPluginSongList(songs, i, "");
+    }
+
+    private void playPluginSongList(List<Song> songs, int i, String playlistId) {
+        if (songs == null || i < 0 || i >= songs.size()) return;
+        List<Track> tracks = new ArrayList<>(songs.size());
+        for (Song song : songs) tracks.add(toTrackPlugin(song));
+        currentQueueMediaPlaylistId = playlistId != null ? playlistId : "";
+        playQueue(tracks, i);
+    }
+
+    /** Queue one provider's stable search bucket and start the selected row. */
+    public void playPluginSearchResult(String providerId, int i) {
+        List<Song> songs = pluginSearchByProvider.get(providerId);
         if (songs == null || i < 0 || i >= songs.size()) return;
         List<Track> q = new ArrayList<>(songs.size());
-        for (CustomSong s : songs) q.add(toTrackCustom(s));
+        for (Song song : songs) q.add(toTrackPlugin(song));
         playQueue(q, i);
     }
 
@@ -2233,6 +3364,7 @@ public final class PlayerController {
 
     private void playQueue(List<Track> q, int start, long sourcePlaylistId) {
         currentQueuePlaylistId = sourcePlaylistId;
+        if (sourcePlaylistId != 0L) currentQueueMediaPlaylistId = "";
         queue.clear();
         queue.addAll(q);
         queueTracks.set(new ArrayList<>(queue));
@@ -2254,6 +3386,23 @@ public final class PlayerController {
     private void scrobbleOutgoingTrack(boolean naturalEnd) {
         if (playIndex < 0 || playIndex >= queue.size()) return;
         Track t = queue.get(playIndex);
+        if (t.source == Track.Source.PLUGIN && t.mediaId != null) {
+            long played = Math.max(0L, backend.position());
+            if (played < 3000L) return;
+            try {
+                MediaId id = MediaId.parse(t.mediaId).requireKind(
+                        dev.t1m3.qplayer.media.MediaKind.SONG);
+                if (pluginHasCapability(id.provider(), ProviderCapability.SCROBBLE)) {
+                    pluginProviders.scrobble(id, played, t.durationMs, naturalEnd)
+                            .exceptionally(error -> {
+                                Logger.warn("plugin scrobble failed: {}", safeMessage(error));
+                                return null;
+                            });
+                }
+            } catch (IllegalArgumentException ignored) {
+            }
+            return;
+        }
         if (t.source != Track.Source.NETEASE || t.neteaseId == 0) return;
         long seconds = Math.max(0L, backend.position()) / 1000L;
         if (seconds < 3) return;
@@ -2264,9 +3413,14 @@ public final class PlayerController {
 
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        String requestedMediaId = queue.get(i).canonicalId();
+        if (pendingPluginDesiredPlaying != null
+                && !pendingPluginTargetMediaId.equals(requestedMediaId)) {
+            pendingPluginDesiredPlaying = null;
+            pendingPluginTargetMediaId = "";
+        }
         // Any real local/remote selection supersedes a follower's delayed takeover.
         // The generation also makes an already-queued timeout callback harmless.
-        cancelPendingTogetherAutoAdvance();
         // loadQueue() sets needsReplay because its restored track exists only as
         // metadata until the user resumes it. Any successful route into playAt(),
         // including clicking a different song first, is now taking responsibility
@@ -2316,13 +3470,17 @@ public final class PlayerController {
             currentFilePath.set(t.source == Track.Source.LOCAL && t.filePath != null ? t.filePath : "");
             title.set(orEmpty(t.title));
             artist.set(orEmpty(t.artist));
-            playingArtistId.set(t.artistId);
+            publishPlayingArtist(t);
             album.set(orEmpty(t.album));
-            coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
+            coverUrl.set(orEmpty(trackCoverUrl(t, "512")));
             durationMs.set(t.durationMs);
             positionMs.set(resumeMs);
-            currentLiked.set(t.neteaseId != 0 && likedSet.contains(t.neteaseId));
-            currentLikeable.set(t.neteaseId != 0);
+            String canonical = t.canonicalId();
+            boolean pluginLikeable = t.source == Track.Source.PLUGIN
+                    && providerForMediaHas(canonical, ProviderCapability.LIKE);
+            currentLiked.set(pluginLikeable ? pluginLikedSet.contains(canonical)
+                    : t.neteaseId != 0 && likedSet.contains(t.neteaseId));
+            currentLikeable.set(pluginLikeable || t.neteaseId != 0);
         });
         updateCover(t, i, currentCoverRevision);
 
@@ -2336,6 +3494,16 @@ public final class PlayerController {
             post(() -> playing.set(true));
             notifyPlayback();
         } else if (t.source == Track.Source.NETEASE) {
+            if (onlineSourcesArePluginOnly()) {
+                playingIntent = false;
+                post(() -> {
+                    playing.set(false);
+                    loading.set(false);
+                    showToast("请安装并启用与该歌曲匹配的音源插件");
+                });
+                notifyPlayback();
+                return;
+            }
             // Always prefer a cached local file over (re-)streaming, regardless of
             // play mode — a song played once is served from disk on every later play.
             String cached = t.neteaseId != 0 ? diskCache.getAudio(t.neteaseId) : null;
@@ -2367,17 +3535,28 @@ public final class PlayerController {
                 resolveAndPlayNetease(t, i, resumeMs, currentCoverRevision);
             }
         } else if (t.source == Track.Source.CUSTOM_API) {
-            if (t.streamUrl != null) {
-                Logger.info("play custom-api (cached url): {}", t.title);
-                playBackend(t.playable(), resumeMs);
+            skipUnplayable(i, "旧自定义音源已移除，请安装对应音源插件");
+        } else if (t.source == Track.Source.PLUGIN) {
+            String cached = diskCache.getAudio(t.canonicalId());
+            if (cached != null) {
+                Logger.info("play plugin {} (audio cache): {}", providerOf(t), t.title);
+                playBackend(cached, resumeMs);
                 playingIntent = true;
                 post(() -> playing.set(true));
                 notifyPlayback();
-                // The cached-url fast path skips resolveAndPlayCustom, so load lyrics
-                // here too — mirrors loadNeteaseLyrics's cached-audio fast path above.
-                loadCustomLyrics(t, i);
+                loadPluginLyrics(t, i);
+            } else if (hasFreshPluginStream(t)) {
+                Logger.info("play plugin {} (cached url): {}", providerOf(t), t.title);
+                playBackend(t.playable(), t.streamHeaders, resumeMs);
+                playingIntent = true;
+                post(() -> playing.set(true));
+                notifyPlayback();
+                loadPluginLyrics(t, i);
+                cachePluginAudioAsync(t, false, null);
             } else {
-                resolveAndPlayCustom(t, i, resumeMs, currentCoverRevision);
+                t.streamUrl = null;
+                t.streamHeaders.clear();
+                resolveAndPlayPlugin(t, i, resumeMs, currentCoverRevision);
             }
         }
         // Current track's fetches are now queued; warm next/prev behind them.
@@ -2444,7 +3623,7 @@ public final class PlayerController {
         // lyric page sat on its gray placeholder even though a perfectly good cover was
         // already showing elsewhere. A blurred full-screen backdrop doesn't need more
         // detail than this anyway.
-        final String url = thumbUrl(t.coverUrl, "1024");
+        final String url = trackCoverUrl(t, "1024");
 
         // Check disk cache first.
         String cachedImg = diskCache.getImage(url);
@@ -2457,6 +3636,29 @@ public final class PlayerController {
                 notifyPlayback();
                 return;
             }
+        }
+
+        if (t.source == Track.Source.PLUGIN) {
+            String provider = providerOf(t);
+            pluginHostApi.fetchReturnedBytes(provider, url, Collections.<String, String>emptyMap(),
+                    16L * 1024L * 1024L, 8_000).whenComplete((data, error) -> {
+                if (error != null || data == null || data.length == 0) {
+                    Logger.warn("plugin {} cover fetch failed: {}", provider,
+                            error != null ? safeMessage(error) : "empty response");
+                    return;
+                }
+                t.coverBytes = data;
+                String imgPath = diskCache.imagePath(url);
+                if (imgPath != null) writeBytesToFile(data, imgPath);
+                post(() -> {
+                    if (playIndex == expectedIndex) {
+                        applyCover(data, revision);
+                        if (imgPath != null) coverPath.set(imgPath);
+                    }
+                });
+                notifyPlayback();
+            });
+            return;
         }
 
         worker.submit(() -> {
@@ -2570,7 +3772,7 @@ public final class PlayerController {
             // preloadAdjacent, which takes updateCover's coverBytes fast path and
             // gets its coverPath from here, left the lyric page on its placeholder
             // while the fluid backdrop and Monet seed came up fine from the same bytes.
-            String cached = diskCache.getImage(thumbUrl(t.coverUrl, "1024"));
+            String cached = diskCache.getImage(trackCoverUrl(t, "1024"));
             if (cached != null) return cached;
         }
         return "";
@@ -2591,7 +3793,7 @@ public final class PlayerController {
         }
         if (t.coverUrl == null || t.coverUrl.isEmpty()) return null;
         // Same 1024px cap as updateCover() -- see its comment for why.
-        String url = thumbUrl(t.coverUrl, "1024");
+        String url = trackCoverUrl(t, "1024");
         String cachedImg = diskCache.getImage(url);
         if (cachedImg != null) {
             byte[] d = readBytesFromFile(cachedImg);
@@ -2626,7 +3828,7 @@ public final class PlayerController {
             final long id = t.neteaseId;
             worker.submit(() -> fetchNeteaseLyrics(id));
         }
-        if (t.coverBytes == null) {
+        if (t.coverBytes == null && t.source != Track.Source.PLUGIN) {
             final Track tr = t;
             worker.submit(() -> {
                 byte[] data = loadCoverBytes(tr);
@@ -2651,9 +3853,8 @@ public final class PlayerController {
         sm.seedColor.set(seed);
     }
 
-    /** Community AMLL TTML mirror: syllable-level lyrics with background-vocal
-     *  and duet annotations. Empty list on 404 / network failure / parse error,
-     *  which signals the caller to fall back to Netease's own lyric. */
+    /** Read the former AMLL TTML cache during delayed migration. New online lyric
+     * assets are supplied and cached through the selected source plugin. */
     private List<LyricLine> tryAmllTtml(long songId) {
         // Check disk cache first.
         String cached = diskCache.getLyric(songId);
@@ -2666,18 +3867,7 @@ public final class PlayerController {
                 }
             } catch (Throwable ignored) { }
         }
-        byte[] data = downloadBytes("https://amlldb.bikonoo.com/ncm-lyrics/" + songId + ".ttml");
-        if (data == null || data.length == 0) return Collections.emptyList();
-        // Cache for next time.
-        diskCache.cacheLyric(data, songId);
-        String ttml = new String(data, java.nio.charset.StandardCharsets.UTF_8);
-        if (ttml.trim().isEmpty()) return Collections.emptyList();
-        try {
-            return TtmlParser.parse(ttml);
-        } catch (Throwable e) {
-            Logger.warn("ttml parse failed for {}: {}", songId, e.getMessage());
-            return Collections.emptyList();
-        }
+        return Collections.emptyList();
     }
 
     private static byte[] downloadBytes(String url) {
@@ -2833,11 +4023,8 @@ public final class PlayerController {
     private void autoAdvance() {
         if (queue.isEmpty()) return;
         pendingNaturalEnd = true;
-        if (shouldWaitForTogetherLeader(togetherActive, togetherUserId,
-                togetherLeaderUserId)) {
-            scheduleTogetherAutoAdvanceFallback();
-            return;
-        }
+        playbackEndRevision.incrementAndGet();
+        if (!pluginAutoAdvanceBlocker.isEmpty()) return;
         performAutoAdvance();
     }
 
@@ -2853,40 +4040,6 @@ public final class PlayerController {
                 playAt((playIndex + 1) % queue.size());
                 break;
         }
-    }
-
-    /** Followers do not independently choose the next song: that is harmless in
-     *  list order but races badly in shuffle mode. Keep a bounded failover so a
-     *  sleeping/disconnected creator cannot strand playback at the end forever. */
-    private void scheduleTogetherAutoAdvanceFallback() {
-        Track ended = currentTrack();
-        if (ended == null || ended.neteaseId == 0L) {
-            performAutoAdvance();
-            return;
-        }
-        final long endedSongId = ended.neteaseId;
-        final int endedIndex = playIndex;
-        final long generation = togetherAutoAdvanceGeneration.incrementAndGet();
-        togetherPendingAutoAdvanceSongId = endedSongId;
-        togetherPendingAutoAdvanceIndex = endedIndex;
-        Logger.info("listen-together: waiting for leader {} to advance song {}",
-                togetherLeaderUserId, endedSongId);
-        togetherWorker.schedule(() -> onMain(() -> {
-            Track current = currentTrack();
-            if (generation != togetherAutoAdvanceGeneration.get()
-                    || playIndex != endedIndex || current == null
-                    || current.neteaseId != endedSongId) return;
-            togetherPendingAutoAdvanceSongId = 0L;
-            togetherPendingAutoAdvanceIndex = -1;
-            Logger.warn("listen-together: leader advance timed out; taking over");
-            performAutoAdvance();
-        }), TOGETHER_AUTO_ADVANCE_GRACE_MS, TimeUnit.MILLISECONDS);
-    }
-
-    private void cancelPendingTogetherAutoAdvance() {
-        togetherAutoAdvanceGeneration.incrementAndGet();
-        togetherPendingAutoAdvanceSongId = 0L;
-        togetherPendingAutoAdvanceIndex = -1;
     }
 
     public void seek(long ms) {
@@ -2988,12 +4141,6 @@ public final class PlayerController {
         setPlayLevel(enabled ? "exhigh" : "standard");
     }
 
-    /** Toggle source-switching: when on, blocked/trial netease tracks fall back to
-     *  the unblock sources (gdstudio / bodian / kuwo) before being skipped. */
-    public void setUnblockEnabled(boolean enabled) {
-        this.unblockEnabled = enabled;
-    }
-
     /** Settings toggle: fade the volume in at the start of a track and out
      *  approaching its natural end, instead of a hard cut. Turning it off
      *  mid-fade snaps straight back to the user's actual volume setting. */
@@ -3002,13 +4149,6 @@ public final class PlayerController {
         if (!enabled) {
             cancelFadeAtGain(1f);
         }
-    }
-
-    /** Push the current custom-API-source configuration in from Settings; called
-     *  once at startup and again on every field edit (see the Settings twins'
-     *  rebuildCustomApiConfig()). {@code null} resets to an unusable default. */
-    public void setCustomApiConfig(CustomApiConfig cfg) {
-        this.customApiConfig = cfg != null ? cfg : new CustomApiConfig();
     }
 
     /** Load a netease track's lyrics off-thread (AMLL TTML mirror, else Netease's
@@ -3033,37 +4173,35 @@ public final class PlayerController {
         });
     }
 
-    /** CUSTOM_API counterpart to {@link #loadNeteaseLyrics}: only fetches when the
-     *  user configured a lyric endpoint (optional — plenty of custom sources don't
-     *  have one). Runs on {@link #customWorker}, not {@link #worker}, for the same
-     *  head-of-line-blocking reason resolveAndPlayCustom does. */
-    private void loadCustomLyrics(Track t, int expectedIndex) {
-        final String id = t.customId;
-        if (id == null || id.isEmpty()) return;
-        List<LyricLine> mem = customLyricMem.get(id);
-        if (mem != null) {
-            post(() -> { if (playIndex == expectedIndex) applyLyrics(mem); });
+    private void loadPluginLyrics(Track track, int expectedIndex) {
+        final String id = track.canonicalId();
+        if (id.isEmpty() || !pluginHasCapability(providerOf(track), ProviderCapability.LYRICS)) return;
+        List<LyricLine> cached = pluginLyricMem.get(id);
+        if (cached != null) {
+            post(() -> { if (playIndex == expectedIndex) applyLyrics(cached); });
             return;
         }
-        final CustomApiConfig cfg = customApiConfig;
-        customWorker.submit(() -> {
-            List<LyricLine> ly = Collections.emptyList();
-            try {
-                String lrc = CustomApiClient.resolveLyric(cfg, id);
-                if (lrc != null) {
-                    // Some backends (e.g. go-music-api's QQ-sourced lyrics) return a
-                    // per-syllable [mm:ss.xx]-tagged text instead of plain line LRC —
-                    // treating that as plain LRC left every timestamp sitting in the
-                    // displayed text as literal garbage instead of being consumed.
-                    ly = WordTimeLrcParser.looksLikeWordTimeLrc(lrc)
-                            ? WordTimeLrcParser.parse(lrc)
-                            : LyricParser.fromNeteaseStrings(null, lrc, null, null);
-                    if (!ly.isEmpty()) customLyricMem.put(id, ly);
-                }
-            } catch (Throwable e) {
-                Logger.warn("custom-api lyric fetch failed for {}: {}", id, e.getMessage());
+        final MediaId mediaId;
+        try {
+            mediaId = MediaId.parse(id);
+        } catch (IllegalArgumentException error) {
+            Logger.warn("invalid plugin lyric id {}: {}", id, error.getMessage());
+            return;
+        }
+        pluginProviders.lyrics(mediaId).whenComplete((payload, error) -> {
+            if (error != null) {
+                Logger.warn("plugin {} lyric fetch failed: {}", mediaId.provider(), safeMessage(error));
+                return;
             }
-            final List<LyricLine> lines = ly;
+            List<LyricLine> lines;
+            try {
+                lines = LyricParser.fromPluginAssets(payload);
+            } catch (Throwable parseError) {
+                Logger.warn("plugin {} lyric parse failed: {}", mediaId.provider(),
+                        safeMessage(parseError));
+                return;
+            }
+            if (!lines.isEmpty()) pluginLyricMem.put(id, lines);
             post(() -> { if (playIndex == expectedIndex) applyLyrics(lines); });
         });
     }
@@ -3137,8 +4275,7 @@ public final class PlayerController {
         // (played from a playlist/recommendation/liked list, say). Cheap/in-memory,
         // so this always runs even for a track whose actual audio download below
         // ends up coalesced away.
-        songMetaIndex.upsert(t.neteaseId, t.title, t.artist, t.artistId,
-                t.artistIdsCsv, t.artistNamesCsv, t.album, t.coverUrl, t.durationMs);
+        mediaMetaIndex.upsert(t);
         cacheThumb64Async(t.coverUrl);
         synchronized (autoCacheLock) {
             autoCachePending = t;
@@ -3160,7 +4297,7 @@ public final class PlayerController {
                 }
             }
             diskCache.cacheAudio(t.streamUrl, t.neteaseId);
-            songMetaIndex.save();
+            mediaMetaIndex.save();
         }
     }
 
@@ -3182,8 +4319,7 @@ public final class PlayerController {
         // Whatever gets its audio cached is, by definition, playable offline —
         // remember its title/artist/cover so offline search can actually surface
         // it later, regardless of whether it was ever a search result itself.
-        songMetaIndex.upsert(nid, t.title, t.artist, t.artistId,
-                t.artistIdsCsv, t.artistNamesCsv, t.album, cover, t.durationMs);
+        mediaMetaIndex.upsert(t);
         cacheWorker.submit(() -> {
             diskCache.cacheAudio(url, nid);
             // Protect it from auto-cache eviction only once the download actually
@@ -3196,7 +4332,7 @@ public final class PlayerController {
                 diskCache.cacheImage(thumbUrl(cover, "1024"));
             }
             fetchNeteaseLyrics(nid);   // disk-caches AMLL TTML and/or .nlrc
-            songMetaIndex.save();
+            mediaMetaIndex.save();
             if (onDone != null) post(onDone);
         });
         cacheThumb64Async(cover);
@@ -3239,13 +4375,9 @@ public final class PlayerController {
     private void resolveAndPlayNetease(Track t, int expectedIndex, long resumeMs,
                                        long expectedCoverRevision) {
         long songId = t.neteaseId;
-        // Per-stage timing, surfaced via the in-app debug log panel: measured resolve
-        // itself at well under a second per switch (queue wait, songDetail,
-        // songUrlInfo, unblock all logged separately below) against a "feels like
-        // 3-5s" user report, with no single stage confirmed as the culprit yet —
-        // kept permanently rather than ripped out once-diagnosed, since the report
-        // isn't actually explained yet and unblock's per-source latency in
-        // particular is worth watching across more real sessions.
+        // Compatibility-only playback path for queues persisted before canonical
+        // media IDs. Online resolution now belongs to PluginProviderService; this
+        // path fails closed after the migration window and contains no endpoint.
         long tSubmit = System.currentTimeMillis();
         worker.submit(() -> {
             long t0 = System.currentTimeMillis();
@@ -3270,25 +4402,12 @@ public final class PlayerController {
                 }
                 NeteaseClient.UrlInfo info = netease.songUrlInfo(songId, playLevel);
                 Logger.info("netease: timing songUrlInfo +{}ms", System.currentTimeMillis() - t0);
-                // Official url wins only when it's a full track. A trial-only clip,
-                // a missing url, or a blocked/VIP song all fall through to the
-                // unblock sources; the trial clip is kept as a last-resort fallback.
                 String url = (info != null && !info.trial) ? info.url : null;
-                boolean unblocked = false;
-                if (url == null && unblockEnabled) {
-                    String un = SongUnblocker.resolve(songId, t.title, t.artist);
-                    Logger.info("netease: timing unblock +{}ms", System.currentTimeMillis() - t0);
-                    if (un != null) {
-                        url = un;
-                        unblocked = true;
-                    }
-                }
                 if (url == null && info != null && info.trial && info.url != null) {
                     url = info.url; // nothing better available — play the preview clip
                 }
-                final boolean isUnblocked = unblocked;
-                final boolean isTrialOnly = !unblocked && info != null && info.trial && url != null;
-                Logger.info("netease: url={} (unblocked={}, trial={})", url, unblocked, isTrialOnly);
+                final boolean isTrialOnly = info != null && info.trial && url != null;
+                Logger.info("netease: url={} (trial={})", url, isTrialOnly);
                 Logger.info("netease: timing resolve total +{}ms (click-to-resolve-start {}ms)",
                         System.currentTimeMillis() - t0, queueWaitMs);
                 final String playUrl = url;
@@ -3305,11 +4424,10 @@ public final class PlayerController {
                     t.streamUrl = playUrl;
                     t.trial = isTrialOnly;
                     post(() -> {
-                        if (isUnblocked) showToast("已为该歌曲自动换源");
-                        else if (isTrialOnly) showToast("当前歌曲仅可试听");
+                        if (isTrialOnly) showToast("当前歌曲仅可试听");
                         title.set(orEmpty(t.title));
                         artist.set(orEmpty(t.artist));
-                        playingArtistId.set(t.artistId);
+                        publishPlayingArtist(t);
                         album.set(orEmpty(t.album));
                         coverUrl.set(orEmpty(thumbUrl(t.coverUrl, "512")));
                         durationMs.set(t.durationMs);
@@ -3331,47 +4449,132 @@ public final class PlayerController {
         });
     }
 
-    /** CUSTOM_API counterpart to {@link #resolveAndPlayNetease}, still simpler: no
-     *  unblock fallback, no disk audio cache (keyed by neteaseId, which a
-     *  custom-API track doesn't have) — deliberate MVP scope, not an oversight.
-     *  Lyrics ARE fetched (see {@link #loadCustomLyrics}), but only when the user
-     *  configured a lyric endpoint. */
-    private void resolveAndPlayCustom(Track t, int expectedIndex, long resumeMs,
+    private void resolveAndPlayPlugin(Track track, int expectedIndex, long resumeMs,
                                       long expectedCoverRevision) {
-        String id = t.customId;
-        CustomApiConfig cfg = customApiConfig;
-        customWorker.submit(() -> {
-            try {
-                String url = CustomApiClient.resolveUrl(cfg, id);
-                onMain(() -> {
-                    if (playIndex != expectedIndex) return; // user moved on
-                    if (url == null) {
-                        Logger.warn("custom-api song {} has no url", id);
-                        skipUnplayable(expectedIndex, "自定义源解析失败");
-                        return;
-                    }
-                    t.streamUrl = url;
-                    post(() -> {
-                        title.set(orEmpty(t.title));
-                        artist.set(orEmpty(t.artist));
-                        playingArtistId.set(t.artistId);
-                        album.set(orEmpty(t.album));
-                        coverUrl.set(orEmpty(t.coverUrl));
-                        durationMs.set(t.durationMs);
-                    });
-                    updateCover(t, expectedIndex, expectedCoverRevision);
-                    loadCustomLyrics(t, expectedIndex);
-                    Logger.info("play custom-api: {} — {}", t.title, url);
-                    playBackend(url, resumeMs);
-                    playingIntent = true;
-                    post(() -> playing.set(true));
-                    notifyPlayback();
-                });
-            } catch (Throwable e) {
-                Logger.warn("custom-api resolve failed for {}: {}", id, e.getMessage());
-                onMain(() -> skipUnplayable(expectedIndex, "自定义源解析失败"));
+        final MediaId id;
+        try {
+            id = MediaId.parse(track.canonicalId());
+        } catch (IllegalArgumentException error) {
+            skipUnplayable(expectedIndex, "插件歌曲标识无效");
+            return;
+        }
+        if (!pluginHasCapability(id.provider(), ProviderCapability.RESOLVE_STREAM)) {
+            skipUnplayable(expectedIndex, "插件不支持音频解析");
+            return;
+        }
+        pluginProviders.resolveStream(id, playLevel).whenComplete((stream, error) -> onMain(() -> {
+            if (playIndex != expectedIndex) return;
+            if (error != null || stream == null || stream.url == null || stream.url.isEmpty()) {
+                Logger.warn("plugin {} stream resolve failed: {}", id.provider(),
+                        error != null ? safeMessage(error) : "empty URL");
+                skipUnplayable(expectedIndex, "插件音频解析失败");
+                return;
             }
+            track.streamUrl = stream.url;
+            track.streamHeaders.clear();
+            track.streamHeaders.putAll(stream.headers);
+            track.streamExpiresAtMs = stream.expiresAtMs;
+            track.renditionId = stream.renditionId;
+            track.trial = stream.trial;
+            track.streamCacheable = stream.cacheable;
+            post(() -> {
+                title.set(orEmpty(track.title));
+                artist.set(orEmpty(track.artist));
+                album.set(orEmpty(track.album));
+                coverUrl.set(orEmpty(track.coverUrl));
+                durationMs.set(track.durationMs);
+                if (stream.trial) showToast("当前歌曲仅可试听");
+            });
+            updateCover(track, expectedIndex, expectedCoverRevision);
+            loadPluginLyrics(track, expectedIndex);
+            Logger.info("play plugin {}: {}", id.provider(), track.title);
+            playBackend(stream.url, stream.headers, resumeMs);
+            playingIntent = true;
+            post(() -> playing.set(true));
+            notifyPlayback();
+            cachePluginAudioAsync(track, false, null);
+        }));
+    }
+
+    private void cachePluginAudioAsync(Track track, boolean active, Runnable completion) {
+        String mediaId = track != null ? track.canonicalId() : "";
+        if (mediaId.isEmpty() || track.streamUrl == null || track.streamUrl.isEmpty()
+                || track.trial || !track.streamCacheable || diskCache.hasAudio(mediaId)) {
+            if (completion != null) post(completion);
+            return;
+        }
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.SONG); }
+        catch (IllegalArgumentException error) { if (completion != null) post(completion); return; }
+        mediaMetaIndex.upsert(track);
+        String path = diskCache.audioPath(mediaId);
+        pluginHostApi.downloadReturnedFile(id.provider(), track.streamUrl,
+                        track.streamHeaders, java.nio.file.Paths.get(path),
+                        1024L * 1024L * 1024L, 120_000)
+                .whenComplete((success, error) -> {
+                    if (error == null && Boolean.TRUE.equals(success)) {
+                        if (active) diskCache.markActivelyCached(mediaId);
+                        diskCache.finishExternalWrite();
+                        mediaMetaIndex.save();
+                    } else if (error != null) {
+                        Logger.warn("plugin audio cache failed for {}: {}", mediaId, safeMessage(error));
+                    }
+                    if (completion != null) post(completion);
+                });
+    }
+
+    public void cacheMediaSong(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (diskCache.hasAudio(mediaId)) { showToast("这首歌已缓存"); return; }
+        Song song = findPluginSong(mediaId);
+        if (song == null) { showToast("无法缓存：歌曲信息已失效"); return; }
+        Track track = toTrackPlugin(song);
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.SONG); }
+        catch (IllegalArgumentException error) { showToast("无效的歌曲标识"); return; }
+        showToast("已开始缓存");
+        pluginProviders.resolveStream(id, playLevel).whenComplete((stream, error) -> {
+            if (error != null || stream == null || stream.trial || !stream.cacheable) {
+                post(() -> showToast("无法缓存：" + safeMessage(error)));
+                return;
+            }
+            track.streamUrl = stream.url;
+            track.streamHeaders.putAll(stream.headers);
+            track.streamExpiresAtMs = stream.expiresAtMs;
+            track.streamCacheable = stream.cacheable;
+            cachePluginAudioAsync(track, true, () -> showToast(
+                    diskCache.hasAudio(mediaId) ? "缓存完成" : "缓存失败"));
         });
+    }
+
+    public void removeMediaCache(String mediaId) {
+        boolean removed = diskCache.deleteAudio(mediaId);
+        if (removed) refreshCachedSongs();
+        showToast(removed ? "已删除缓存" : "删除失败");
+    }
+
+    private boolean pluginHasCapability(String provider, ProviderCapability capability) {
+        if (provider == null || provider.isEmpty()) return false;
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (provider.equals(manifest.id)) return manifest.capabilitySet().contains(capability);
+        }
+        return false;
+    }
+
+    private boolean providerForMediaHas(String mediaId, ProviderCapability capability) {
+        try { return pluginHasCapability(MediaId.parse(mediaId).provider(), capability); }
+        catch (IllegalArgumentException ignored) { return false; }
+    }
+
+    private static String providerOf(Track track) {
+        try { return MediaId.parse(track.canonicalId()).provider(); }
+        catch (IllegalArgumentException ignored) { return ""; }
+    }
+
+    private static boolean hasFreshPluginStream(Track track) {
+        return track.streamUrl != null && !track.streamUrl.isEmpty()
+                && (track.streamExpiresAtMs <= 0L
+                || track.streamExpiresAtMs > System.currentTimeMillis() + 5_000L);
     }
 
     private void loadLocalLyrics(Track t) {
@@ -3390,6 +4593,7 @@ public final class PlayerController {
         Track t = new Track();
         t.source = Track.Source.NETEASE;
         t.neteaseId = s.id;
+        t.canonicalId();
         t.title = s.name;
         t.artist = s.artist;
         t.artistId = s.artistId;
@@ -3402,17 +4606,35 @@ public final class PlayerController {
         return t;
     }
 
-    private static Track toTrackCustom(CustomSong s) {
-        Track t = new Track();
-        t.source = Track.Source.CUSTOM_API;
-        t.customId = s.id;
-        t.title = s.name;
-        t.artist = s.artist;
-        t.album = s.album;
-        t.coverUrl = s.coverUrl;
-        t.coverThumbPath = s.coverThumbPath;
-        t.durationMs = s.durationMs;
-        return t;
+    private static Track toTrackPlugin(Song song) {
+        Track track = new Track();
+        track.applyCanonicalId(song.id);
+        // A provider id named "netease" is still an external plugin. Never let
+        // the legacy compatibility mapping route an installed plugin's tracks
+        // through QPlayer's old built-in client.
+        track.source = Track.Source.PLUGIN;
+        track.title = song.title;
+        track.artist = joinArtistNames(song);
+        track.artistMediaId = song.artistMediaId;
+        track.artistIdsCsv = song.artistIdsCsv;
+        track.artistNamesCsv = song.artistNamesCsv;
+        track.album = song.album != null ? song.album.name : "";
+        track.coverUrl = song.artworkUrl;
+        track.coverThumbPath = song.artworkUrl;
+        track.durationMs = song.durationMs;
+        track.trial = song.trial;
+        return track;
+    }
+
+    private static String joinArtistNames(Song song) {
+        if (song == null || song.artists == null || song.artists.isEmpty()) return "";
+        StringBuilder result = new StringBuilder();
+        for (dev.t1m3.qplayer.media.MediaRef artist : song.artists) {
+            if (artist == null || artist.name == null || artist.name.isEmpty()) continue;
+            if (result.length() > 0) result.append(" / ");
+            result.append(artist.name);
+        }
+        return result.toString();
     }
 
     private static String orEmpty(String s) {
@@ -3522,7 +4744,7 @@ public final class PlayerController {
             // final save on app exit.
             long pos = playIndex >= 0 ? Math.max(0L, backend.position()) : 0L;
             StringBuilder sb = new StringBuilder();
-            sb.append("{\"playIndex\":").append(playIndex)
+            sb.append("{\"schemaVersion\":2,\"playIndex\":").append(playIndex)
               .append(",\"positionMs\":").append(pos)
               .append(",\"playMode\":").append(playMode.peek())
               .append(",\"tracks\":[");
@@ -3531,11 +4753,15 @@ public final class PlayerController {
                 Track t = snap.get(i);
                 if (i > 0) sb.append(',');
                 sb.append("{\"source\":\"").append(t.source).append('"');
+                String mediaId = t.canonicalId();
+                if (!mediaId.isEmpty()) sb.append(",\"mediaId\":").append(jsonStr(mediaId));
                 if (t.neteaseId != 0) sb.append(",\"neteaseId\":").append(t.neteaseId);
                 if (t.customId != null) sb.append(",\"customId\":").append(jsonStr(t.customId));
                 sb.append(",\"title\":").append(jsonStr(t.title));
                 sb.append(",\"artist\":").append(jsonStr(t.artist));
                 if (t.artistId != 0) sb.append(",\"artistId\":").append(t.artistId);
+                if (t.artistMediaId != null && !t.artistMediaId.isEmpty())
+                    sb.append(",\"artistMediaId\":").append(jsonStr(t.artistMediaId));
                 if (t.artistIdsCsv != null && !t.artistIdsCsv.isEmpty()) {
                     sb.append(",\"artistIdsCsv\":").append(jsonStr(t.artistIdsCsv));
                     sb.append(",\"artistNamesCsv\":").append(jsonStr(t.artistNamesCsv));
@@ -3587,12 +4813,20 @@ public final class PlayerController {
                 String src = o.has("source") ? o.get("source").getAsString() : "NETEASE";
                 t.source = "LOCAL".equals(src) ? Track.Source.LOCAL
                         : "CUSTOM_API".equals(src) ? Track.Source.CUSTOM_API
+                        : "PLUGIN".equals(src) ? Track.Source.PLUGIN
                         : Track.Source.NETEASE;
                 t.neteaseId = o.has("neteaseId") ? o.get("neteaseId").getAsLong() : 0;
                 t.customId  = o.has("customId")  && !o.get("customId").isJsonNull()  ? o.get("customId").getAsString()  : null;
+                if (o.has("mediaId") && !o.get("mediaId").isJsonNull()) {
+                    t.applyCanonicalId(o.get("mediaId").getAsString());
+                } else {
+                    t.canonicalId();
+                }
                 t.title     = o.has("title")     && !o.get("title").isJsonNull()     ? o.get("title").getAsString()     : "";
                 t.artist    = o.has("artist")    && !o.get("artist").isJsonNull()    ? o.get("artist").getAsString()    : "";
                 t.artistId  = o.has("artistId") ? o.get("artistId").getAsLong() : 0L;
+                t.artistMediaId = o.has("artistMediaId") && !o.get("artistMediaId").isJsonNull()
+                        ? o.get("artistMediaId").getAsString() : "";
                 t.artistIdsCsv = o.has("artistIdsCsv") && !o.get("artistIdsCsv").isJsonNull()
                         ? o.get("artistIdsCsv").getAsString() : "";
                 t.artistNamesCsv = o.has("artistNamesCsv") && !o.get("artistNamesCsv").isJsonNull()
@@ -3608,9 +4842,9 @@ public final class PlayerController {
                     // has a file to read and the now-playing card / SMTC keeps its art.
                     t.coverLocalPath = o.has("coverLocalPath") && !o.get("coverLocalPath").isJsonNull()
                             ? o.get("coverLocalPath").getAsString() : null;
-                } else if (t.source == Track.Source.CUSTOM_API) {
+                } else if (t.source == Track.Source.CUSTOM_API || t.source == Track.Source.PLUGIN) {
                     // No netease-CDN thumbnail convention for a custom source — the
-                    // cover url doubles as its own thumbnail (matches CustomApiClient).
+                    // Remote cover URL doubles as its own thumbnail for legacy rows.
                     t.coverThumbPath = t.coverUrl;
                 } else if (t.coverUrl != null && !t.coverUrl.isEmpty()) {
                     // NETEASE row art is a CDN thumbnail URL derived from coverUrl; the
@@ -3618,6 +4852,7 @@ public final class PlayerController {
                     // Playlist does the same) — else restored queue rows show no cover.
                     t.coverThumbPath = NeteaseClient.thumbUrl(t.coverUrl);
                 }
+                t.canonicalId();
                 loaded.add(t);
             }
             if (!loaded.isEmpty()) {
@@ -3640,9 +4875,9 @@ public final class PlayerController {
                     currentFilePath.set(cur.source == Track.Source.LOCAL && cur.filePath != null ? cur.filePath : "");
                     title.set(cur.title != null ? cur.title : "");
                     artist.set(cur.artist != null ? cur.artist : "");
-                    playingArtistId.set(cur.artistId);
+                    publishPlayingArtist(cur);
                     album.set(cur.album != null ? cur.album : "");
-                    coverUrl.set(thumbUrl(cur.coverUrl != null ? cur.coverUrl : "", "512"));
+                    coverUrl.set(trackCoverUrl(cur, "512"));
                     durationMs.set(cur.durationMs);
                     // So the progress bar shows the resume point before playback
                     // actually starts (toggle() only plays on the user's first tap).
@@ -3663,8 +4898,8 @@ public final class PlayerController {
                     loadLocalLyrics(cur);
                 } else if (cur.source == Track.Source.NETEASE) {
                     loadNeteaseLyrics(cur, idx);
-                } else if (cur.source == Track.Source.CUSTOM_API) {
-                    loadCustomLyrics(cur, idx);
+                } else if (cur.source == Track.Source.PLUGIN) {
+                    loadPluginLyrics(cur, idx);
                 }
             }
         } catch (Throwable e) {
@@ -3693,18 +4928,9 @@ public final class PlayerController {
     }
 
     private static String lyricOffsetKey(Track track) {
-        if (track == null || track.source == null) return null;
-        if (track.source == Track.Source.NETEASE && track.neteaseId != 0)
-            return "netease:" + track.neteaseId;
-        if (track.source == Track.Source.CUSTOM_API
-                && track.customId != null && !track.customId.isEmpty())
-            return "custom:" + track.customId;
-        if (track.source == Track.Source.LOCAL) {
-            String source = track.contentUri != null && !track.contentUri.isEmpty()
-                    ? track.contentUri : track.filePath;
-            if (source != null && !source.isEmpty()) return "local:" + source;
-        }
-        return null;
+        if (track == null) return null;
+        String canonical = track.canonicalId();
+        return canonical.isEmpty() ? null : canonical;
     }
 
     private void loadLyricOffsets() {
@@ -3717,12 +4943,37 @@ public final class PlayerController {
                 lyricOffsets.clear();
                 for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
                     int value = Math.max(-5000, Math.min(5000, entry.getValue().getAsInt()));
-                    if (value != 0) lyricOffsets.put(entry.getKey(), value);
+                    if (value != 0) lyricOffsets.put(canonicalLyricOffsetKey(entry.getKey()), value);
                 }
             }
         } catch (Throwable e) {
             Logger.warn("load lyric offsets failed: {}", e.getMessage());
         }
+    }
+
+    private static String canonicalLyricOffsetKey(String key) {
+        if (key == null || key.isEmpty()) return "";
+        try {
+            return dev.t1m3.qplayer.media.MediaId.parse(key).toString();
+        } catch (IllegalArgumentException ignored) {
+        }
+        if (key.startsWith("netease:")) {
+            return dev.t1m3.qplayer.media.MediaId.of("netease",
+                    dev.t1m3.qplayer.media.MediaKind.SONG,
+                    key.substring("netease:".length())).toString();
+        }
+        if (key.startsWith("custom:")) {
+            return dev.t1m3.qplayer.media.MediaId.of("legacy-custom",
+                    dev.t1m3.qplayer.media.MediaKind.SONG,
+                    key.substring("custom:".length())).toString();
+        }
+        if (key.startsWith("local:")) {
+            Track legacy = new Track();
+            legacy.source = Track.Source.LOCAL;
+            legacy.filePath = key.substring("local:".length());
+            return legacy.canonicalId();
+        }
+        return key;
     }
 
     private void saveLyricOffsets() {
@@ -3743,6 +4994,22 @@ public final class PlayerController {
 
     /** Load hot search keywords from Netease API. Called once on search page open. */
     public void loadHotSearches() {
+        PluginManifest provider = primaryProviderWith(ProviderCapability.HOT_SEARCH);
+        if (provider != null) {
+            pluginProviders.hotSearch(provider.id).whenComplete((values, error) -> post(() -> {
+                if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+                if (error != null) {
+                    Logger.warn("plugin {} hot search failed: {}", provider.id, safeMessage(error));
+                    return;
+                }
+                hotSearches.set(values);
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            hotSearches.set(Collections.<String>emptyList());
+            return;
+        }
         worker.submit(() -> {
             try {
                 List<String> hot = netease.searchHot();
@@ -3762,6 +5029,15 @@ public final class PlayerController {
         final String key = query.toLowerCase(Locale.ROOT);
         currentSearchKey = key;
         currentSearchQuery = query;
+        boolean pluginSearchStarted = searchPlugins(query, key);
+        if (onlineSourcesArePluginOnly()) {
+            searchResults.set(Collections.<NeteaseSong>emptyList());
+            searchPageInFlight = false;
+            if (!pluginSearchStarted) searchLoading.set(false);
+            searchHasMore.set(false);
+            rebuildSearchRows();
+            return;
+        }
         // Fast path: check cache on the calling (render) thread.
         CacheEntry entry = searchCache.get(key);
         if (entry != null && !entry.isExpired()) {
@@ -3809,8 +5085,8 @@ public final class PlayerController {
                 int nextOffset = page.consumed;
                 boolean hasMore = page.hasMore(0, SEARCH_PAGE_SIZE);
                 searchCache.put(key, new CacheEntry(r, nextOffset, hasMore));
-                for (NeteaseSong s : r) songMetaIndex.upsert(s);
-                songMetaIndex.save();
+                for (NeteaseSong s : r) mediaMetaIndex.upsert(toTrack(s));
+                mediaMetaIndex.save();
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
                     searchResults.set(r);
@@ -3827,7 +5103,7 @@ public final class PlayerController {
                 // has actually seen before (search results, anything ever played) —
                 // DiskCache alone only knows bare ids, no title/artist to show, so
                 // this is the only source offline search has to work with.
-                List<NeteaseSong> offline = songMetaIndex.search(key, 30);
+                List<NeteaseSong> offline = Collections.emptyList();
                 if (!key.equals(currentSearchKey)) return;
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
@@ -3860,6 +5136,32 @@ public final class PlayerController {
         currentSearchKey = key;
         currentSearchQuery = query;
         searchLoading.set(true);
+        PluginManifest provider = primaryProviderWith(ProviderCapability.SEARCH_ALBUMS);
+        if (provider != null) {
+            sourceSearchAlbumResults.set(Collections.<Album>emptyList());
+            pluginProviders.searchAlbums(provider.id, query, "", SEARCH_PAGE_SIZE)
+                    .whenComplete((page, error) -> post(() -> {
+                        if (!key.equals(currentSearchKey)
+                                || !provider.id.equals(pluginRegistry.primaryProvider())) return;
+                        searchLoading.set(false);
+                        if (error != null) {
+                            Logger.warn("plugin {} album search failed: {}", provider.id,
+                                    safeMessage(error));
+                            showToast("专辑搜索失败，请检查网络或插件状态");
+                            return;
+                        }
+                        List<Album> results = page != null ? page.items
+                                : Collections.<Album>emptyList();
+                        sourceSearchAlbumResults.set(results);
+                        resultCount.set(results.size());
+                    }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            searchLoading.set(false);
+            sourceSearchAlbumResults.set(Collections.<Album>emptyList());
+            return;
+        }
         searchWorker.submit(() -> {
             try {
                 List<NeteaseAlbum> r = netease.searchAlbums(query, SEARCH_PAGE_SIZE);
@@ -3892,6 +5194,32 @@ public final class PlayerController {
         currentSearchKey = key;
         currentSearchQuery = query;
         searchLoading.set(true);
+        PluginManifest provider = primaryProviderWith(ProviderCapability.SEARCH_ARTISTS);
+        if (provider != null) {
+            sourceSearchArtistResults.set(Collections.<Artist>emptyList());
+            pluginProviders.searchArtists(provider.id, query, "", SEARCH_PAGE_SIZE)
+                    .whenComplete((page, error) -> post(() -> {
+                        if (!key.equals(currentSearchKey)
+                                || !provider.id.equals(pluginRegistry.primaryProvider())) return;
+                        searchLoading.set(false);
+                        if (error != null) {
+                            Logger.warn("plugin {} artist search failed: {}", provider.id,
+                                    safeMessage(error));
+                            showToast("歌手搜索失败，请检查网络或插件状态");
+                            return;
+                        }
+                        List<Artist> results = page != null ? page.items
+                                : Collections.<Artist>emptyList();
+                        sourceSearchArtistResults.set(results);
+                        resultCount.set(results.size());
+                    }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            searchLoading.set(false);
+            sourceSearchArtistResults.set(Collections.<Artist>emptyList());
+            return;
+        }
         searchWorker.submit(() -> {
             try {
                 List<NeteaseArtist> r = netease.searchArtists(query, SEARCH_PAGE_SIZE);
@@ -3917,6 +5245,11 @@ public final class PlayerController {
 
     /** Fetch the next cloudsearch page when SearchPage's virtual list nears its end. */
     public void loadMoreSearch() {
+        if (!pluginSearchByProvider.isEmpty()) {
+            loadMorePluginSearch();
+            if (onlineSourcesArePluginOnly()) return;
+        }
+        if (onlineSourcesArePluginOnly()) return;
         if (searchPageInFlight || !Boolean.TRUE.equals(searchHasMore.peek())) return;
         final String query = currentSearchQuery;
         final String key = currentSearchKey;
@@ -3943,8 +5276,8 @@ public final class PlayerController {
                 boolean hasMore = page.hasMore(offset, SEARCH_PAGE_SIZE)
                         && page.consumed > 0;
                 searchCache.put(key, new CacheEntry(merged, nextOffset, hasMore));
-                for (NeteaseSong song : additions) songMetaIndex.upsert(song);
-                songMetaIndex.save();
+                for (NeteaseSong song : additions) mediaMetaIndex.upsert(toTrack(song));
+                mediaMetaIndex.save();
                 post(() -> {
                     if (!key.equals(currentSearchKey) || offset != searchNextOffset) return;
                     searchResults.set(merged);
@@ -3965,6 +5298,84 @@ public final class PlayerController {
                 });
             }
         });
+    }
+
+    /** Fetch one additional cursor page from every provider that still has one.
+     * Buckets remain in manifest order and each provider advances independently,
+     * so a slow or exhausted source neither reorders nor truncates the others. */
+    private void loadMorePluginSearch() {
+        if (pluginSearchPageInFlight || pluginSearchByProvider.isEmpty()) return;
+        final String key = currentSearchKey;
+        final String query = currentSearchQuery;
+        final long generation = pluginSearchGeneration.get();
+        final Map<String, String> cursors = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : pluginSearchCursors.entrySet()) {
+            if (entry.getValue() != null && !entry.getValue().isEmpty()) {
+                cursors.put(entry.getKey(), entry.getValue());
+            }
+        }
+        if (query.isEmpty() || key.isEmpty() || cursors.isEmpty()) {
+            searchHasMore.set(false);
+            return;
+        }
+        pluginSearchPageInFlight = true;
+        searchLoading.set(true);
+        AtomicInteger pending = new AtomicInteger(cursors.size());
+        for (Map.Entry<String, String> request : cursors.entrySet()) {
+            final String provider = request.getKey();
+            final String requestedCursor = request.getValue();
+            pluginProviders.searchSongs(provider, query, requestedCursor, SEARCH_PAGE_SIZE)
+                    .whenComplete((page, error) -> post(() -> {
+                        if (generation != pluginSearchGeneration.get()
+                                || !key.equals(currentSearchKey)) return;
+                        // A second request cannot start while this batch is in flight,
+                        // but still reject a response for a cursor the provider no longer owns.
+                        if (!requestedCursor.equals(pluginSearchCursors.get(provider))) return;
+                        if (error != null) {
+                            Logger.warn("plugin {} search page failed: {}", provider,
+                                    safeMessage(error));
+                            // Keep the cursor so scrolling away and back can retry.
+                        } else {
+                            List<Song> additions = page != null && page.items != null
+                                    ? page.items : Collections.<Song>emptyList();
+                            List<Song> base = pluginSearchByProvider.get(provider);
+                            pluginSearchByProvider.put(provider,
+                                    appendUniquePluginSongs(base, additions));
+                            pluginSearchCursors.put(provider,
+                                    page != null && page.nextCursor != null
+                                            ? page.nextCursor : "");
+                            rebuildSearchRows();
+                        }
+                        if (pending.decrementAndGet() == 0) {
+                            pluginSearchPageInFlight = false;
+                            searchLoading.set(false);
+                            searchHasMore.set(hasMorePluginSearch());
+                        }
+                    }));
+        }
+    }
+
+    private static List<Song> appendUniquePluginSongs(List<Song> base, List<Song> additions) {
+        List<Song> existing = base != null ? base : Collections.<Song>emptyList();
+        List<Song> incoming = additions != null ? additions : Collections.<Song>emptyList();
+        List<Song> merged = new ArrayList<>(existing.size() + incoming.size());
+        Set<String> ids = new HashSet<>();
+        for (Song song : existing) {
+            if (song == null || song.id == null || !ids.add(song.id)) continue;
+            merged.add(song);
+        }
+        for (Song song : incoming) {
+            if (song == null || song.id == null || !ids.add(song.id)) continue;
+            merged.add(song);
+        }
+        return Collections.unmodifiableList(merged);
+    }
+
+    private boolean hasMorePluginSearch() {
+        for (String cursor : pluginSearchCursors.values()) {
+            if (cursor != null && !cursor.isEmpty()) return true;
+        }
+        return false;
     }
 
     private static List<NeteaseSong> appendUniqueSongs(List<NeteaseSong> base,
@@ -3990,55 +5401,122 @@ public final class PlayerController {
      */
     public void prepareSearch(String keyword) {
         String query = keyword == null ? "" : keyword.trim();
+        pluginSearchGeneration.incrementAndGet();
+        pluginSearchByProvider.clear();
+        pluginProviderNames.clear();
+        pluginSearchCursors.clear();
+        pluginSearchPageInFlight = false;
         currentSearchKey = query.toLowerCase(Locale.ROOT);
         currentSearchQuery = query;
-        currentCustomSearchKey = query;
         searchNextOffset = 0;
         searchPageInFlight = false;
         searchResults.set(Collections.<NeteaseSong>emptyList());
         localSearchResults.set(Collections.<Track>emptyList());
-        customSearchResults.set(Collections.<CustomSong>emptyList());
         searchAlbumResults.set(Collections.<NeteaseAlbum>emptyList());
         searchArtistResults.set(Collections.<NeteaseArtist>emptyList());
+        sourceSearchAlbumResults.set(Collections.<Album>emptyList());
+        sourceSearchArtistResults.set(Collections.<Artist>emptyList());
         resultCount.set(0);
         searchLoading.set(false);
         searchHasMore.set(false);
         rebuildSearchRows();
     }
 
-    /** Search the user-configured custom API source and publish to
-     *  {@link #customSearchResults}. Independent of {@link #search(String)} — no
-     *  cache layer (a self-hosted proxy is typically low-latency), and silently
-     *  publishes an empty list when the source isn't configured/enabled. */
-    public void searchCustom(String keyword) {
-        if (keyword == null || keyword.trim().isEmpty()) {
-            customSearchResults.set(Collections.<CustomSong>emptyList());
-            rebuildSearchRows();
-            return;
-        }
-        final CustomApiConfig cfg = customApiConfig;
-        if (!cfg.isUsable()) {
-            customSearchResults.set(Collections.<CustomSong>emptyList());
-            rebuildSearchRows();
-            return;
-        }
-        final String key = keyword.trim();
-        currentCustomSearchKey = key;
-        customSearchWorker.submit(() -> {
-            try {
-                List<CustomSong> r = CustomApiClient.search(cfg, key);
-                if (!key.equals(currentCustomSearchKey)) return;
-                post(() -> {
-                    if (key.equals(currentCustomSearchKey)) {
-                        customSearchResults.set(r);
-                        rebuildSearchRows();
-                    }
-                });
-            } catch (Throwable e) {
-                Logger.warn("custom search failed: {}", e.getMessage());
+    /** Start one isolated search per enabled provider. Each completion is merged into
+     * its preallocated provider bucket, so network timing never changes row order. */
+    private boolean searchPlugins(String query, String key) {
+        final long generation = pluginSearchGeneration.incrementAndGet();
+        List<PluginManifest> providers = new ArrayList<>();
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.capabilitySet().contains(ProviderCapability.SEARCH_SONGS)) {
+                providers.add(manifest);
             }
+        }
+        String primary = pluginRegistry.primaryProvider();
+        providers.sort((a, b) -> {
+            if (a.id.equals(primary)) return b.id.equals(primary) ? 0 : -1;
+            if (b.id.equals(primary)) return 1;
+            return 0;
         });
+        pluginSearchByProvider.clear();
+        pluginProviderNames.clear();
+        pluginSearchCursors.clear();
+        pluginSearchPageInFlight = false;
+        for (PluginManifest manifest : providers) {
+            pluginSearchByProvider.put(manifest.id, Collections.<Song>emptyList());
+            pluginProviderNames.put(manifest.id, manifest.name);
+            pluginSearchCursors.put(manifest.id, "");
+        }
+        rebuildSearchRows();
+        if (providers.isEmpty()) return false;
+        searchLoading.set(true);
+        searchHasMore.set(false);
+        AtomicInteger pending = new AtomicInteger(providers.size());
+        for (PluginManifest manifest : providers) {
+            pluginProviders.searchSongs(manifest.id, query, "", SEARCH_PAGE_SIZE)
+                    .whenComplete((page, error) -> post(() -> {
+                        if (generation != pluginSearchGeneration.get()
+                                || !key.equals(currentSearchKey)) return;
+                        if (error != null) {
+                            Logger.warn("plugin {} search failed: {}", manifest.id,
+                                    safeMessage(error));
+                            pluginSearchByProvider.put(manifest.id,
+                                    cachedSongsForProvider(manifest.id, key, SEARCH_PAGE_SIZE));
+                            pluginSearchCursors.put(manifest.id, "");
+                            rebuildSearchRows();
+                        } else {
+                            List<Song> songs = page != null && page.items != null
+                                    ? Collections.unmodifiableList(new ArrayList<>(page.items))
+                                    : Collections.<Song>emptyList();
+                            pluginSearchByProvider.put(manifest.id, songs);
+                            pluginSearchCursors.put(manifest.id,
+                                    page != null && page.nextCursor != null
+                                            ? page.nextCursor : "");
+                            rebuildSearchRows();
+                        }
+                        if (pending.decrementAndGet() == 0) {
+                            searchLoading.set(false);
+                            searchHasMore.set(hasMorePluginSearch());
+                        }
+                    }));
+        }
+        return true;
     }
+
+    private List<Song> cachedSongsForProvider(String provider, String query, int limit) {
+        List<Song> result = new ArrayList<>();
+        for (Track track : mediaMetaIndex.search(query, limit)) {
+            try {
+                if (!provider.equals(MediaId.parse(track.canonicalId()).provider())) continue;
+            } catch (IllegalArgumentException ignored) { continue; }
+            Song song = new Song();
+            song.id = track.canonicalId();
+            song.title = orEmpty(track.title);
+            song.name = song.title;
+            song.artist = orEmpty(track.artist);
+            if (!song.artist.isEmpty()) {
+                song.artists.add(new dev.t1m3.qplayer.media.MediaRef(
+                        orEmpty(track.artistMediaId), song.artist));
+            }
+            song.artistMediaId = orEmpty(track.artistMediaId);
+            song.artistIdsCsv = orEmpty(track.artistIdsCsv);
+            song.artistNamesCsv = orEmpty(track.artistNamesCsv);
+            if (track.album != null && !track.album.isEmpty()) {
+                song.album = new dev.t1m3.qplayer.media.MediaRef("", track.album);
+            }
+            song.artworkUrl = orEmpty(track.coverUrl);
+            song.coverUrl = song.artworkUrl;
+            song.coverThumbPath = song.artworkUrl;
+            song.durationMs = track.durationMs;
+            song.cachedOffline = diskCache.hasAudio(song.id);
+            result.add(song);
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /** Compatibility readers remain for one delayed-migration release, but the
+     * core never uses them as an online source. */
+    private static boolean onlineSourcesArePluginOnly() { return true; }
 
     /** Filter the local library by title/artist/album substring (case-insensitive)
      *  and publish to {@link #localSearchResults}. Synchronous — the library is
@@ -4061,8 +5539,8 @@ public final class PlayerController {
         rebuildSearchRows();
     }
 
-    /** Flatten {@link #searchResults} (netease), {@link #localSearchResults} and
-     *  {@link #customSearchResults} into {@link #searchRows}, in that display
+    /** Flatten online provider results and {@link #localSearchResults} into
+     *  {@link #searchRows}, in stable provider order
      *  order — SearchPage.qml renders one unified list instead of three
      *  independently-scrolling ones (which fought over layout space; see
      *  SearchPage.qml). Must run on the render thread (Property write).
@@ -4091,6 +5569,26 @@ public final class PlayerController {
                 rows.add(row);
             }
         }
+        for (Map.Entry<String, List<Song>> provider : pluginSearchByProvider.entrySet()) {
+            List<Song> songs = provider.getValue();
+            for (int i = 0; songs != null && i < songs.size(); i++) {
+                Song song = songs.get(i);
+                SearchRow row = new SearchRow();
+                row.kind = "plugin";
+                row.kindLabel = pluginProviderNames.getOrDefault(provider.getKey(), provider.getKey());
+                row.providerId = provider.getKey();
+                row.mediaId = song.id;
+                row.artistMediaId = song.artistMediaId;
+                row.index = i;
+                row.name = song.title;
+                row.artist = joinArtistNames(song);
+                row.coverThumbPath = song.artworkUrl;
+                // Generic context actions are added only when their corresponding
+                // provider capabilities exist; playback itself is always available.
+                row.menuEnabled = !song.id.isEmpty();
+                rows.add(row);
+            }
+        }
         List<Track> ls = localSearchResults.peek();
         if (ls != null) {
             for (int i = 0; i < ls.size(); i++) {
@@ -4107,23 +5605,8 @@ public final class PlayerController {
                 rows.add(row);
             }
         }
-        List<CustomSong> cs = customSearchResults.peek();
-        if (cs != null) {
-            for (int i = 0; i < cs.size(); i++) {
-                CustomSong s = cs.get(i);
-                SearchRow row = new SearchRow();
-                row.kind = "custom";
-                row.kindLabel = "自定义源";
-                row.index = i;
-                row.name = s.name;
-                row.artist = s.artist;
-                row.coverThumbPath = s.coverThumbPath;
-                row.customId = s.id;
-                row.menuEnabled = s.id != null && !s.id.isEmpty();
-                rows.add(row);
-            }
-        }
         searchRows.set(rows);
+        if ("song".equals(searchMode.peek())) resultCount.set(rows.size());
     }
 
     /** Route a click on the unified search list (SearchPage.qml) back to the
@@ -4133,9 +5616,9 @@ public final class PlayerController {
         if (rows == null || rowIndex < 0 || rowIndex >= rows.size()) return;
         SearchRow row = rows.get(rowIndex);
         switch (row.kind) {
+            case "plugin": playPluginSearchResult(row.providerId, row.index); break;
             case "netease": playSearchResult(row.index); break;
             case "local": playLocalSearchResult(row.index); break;
-            case "custom": playCustomSearchResult(row.index); break;
             default: break;
         }
     }
@@ -4187,6 +5670,15 @@ public final class PlayerController {
                                  : url + "?param=" + size + "y" + size;
     }
 
+    /** Only the legacy NetEase CDN contract understands the {@code param=} resize
+     * suffix. Provider and custom-source artwork URLs must remain byte-for-byte as
+     * returned instead of having a host-specific query parameter grafted onto them. */
+    private static String trackCoverUrl(Track track, String size) {
+        if (track == null || track.coverUrl == null) return "";
+        return track.source == Track.Source.NETEASE
+                ? thumbUrl(track.coverUrl, size) : track.coverUrl;
+    }
+
     /** Batch-build {@link NeteaseSong#coverThumbPath} for a list of songs. */
     private static void buildSongThumbs(List<NeteaseSong> songs, String size) {
         if (songs == null) return;
@@ -4217,6 +5709,21 @@ public final class PlayerController {
                     t.neteaseId, resumeMs);
             t.streamUrl = null;
             resolveAndPlayNetease(t, idx, resumeMs, coverRevision.get());
+            return;
+        }
+        if (t != null && t.source == Track.Source.PLUGIN && t.streamUrl != null
+                && !t.canonicalId().equals(errorRetryMediaId)) {
+            errorRetryMediaId = t.canonicalId();
+            int idx = playIndex;
+            long backendMs = Math.max(0L, backend.position());
+            Long shown = positionMs.peek();
+            long resumeMs = Math.max(backendMs, shown != null ? shown : 0L);
+            beginLyricClockLoad(resumeMs);
+            Logger.warn("playback error on plugin track {}, clearing stale url and retrying at {}ms",
+                    t.canonicalId(), resumeMs);
+            t.streamUrl = null;
+            t.streamHeaders.clear();
+            resolveAndPlayPlugin(t, idx, resumeMs, coverRevision.get());
             return;
         }
         skipUnplayable(playIndex, "音频加载失败");
@@ -4251,6 +5758,33 @@ public final class PlayerController {
     /** Load the home content: recommended songs (login) + recommended playlists. */
     public void loadHome() {
         post(() -> homeLoading.set(true));
+        PluginManifest provider = primaryProviderWith(ProviderCapability.HOME);
+        if (provider != null) {
+            pluginProviders.home(provider.id, 50).whenComplete((home, error) -> post(() -> {
+                if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+                homeLoading.set(false);
+                if (error != null) {
+                    Logger.warn("plugin {} home failed: {}", provider.id, safeMessage(error));
+                    sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
+                    sourceRecommendations.set(Collections.<Song>emptyList());
+                    return;
+                }
+                ProviderHome value = home != null ? home : new ProviderHome();
+                sourceRecommendPlaylists.set(Collections.unmodifiableList(
+                        new ArrayList<>(value.playlists)));
+                sourceRecommendations.set(Collections.unmodifiableList(
+                        new ArrayList<>(value.songs)));
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            recommendations.set(Collections.<NeteaseSong>emptyList());
+            recommendPlaylists.set(Collections.<NeteasePlaylist>emptyList());
+            homeLoading.set(false);
+            return;
+        }
+        sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
+        sourceRecommendations.set(Collections.<Song>emptyList());
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> picks = netease.personalizedPlaylists(12);
@@ -4276,6 +5810,19 @@ public final class PlayerController {
         });
     }
 
+    private void publishPlayingArtist(Track t) {
+        playingArtistId.set(t != null ? t.artistId : 0L);
+        String ids = t != null ? orEmpty(t.artistIdsCsv) : "";
+        if (ids.isEmpty() && t != null) ids = orEmpty(t.artistMediaId);
+        playingArtistIdsCsv.set(ids);
+        playingArtistNamesCsv.set(t != null ? orEmpty(t.artistNamesCsv) : "");
+    }
+
+    /** Lyric-page artist tap: picker when several credits, otherwise the one artist. */
+    public void openPlayingArtist() {
+        openSongArtistPicker(playingArtistIdsCsv.peek(), playingArtistNamesCsv.peek());
+    }
+
     /** Opens SongContextMenu's "查看歌手" picker. QML hands over the song's full
      *  artist list as two parallel CSVs (ids comma-joined, names joined on
      *  U+0001 so a name containing a comma can't desync the pairing) rather
@@ -4288,11 +5835,17 @@ public final class PlayerController {
         String[] namesArr = namesCsv != null ? namesCsv.split(String.valueOf((char) 1), -1) : new String[0];
         List<NeteaseSong.ArtistRef> refs = new ArrayList<>();
         for (int i = 0; i < ids.length; i++) {
+            String token = ids[i] != null ? ids[i].trim() : "";
+            if (token.isEmpty()) continue;
             NeteaseSong.ArtistRef ref = new NeteaseSong.ArtistRef();
-            try {
-                ref.id = Long.parseLong(ids[i]);
-            } catch (NumberFormatException e) {
-                continue;
+            if (token.indexOf(':') >= 0) {
+                ref.mediaId = token;
+            } else {
+                try {
+                    ref.id = Long.parseLong(token);
+                } catch (NumberFormatException e) {
+                    continue;
+                }
             }
             ref.name = i < namesArr.length ? namesArr[i] : "";
             refs.add(ref);
@@ -4303,9 +5856,12 @@ public final class PlayerController {
         // its avatar request entirely.
         if (refs.size() == 1) {
             closeSongArtistPicker();
-            openArtist(refs.get(0).id);
+            openArtistCredit(refs.get(0));
             return;
         }
+        // The lyric chrome is a separate host pass above Main.qml. A picker
+        // opened while that layer is up is covered, so drop lyrics first.
+        if (Boolean.TRUE.equals(lyricsOpen.peek())) setLyricsOpen(false);
         songArtistPickerList.set(refs);
         songArtistPickerOpen.set(true);
         // A song's own artist credits carry no avatar (id/name only) -- fetch
@@ -4316,18 +5872,20 @@ public final class PlayerController {
         worker.submit(() -> fetchSongArtistAvatars(refs, revision));
     }
 
+    public void openArtistCredit(NeteaseSong.ArtistRef ref) {
+        if (ref == null) return;
+        if (ref.mediaId != null && !ref.mediaId.isEmpty()) openMediaArtist(ref.mediaId);
+        else openArtist(ref.id);
+    }
+
     private void fetchSongArtistAvatars(List<NeteaseSong.ArtistRef> refs, long revision) {
         for (NeteaseSong.ArtistRef ref : refs) {
             if (songArtistPickerRevision != revision) return; // a newer picker open superseded this
-            if (ref.id == 0) continue;
             try {
-                NeteaseClient.ArtistPage page = netease.artistDetail(ref.id);
-                NeteaseArtist artist = page != null ? page.artist : null;
-                if (artist == null || artist.coverUrl == null || artist.coverUrl.isEmpty()) continue;
-                ref.coverUrl = artist.coverUrl;
-                // The picker uses compact 44px circular row avatars; 128px keeps
-                // them sharp at high display scaling without downloading card art.
-                ref.coverThumbPath = thumbUrl(artist.coverUrl, "128");
+                String cover = fetchArtistCreditCover(ref);
+                if (cover == null || cover.isEmpty()) continue;
+                ref.coverUrl = cover;
+                ref.coverThumbPath = cover.startsWith("http") ? thumbUrl(cover, "128") : cover;
                 if (songArtistPickerRevision != revision) return;
                 // Fresh ArtistRef instances, not the same mutated objects re-wrapped in
                 // a new ArrayList: List.equals() compares elements pairwise, and two
@@ -4337,22 +5895,40 @@ public final class PlayerController {
                 // equals the current one (the exact repeat-toast bug from
                 // [[qplayer-2026-07-status]]), so QML would never see this update.
                 List<NeteaseSong.ArtistRef> copy = new ArrayList<>(refs.size());
-                for (NeteaseSong.ArtistRef r : refs) {
-                    NeteaseSong.ArtistRef c = new NeteaseSong.ArtistRef();
-                    c.id = r.id;
-                    c.name = r.name;
-                    c.coverUrl = r.coverUrl;
-                    c.coverThumbPath = r.coverThumbPath;
-                    copy.add(c);
-                }
+                for (NeteaseSong.ArtistRef r : refs) copy.add(copyArtistRef(r));
                 post(() -> {
                     if (songArtistPickerRevision != revision) return;
                     songArtistPickerList.set(copy);
                 });
             } catch (Throwable e) {
-                Logger.warn("song-artist-picker avatar fetch failed for {}: {}", ref.id, e.toString());
+                Logger.warn("song-artist-picker avatar fetch failed for {}: {}",
+                        ref.mediaId != null && !ref.mediaId.isEmpty() ? ref.mediaId : Long.toString(ref.id),
+                        e.toString());
             }
         }
+    }
+
+    private String fetchArtistCreditCover(NeteaseSong.ArtistRef ref) throws Exception {
+        if (ref.mediaId != null && !ref.mediaId.isEmpty()) {
+            Artist artist = pluginProviders.artist(MediaId.parse(ref.mediaId)).get(8, TimeUnit.SECONDS);
+            if (artist == null) return null;
+            if (artist.artworkUrl != null && !artist.artworkUrl.isEmpty()) return artist.artworkUrl;
+            return artist.coverUrl;
+        }
+        if (ref.id == 0L) return null;
+        NeteaseClient.ArtistPage page = netease.artistDetail(ref.id);
+        NeteaseArtist artist = page != null ? page.artist : null;
+        return artist != null ? artist.coverUrl : null;
+    }
+
+    private static NeteaseSong.ArtistRef copyArtistRef(NeteaseSong.ArtistRef r) {
+        NeteaseSong.ArtistRef c = new NeteaseSong.ArtistRef();
+        c.id = r.id;
+        c.mediaId = r.mediaId;
+        c.name = r.name;
+        c.coverUrl = r.coverUrl;
+        c.coverThumbPath = r.coverThumbPath;
+        return c;
     }
 
     public void closeSongArtistPicker() {
@@ -4362,8 +5938,48 @@ public final class PlayerController {
 
     /** Open a playlist: detail (name) + its tracks. */
     /** Open an artist page: profile (name/avatar/bio) + hot songs + albums. */
+    public void openMediaArtist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (mediaId.indexOf(':') < 0) {
+            try { openArtist(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
+            return;
+        }
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.ARTIST); }
+        catch (IllegalArgumentException error) { showToast("无效的歌手标识"); return; }
+        openSourceArtistId.set(id.toString());
+        openArtistId.set(0L);
+        artistPageOpen.set(true);
+        pageNavigationTarget.set("artist");
+        pageNavigationEntityId.set(id.toString());
+        pageNavigationRevision.set(++pageNavigationSequence);
+        artistLoading.set(true);
+        artistName.set("");
+        artistCoverPath.set("");
+        artistBriefDesc.set("");
+        sourceArtistSongs.set(Collections.<Song>emptyList());
+        sourceArtistAlbums.set(Collections.<Album>emptyList());
+        pluginProviders.artist(id).whenComplete((artist, error) -> post(() -> {
+            if (!id.toString().equals(openSourceArtistId.peek())) return;
+            artistLoading.set(false);
+            if (error != null || artist == null) {
+                Logger.warn("plugin artist {} failed: {}", id, safeMessage(error));
+                showToast("加载歌手信息失败，请检查网络或插件状态");
+                return;
+            }
+            artistName.set(artist.name);
+            artistCoverPath.set(artist.artworkUrl);
+            artistBriefDesc.set(artist.description);
+            sourceArtistSongs.set(Collections.unmodifiableList(new ArrayList<>(artist.songs)));
+            sourceArtistAlbums.set(Collections.unmodifiableList(new ArrayList<>(artist.albums)));
+        }));
+    }
+
     public void openArtist(long artistId) {
+        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开歌手"); return; }
         if (artistId == 0L) return;
+        openSourceArtistId.set("");
+        pageNavigationEntityId.set(Long.toString(artistId));
         currentArtistId = artistId;
         openArtistId.set(artistId);
         artistPageOpen.set(true);
@@ -4407,12 +6023,62 @@ public final class PlayerController {
 
     /** Play a song from the open artist's hot-songs list. */
     public void playArtistSong(int i) {
+        if (!openSourceArtistId.peek().isEmpty()) {
+            playPluginSongList(sourceArtistSongs.peek(), i);
+            return;
+        }
         playSongList(artistSongs.peek(), i);
     }
 
     /** Open an album page: profile (name/cover/artist) + full tracklist. */
+    public void openMediaAlbum(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (mediaId.indexOf(':') < 0) {
+            try { openAlbum(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
+            return;
+        }
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.ALBUM); }
+        catch (IllegalArgumentException error) { showToast("无效的专辑标识"); return; }
+        openSourceAlbumId.set(id.toString());
+        openAlbumId.set(0L);
+        albumPageOpen.set(true);
+        pageNavigationTarget.set("album");
+        pageNavigationEntityId.set(id.toString());
+        pageNavigationRevision.set(++pageNavigationSequence);
+        albumLoading.set(true);
+        albumName.set("");
+        albumCoverPath.set("");
+        albumArtistName.set("");
+        albumArtistId.set(0L);
+        albumArtistMediaId.set("");
+        albumPublishYear.set("");
+        sourceAlbumTracks.set(Collections.<Song>emptyList());
+        pluginProviders.album(id).whenComplete((album, error) -> post(() -> {
+            if (!id.toString().equals(openSourceAlbumId.peek())) return;
+            albumLoading.set(false);
+            if (error != null || album == null) {
+                Logger.warn("plugin album {} failed: {}", id, safeMessage(error));
+                showToast("加载专辑信息失败，请检查网络或插件状态");
+                return;
+            }
+            albumName.set(album.name);
+            albumCoverPath.set(album.artworkUrl);
+            albumArtistName.set(album.artistName);
+            albumArtistMediaId.set(album.artistMediaId);
+            albumPublishYear.set(album.publishTimeMs > 0
+                    ? new java.text.SimpleDateFormat("yyyy年", java.util.Locale.CHINA)
+                            .format(new java.util.Date(album.publishTimeMs)) : "");
+            sourceAlbumTracks.set(Collections.unmodifiableList(new ArrayList<>(album.songs)));
+        }));
+    }
+
     public void openAlbum(long albumId) {
+        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开专辑"); return; }
         if (albumId == 0L) return;
+        openSourceAlbumId.set("");
+        albumArtistMediaId.set("");
+        pageNavigationEntityId.set(Long.toString(albumId));
         currentAlbumId = albumId;
         openAlbumId.set(albumId);
         albumPageOpen.set(true);
@@ -4459,13 +6125,65 @@ public final class PlayerController {
 
     /** Play a song from the open album's tracklist. */
     public void playAlbumTrack(int i) {
+        if (!openSourceAlbumId.peek().isEmpty()) {
+            playPluginSongList(sourceAlbumTracks.peek(), i);
+            return;
+        }
         playSongList(albumTracks.peek(), i);
     }
 
+    public void openMediaPlaylist(String mediaId) {
+        if (mediaId == null || mediaId.isEmpty()) return;
+        if (mediaId.indexOf(':') < 0) {
+            try { openPlaylist(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
+            return;
+        }
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
+        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        currentPlaylistId = 0L;
+        openPlaylistId.set(0L);
+        openSourcePlaylistId.set(id.toString());
+        playlistLoading.set(true);
+        playlistOffline.set(false);
+        playlistTracks.set(Collections.<NeteaseSong>emptyList());
+        sourcePlaylistTracks.set(Collections.<Song>emptyList());
+        playlistTitle.set("");
+        playlistCoverPath.set("");
+        playlistSubscribed.set(false);
+        playlistOwned.set(false);
+        playlistDeletable.set(false);
+        pluginProviders.playlist(id).whenComplete((playlist, error) -> post(() -> {
+            if (!id.toString().equals(openSourcePlaylistId.peek())) return;
+            playlistLoading.set(false);
+            Playlist resolved = playlist;
+            if (error != null || resolved == null) {
+                Logger.warn("plugin playlist {} failed: {}", id, safeMessage(error));
+                resolved = mediaPlaylistCacheIndex.get(id.toString());
+                if (resolved == null) {
+                    showToast("加载歌单失败，请检查网络或插件状态");
+                    return;
+                }
+                playlistOffline.set(true);
+            }
+            playlistTitle.set(resolved.name);
+            playlistCoverPath.set(resolved.artworkUrl);
+            playlistSubscribed.set(resolved.subscribed);
+            playlistOwned.set(resolved.owned);
+            playlistDeletable.set(resolved.deletable);
+            sourcePlaylistTracks.set(Collections.unmodifiableList(
+                    new ArrayList<>(resolved.songs)));
+            mediaPlaylistCacheIndex.upsert(resolved);
+            worker.submit(mediaPlaylistCacheIndex::save);
+        }));
+    }
+
     public void openPlaylist(long playlistId) {
+        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开歌单"); return; }
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.
         currentPlaylistId = playlistId;
+        openSourcePlaylistId.set("");
         openPlaylistId.set(playlistId);
         playlistLoading.set(true);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
@@ -4656,6 +6374,11 @@ public final class PlayerController {
     /** Collect / un-collect the currently open playlist. No-op on your own playlist or
      *  when signed out. Optimistically flips the icon, reverting if the server refuses. */
     public void togglePlaylistSubscribe() {
+        String sourceId = openSourcePlaylistId.peek();
+        if (sourceId != null && !sourceId.isEmpty()) {
+            toggleMediaPlaylistSubscribe(sourceId);
+            return;
+        }
         if (!loggedIn.get() || playlistOwned.get()) return;
         if (subscribeBusy) return;   // one in flight: ignore the tap, never stack/retry
         final long id = currentPlaylistId;
@@ -4684,8 +6407,51 @@ public final class PlayerController {
         });
     }
 
+    private void toggleMediaPlaylistSubscribe(String mediaId) {
+        if (!loggedIn.peek() || playlistOwned.peek() || subscribeBusy) return;
+        final MediaId id;
+        try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
+        catch (IllegalArgumentException error) { return; }
+        if (!pluginHasCapability(id.provider(), ProviderCapability.PLAYLIST_MUTATION)) return;
+        final boolean target = !Boolean.TRUE.equals(playlistSubscribed.peek());
+        subscribeBusy = true;
+        playlistSubscribed.set(target);
+        pluginProviders.mutatePlaylist(id, target ? "subscribe" : "unsubscribe",
+                        Collections.<MediaId>emptyList(), null)
+                .whenComplete((success, error) -> post(() -> {
+                    subscribeBusy = false;
+                    if (!id.toString().equals(openSourcePlaylistId.peek())) return;
+                    if (error == null && Boolean.TRUE.equals(success)) {
+                        showToast(target ? "已收藏歌单" : "已取消收藏");
+                        loadMyPlaylists();
+                    } else {
+                        playlistSubscribed.set(!target);
+                        showToast("操作失败：" + safeMessage(error));
+                    }
+                }));
+    }
+
     /** Load the signed-in user's playlists (favorites + created). */
     public void loadMyPlaylists() {
+        PluginManifest provider = primaryProviderWith(ProviderCapability.USER_PLAYLISTS);
+        if (provider != null) {
+            pluginProviders.userPlaylists(provider.id, 100).whenComplete((playlists, error) -> post(() -> {
+                if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+                if (error != null) {
+                    Logger.warn("plugin {} user playlists failed: {}", provider.id,
+                            safeMessage(error));
+                    showToast("加载歌单失败，请检查网络或插件状态");
+                    return;
+                }
+                sourceMyPlaylists.set(playlists);
+                playlistCount.set(playlists.size());
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
+            return;
+        }
         // uid == 0 normally means "not logged in, nothing to load" -- except when
         // refreshLogin's own live check just failed offline but cookies say we
         // were logged in last session (see its catch block): there's no live uid
@@ -4761,6 +6527,19 @@ public final class PlayerController {
 
     /** Create a new (public) playlist named {@code name}, then refresh 我的. */
     public void createPlaylist(String name) {
+        PluginManifest provider = primaryProviderWith(ProviderCapability.PLAYLIST_MUTATION);
+        if (provider != null) {
+            final String normalized = name != null ? name.trim() : "";
+            if (!loggedIn.peek() || normalized.isEmpty()) return;
+            pluginProviders.createPlaylist(provider.id, normalized, false)
+                    .whenComplete((id, error) -> post(() -> {
+                        if (error == null && id != null && !id.isEmpty()) {
+                            showToast("歌单已创建");
+                            loadMyPlaylists();
+                        } else showToast("创建歌单失败：" + safeMessage(error));
+                    }));
+            return;
+        }
         if (uid == 0 || name == null) return;
         final String nm = name.trim();
         if (nm.isEmpty()) return;
@@ -4873,6 +6652,19 @@ public final class PlayerController {
         });
     }
 
+    public void deleteMediaPlaylist(String playlistMediaId) {
+        final MediaId id;
+        try { id = MediaId.parse(playlistMediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
+        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        pluginProviders.mutatePlaylist(id, "delete", Collections.<MediaId>emptyList(), null)
+                .whenComplete((success, error) -> post(() -> {
+                    if (error == null && Boolean.TRUE.equals(success)) {
+                        showToast("歌单已删除");
+                        loadMyPlaylists();
+                    } else showToast("删除歌单失败：" + safeMessage(error));
+                }));
+    }
+
     /** Add a track to one of the user's playlists (from a song's long-press menu). */
     public void addToPlaylist(long playlistId, long songId) {
         if (uid == 0 || playlistId == 0 || songId == 0) return;
@@ -4885,6 +6677,39 @@ public final class PlayerController {
                 showToast("添加失败");
             }
         });
+    }
+
+    public void addMediaToPlaylist(String playlistMediaId, String songMediaId) {
+        mutateMediaPlaylist(playlistMediaId, songMediaId, true, false);
+    }
+
+    public void removeMediaFromCurrentPlaylist(String songMediaId) {
+        mutateMediaPlaylist(openSourcePlaylistId.peek(), songMediaId, false, true);
+    }
+
+    private void mutateMediaPlaylist(String playlistMediaId, String songMediaId,
+                                     boolean add, boolean refreshDetail) {
+        final MediaId playlistId;
+        final MediaId songId;
+        try {
+            playlistId = MediaId.parse(playlistMediaId).requireKind(
+                    dev.t1m3.qplayer.media.MediaKind.PLAYLIST);
+            songId = MediaId.parse(songMediaId).requireKind(
+                    dev.t1m3.qplayer.media.MediaKind.SONG);
+        } catch (IllegalArgumentException error) {
+            showToast("无效的媒体标识");
+            return;
+        }
+        pluginProviders.mutatePlaylist(playlistId, add ? "add" : "remove",
+                        Collections.singletonList(songId), null)
+                .whenComplete((success, error) -> post(() -> {
+                    if (error == null && Boolean.TRUE.equals(success)) {
+                        showToast(add ? "已添加到歌单" : "已从歌单移除");
+                        if (refreshDetail && playlistId.toString().equals(openSourcePlaylistId.peek())) {
+                            openMediaPlaylist(playlistId.toString());
+                        }
+                    } else showToast((add ? "添加失败：" : "移除失败：") + safeMessage(error));
+                }));
     }
 
     /** Remove a track from the currently open playlist (the "从此歌单移除" menu
@@ -4910,6 +6735,22 @@ public final class PlayerController {
 
     /** Recently played (netease listen history). */
     public void loadRecent() {
+        PluginManifest provider = primaryProviderWith(ProviderCapability.RECENT);
+        if (provider != null) {
+            pluginProviders.recent(provider.id, 100).whenComplete((songs, error) -> post(() -> {
+                if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+                if (error != null) {
+                    Logger.warn("plugin {} recent failed: {}", provider.id, safeMessage(error));
+                    return;
+                }
+                sourceRecentSongs.set(songs);
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            recentSongs.set(Collections.<NeteaseSong>emptyList());
+            return;
+        }
         if (uid == 0) return;
         worker.submit(() -> {
             try {
@@ -4939,9 +6780,50 @@ public final class PlayerController {
         });
     }
 
+    private void refreshPluginLiked(String provider) {
+        if (!pluginHasCapability(provider, ProviderCapability.LIKE)) {
+            pluginLikedSet.clear();
+            likedCount.set(0);
+            currentLiked.set(false);
+            return;
+        }
+        pluginProviders.likedSongs(provider).whenComplete((ids, error) -> post(() -> {
+            if (!provider.equals(pluginRegistry.primaryProvider())) return;
+            if (error != null) {
+                Logger.warn("plugin {} liked list failed: {}", provider, safeMessage(error));
+                return;
+            }
+            pluginLikedSet.clear();
+            pluginLikedSet.addAll(ids);
+            likedCount.set(ids.size());
+            Track current = currentTrack();
+            currentLiked.set(current != null && ids.contains(current.canonicalId()));
+        }));
+    }
+
     /** Like / unlike the current netease track. */
     public void toggleLike() {
         Track cur = currentTrack();
+        if (cur != null && cur.source == Track.Source.PLUGIN) {
+            final MediaId id;
+            try { id = MediaId.parse(cur.canonicalId()).requireKind(
+                    dev.t1m3.qplayer.media.MediaKind.SONG); }
+            catch (IllegalArgumentException error) { return; }
+            if (!pluginHasCapability(id.provider(), ProviderCapability.LIKE)) return;
+            final boolean target = !pluginLikedSet.contains(id.toString());
+            pluginProviders.setLiked(id, target).whenComplete((success, error) -> post(() -> {
+                if (error == null && Boolean.TRUE.equals(success)) {
+                    if (target) pluginLikedSet.add(id.toString());
+                    else pluginLikedSet.remove(id.toString());
+                    likedCount.set(pluginLikedSet.size());
+                    Track current = currentTrack();
+                    if (current != null && id.toString().equals(current.canonicalId())) {
+                        currentLiked.set(target);
+                    }
+                } else showToast(target ? "收藏失败" : "取消收藏失败");
+            }));
+            return;
+        }
         if (cur == null || cur.neteaseId == 0) return;
         long id = cur.neteaseId;
         boolean target = !likedSet.contains(id);
@@ -5049,804 +6931,21 @@ public final class PlayerController {
         return d > 0 ? d : 0L;
     }
 
-    // --- NetEase Listen Together -----------------------------------------
-
-    public void createListenTogetherRoom() {
-        if (!loggedIn.peek()) {
-            showToast("请先登录后使用一起听");
-            return;
-        }
-        Track current = currentTrack();
-        if (current == null || current.source != Track.Source.NETEASE || current.neteaseId == 0L) {
-            showToast("请先播放一首网易云歌曲");
-            return;
-        }
-        if (Boolean.TRUE.equals(listenTogetherBusy.peek())) return;
-        listenTogetherBusy.set(true);
-        togetherWorker.execute(() -> {
-            try {
-                long userId = uid != 0L ? uid : netease.loginUid();
-                NeteaseClient.TogetherRoom room = netease.createTogetherRoom();
-                establishTogetherRoom(room, userId);
-                reportTogetherQueueNow();
-                reportTogetherCommandNow("GOTO", 0L, current.neteaseId);
-                baselineTogetherLocal();
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast("一起听房间已创建");
-                });
-            } catch (Throwable e) {
-                Logger.warn("create listen-together room failed: {}", e.getMessage());
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast("创建一起听房间失败：" + safeMessage(e));
-                });
-            }
-        });
-    }
-
-    /**
-     * Manual test hook for the reverse-engineered multi-person "一起听"
-     * (LTMulti) endpoint family — NOT wired into the real listen-together
-     * UI/sync pipeline, and no longer exposed by any QML button (was
-     * briefly, during live testing; removed from ListenTogetherDialog.qml
-     * once the room/create call itself was confirmed reachable). Creates a
-     * multi-room for the current track and toasts/logs the raw server
-     * response.
-     *
-     * <p>Confirmed 2026-08-30 against a real account: room/create with
-     * type=1 succeeded on the first call and returned a genuine roomId, so
-     * the shared CHECK_TOKEN (see NeteaseClient) does get past netease's
-     * anti-fraud check — at least once. A retest ~23 minutes later still
-     * hit netease's own risk-control cooldown ("当前匹配存在风险，暂时无法
-     * 发起一起听"), so don't call this repeatedly — invite/heartbeat/exit
-     * are still unverified. Re-wire a temporary button when picking this
-     * back up.
-     */
-    public void debugCreateMultiRoom() {
-        if (!loggedIn.peek()) {
-            showToast("请先登录后使用一起听");
-            return;
-        }
-        Track current = currentTrack();
-        if (current == null || current.source != Track.Source.NETEASE || current.neteaseId == 0L) {
-            showToast("请先播放一首网易云歌曲");
-            return;
-        }
-        if (Boolean.TRUE.equals(listenTogetherBusy.peek())) return;
-        listenTogetherBusy.set(true);
-        final long songId = current.neteaseId;
-        togetherWorker.execute(() -> {
-            // type=1 confirmed working against a real account (2026-08-30);
-            // 0 was rejected server-side with "此类型暂不支持". Other values
-            // unexplored — repeated rapid calls trip netease's risk control
-            // ("当前匹配存在风险，暂时无法发起一起听"), so don't sweep here.
-            try {
-                NeteaseClient.MultiRoomResult result = netease.createMultiRoom(
-                        1, songId, Collections.<Long>emptyList(),
-                        Collections.<Long>emptyList(), false);
-                Logger.info("multi-room create: success={} roomId={} onlineCount={} "
-                                + "existRoomId={} existRoomType={} failedType={} failedMessage={}",
-                        result.success,
-                        result.room != null ? result.room.roomId : "",
-                        result.room != null ? result.room.onlineCount : -1,
-                        result.existRoomId, result.existRoomType,
-                        result.failedType, result.failedMessage);
-                String summary = result.success && result.room != null
-                        ? "多人房间创建成功：" + result.room.roomId + "（在线 " + result.room.onlineCount + " 人）"
-                        : "多人房间创建失败：" + (result.failedMessage.isEmpty()
-                                ? (result.failedType.isEmpty() ? "无错误详情，见日志" : result.failedType)
-                                : result.failedMessage);
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast(summary);
-                });
-            } catch (Throwable e) {
-                Logger.warn("debug multi-room create failed: {}", e.getMessage());
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast("多人房间请求失败：" + safeMessage(e));
-                });
-            }
-        });
-    }
-
-    /** Join from the official app's shared URL (roomId + inviterId query items). */
-    public void joinListenTogether(String invitation) {
-        if (!loggedIn.peek()) {
-            showToast("请先登录后使用一起听");
-            return;
-        }
-        final String roomId = inviteParameter(invitation, "roomId");
-        String inviter = inviteParameter(invitation, "inviterId");
-        if (inviter.isEmpty()) inviter = inviteParameter(invitation, "inviterUid");
-        final long inviterId;
-        try {
-            inviterId = Long.parseLong(inviter);
-        } catch (Throwable ignored) {
-            showToast("邀请链接缺少 inviterId");
-            return;
-        }
-        if (roomId.isEmpty()) {
-            showToast("邀请链接缺少 roomId");
-            return;
-        }
-        if (Boolean.TRUE.equals(listenTogetherBusy.peek())) return;
-        listenTogetherBusy.set(true);
-        togetherWorker.execute(() -> {
-            try {
-                if (!netease.togetherRoomJoinable(roomId)) {
-                    throw new java.io.IOException("房间已失效或无法加入");
-                }
-                long userId = uid != 0L ? uid : netease.loginUid();
-                NeteaseClient.TogetherRoom room =
-                        netease.acceptTogetherInvitation(roomId, inviterId);
-                establishTogetherRoom(room, userId);
-                NeteaseClient.TogetherSnapshot snapshot = netease.togetherSnapshot(roomId);
-                applyTogetherSnapshot(snapshot, true, false);
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast("已加入一起听");
-                });
-            } catch (Throwable e) {
-                Logger.warn("join listen-together room failed: {}", e.getMessage());
-                clearTogetherRoom(false);
-                post(() -> {
-                    listenTogetherBusy.set(false);
-                    showToast("加入一起听失败：" + safeMessage(e));
-                });
-            }
-        });
-    }
-
-    public void copyListenTogetherInvitation() {
-        if (!togetherActive) return;
-        String invitation = buildTogetherInvitation();
-        post(() -> listenTogetherInvitation.set(invitation));
-        java.util.function.Consumer<String> sink = clipboard;
-        if (sink != null) {
-            sink.accept(invitation);
-            showToast("已复制一起听邀请");
-        } else {
-            showToast(invitation);
-        }
-    }
-
-    public void leaveListenTogether() {
-        final String roomId = togetherRoomId;
-        if (roomId.isEmpty() || Boolean.TRUE.equals(listenTogetherBusy.peek())) return;
-        listenTogetherBusy.set(true);
-        // Clear immediately so no later poll can apply stale remote playback while
-        // the end request is in flight. Server failure must not trap the local UI.
-        clearTogetherRoom(false);
-        togetherWorker.execute(() -> {
-            try {
-                netease.endTogetherRoom(roomId);
-            } catch (Throwable e) {
-                Logger.warn("leave listen-together room failed: {}", e.getMessage());
-            }
-            post(() -> {
-                listenTogetherBusy.set(false);
-                showToast("已退出一起听");
-            });
-        });
-    }
-
-    private void restoreListenTogetherRoom() {
-        if (!netease.isLoggedIn() || togetherActive) return;
-        togetherWorker.execute(() -> {
-            try {
-                NeteaseClient.TogetherStatus status = netease.togetherStatus();
-                if (!status.inRoom || status.room == null || status.room.roomId.isEmpty()) return;
-                long userId = uid != 0L ? uid : netease.loginUid();
-                establishTogetherRoom(status.room, userId);
-                NeteaseClient.TogetherSnapshot snapshot =
-                        netease.togetherSnapshot(status.room.roomId);
-
-                // Restoring an old room during process startup is not an implicit
-                // request to start audio. The peer may still be playing, but this
-                // fresh QPlayer instance begins paused: make that pause authoritative
-                // for the room, then load the shared queue/progress without adopting
-                // the snapshot's PLAY flag. A deliberate "join" action uses the
-                // normal path above and still follows the room's live state.
-                long targetId = snapshot.command != null
-                        ? snapshot.command.targetSongId : 0L;
-                if (targetId == 0L && !snapshot.songIds.isEmpty()) {
-                    targetId = snapshot.songIds.get(0);
-                }
-                long progress = snapshot.command != null
-                        ? Math.max(0L, snapshot.command.progressMs) : 0L;
-                if (targetId != 0L) {
-                    try {
-                        netease.reportTogetherCommand(status.room.roomId, "PAUSE",
-                                progress, false, targetId, targetId,
-                                ++togetherClientSeq);
-                    } catch (Throwable reportError) {
-                        Logger.warn("startup listen-together pause report failed: {}",
-                                reportError.getMessage());
-                    }
-                }
-                applyTogetherSnapshot(snapshot, true, true);
-                post(() -> showToast("正在一起听"));
-            } catch (Throwable e) {
-                Logger.warn("restore listen-together room failed: {}", e.getMessage());
-            }
-        });
-    }
-
-    private void establishTogetherRoom(NeteaseClient.TogetherRoom room, long userId) {
-        togetherRoomId = room.roomId;
-        togetherUserId = userId;
-        togetherActive = true;
-        togetherTickCount = 0L;
-        togetherClientSeq = 0L;
-        togetherQueueVersion = 0L;
-        togetherLastRemoteSeq = -1L;
-        togetherLastRemoteCommand = "";
-        togetherPendingRemoteCommand = "";
-        togetherPendingRemoteSeq = -1L;
-        togetherRateLimitUntil = 0L;
-        togetherRateLimitFailures = 0;
-        cancelPendingTogetherAutoAdvance();
-        togetherLeaderUserId = togetherLeaderId(room, userId);
-        togetherSuppressReportsUntil = System.currentTimeMillis() + 1800L;
-        publishTogetherRoom(room);
-        baselineTogetherLocal();
-    }
-
-    private void publishTogetherRoom(NeteaseClient.TogetherRoom room) {
-        // Membership/status refreshes repeat the immutable room creator. Use it only
-        // for initial election; otherwise they would undo dynamic control transfer
-        // after another participant switches tracks.
-        if (togetherLeaderUserId == 0L) {
-            togetherLeaderUserId = togetherLeaderId(room, togetherUserId);
-        }
-        StringBuilder members = new StringBuilder();
-        for (NeteaseClient.TogetherUser user : room.users) {
-            if (members.length() > 0) members.append("、");
-            members.append(user.nickname == null || user.nickname.isEmpty()
-                    ? String.valueOf(user.userId) : user.nickname);
-        }
-        String names = members.length() == 0 ? "等待另一位听众加入" : members.toString();
-        String status = "房间已连接" + (room.users.isEmpty() ? "" : " · " + room.users.size() + " 人");
-        String invitation = buildTogetherInvitation();
-        post(() -> {
-            listenTogetherInRoom.set(true);
-            listenTogetherRoomId.set(room.roomId);
-            listenTogetherMembers.set(names);
-            listenTogetherStatusText.set(status);
-            listenTogetherInvitation.set(invitation);
-        });
-    }
-
-    private void clearTogetherRoom(boolean serverEnded) {
-        final boolean advanceLocally = togetherPendingAutoAdvanceSongId != 0L;
-        togetherActive = false;
-        togetherRoomId = "";
-        togetherUserId = 0L;
-        togetherLeaderUserId = 0L;
-        pendingTogetherDesiredPlaying = null;
-        pendingTogetherTargetSongId = 0L;
-        togetherPendingRemoteCommand = "";
-        togetherPendingRemoteSeq = -1L;
-        togetherRateLimitUntil = 0L;
-        togetherRateLimitFailures = 0;
-        if (advanceLocally) {
-            onMain(() -> {
-                if (togetherPendingAutoAdvanceSongId == 0L) return;
-                cancelPendingTogetherAutoAdvance();
-                performAutoAdvance();
-            });
-        }
-        post(() -> {
-            listenTogetherInRoom.set(false);
-            listenTogetherRoomId.set("");
-            listenTogetherMembers.set("");
-            listenTogetherInvitation.set("");
-            listenTogetherStatusText.set(serverEnded ? "房间已结束" : "尚未加入房间");
-        });
-    }
-
-    private void listenTogetherTick() {
-        if (!togetherActive) return;
-        final String roomId = togetherRoomId;
-        if (roomId.isEmpty()) return;
-        if (System.currentTimeMillis() < togetherRateLimitUntil) return;
-        try {
-            if (System.currentTimeMillis() >= togetherSuppressReportsUntil) {
-                reportTogetherLocalChanges();
-            }
-            NeteaseClient.TogetherSnapshot snapshot = netease.togetherSnapshot(roomId);
-            if (!roomId.equals(togetherRoomId)) return;
-            applyTogetherSnapshot(snapshot, false, false);
-
-            long tick = ++togetherTickCount;
-            if (tick % 5L == 0L) {
-                Track track = currentTrack();
-                netease.togetherHeartbeat(roomId,
-                        track != null ? track.neteaseId : 0L,
-                        playingIntent, Math.max(0L, backend.position()));
-                NeteaseClient.TogetherStatus status = netease.togetherStatus();
-                if (!status.inRoom || status.room == null) {
-                    clearTogetherRoom(true);
-                } else {
-                    publishTogetherRoom(status.room);
-                }
-            }
-            boolean recoveredFromRateLimit = togetherRateLimitFailures > 0;
-            togetherRateLimitUntil = 0L;
-            togetherRateLimitFailures = 0;
-            if (recoveredFromRateLimit) {
-                post(() -> {
-                    if (togetherActive) listenTogetherStatusText.set("房间已连接");
-                });
-            }
-        } catch (Throwable e) {
-            if (isTogetherRateLimited(e)) {
-                int failures = Math.min(16, togetherRateLimitFailures + 1);
-                togetherRateLimitFailures = failures;
-                if (togetherRateLimitShouldPause(failures)) {
-                    togetherRateLimitUntil = Long.MAX_VALUE;
-                    Logger.warn("listen-together rate limited {} times; automatic sync paused: {}",
-                            failures, e.getMessage());
-                    post(() -> {
-                        if (togetherActive) {
-                            listenTogetherStatusText.set(
-                                    "同步因操作频繁已暂停，请退出房间后重新加入");
-                        }
-                    });
-                    return;
-                }
-                long delayMs = togetherRateLimitBackoffMs(failures);
-                togetherRateLimitUntil = System.currentTimeMillis() + delayMs;
-                long delaySeconds = delayMs / 1000L;
-                Logger.warn("listen-together rate limited; retrying in {}s: {}",
-                        delaySeconds, e.getMessage());
-                post(() -> {
-                    if (togetherActive) {
-                        listenTogetherStatusText.set(
-                                "同步请求过于频繁，" + delaySeconds + " 秒后重试");
-                    }
-                });
-                return;
-            }
-            Logger.warn("listen-together sync failed: {}", e.getMessage());
-            post(() -> {
-                if (togetherActive) listenTogetherStatusText.set("正在重新连接…");
-            });
-        }
-    }
-
-    static long togetherRateLimitBackoffMs(int consecutiveFailures) {
-        int exponent = Math.max(0, Math.min(2, consecutiveFailures - 1));
-        return Math.min(TOGETHER_RATE_LIMIT_MAX_MS,
-                TOGETHER_RATE_LIMIT_BASE_MS << exponent);
-    }
-
-    static boolean togetherRateLimitShouldPause(int consecutiveFailures) {
-        return consecutiveFailures > TOGETHER_RATE_LIMIT_MAX_RETRIES;
-    }
-
-    static boolean isTogetherRateLimited(Throwable error) {
-        Throwable current = error;
-        for (int depth = 0; current != null && depth < 8; depth++) {
-            String message = current.getMessage();
-            if (message != null) {
-                String lower = message.toLowerCase(java.util.Locale.ROOT);
-                if (message.contains("操作频繁")
-                        || message.contains("请求频繁")
-                        || (message.contains("频繁") && message.contains("稍后"))
-                        || lower.contains("too many requests")
-                        || lower.contains("rate limit")
-                        || lower.contains("http 429")) {
-                    return true;
-                }
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private void reportTogetherLocalChanges() throws java.io.IOException {
-        String queueSignature = currentTogetherQueueSignature();
-        if (!queueSignature.equals(togetherLastQueueSignature)) {
-            reportTogetherQueueNow();
-            togetherLastQueueSignature = queueSignature;
-        }
-
-        Track track = currentTrack();
-        long songId = track != null ? track.neteaseId : 0L;
-        long seek = seekRevision.get();
-        if (songId == 0L) return;
-        if (songId != togetherLastSongId) {
-            // playAt() replaces the logical track before an uncached source has
-            // finished resolving. During that gap backend.position() still belongs
-            // to the outgoing source (especially while the render pump is stopped),
-            // so publishing it as GOTO.progress makes the peer open the next song at
-            // the previous song's timestamp. A live song switch always starts at 0;
-            // initial room creation still uses the overload below to share the
-            // already-playing song's real position.
-            reportTogetherCommandNow("GOTO", togetherLastSongId, songId, 0L);
-            // Transfer only after the server accepted GOTO. On a network failure the
-            // next tick retries instead of leaving the two clients with conflicting
-            // private ideas of who owns natural advance. Remote-applied changes call
-            // baselineTogetherLocal(), so they cannot steal ownership from sender.
-            togetherLeaderUserId = togetherUserId;
-        } else if (seek != togetherLastSeekRevision) {
-            reportTogetherCommandNow("PROGRESS", songId, songId);
-        } else if (playingIntent != togetherLastPlaying) {
-            reportTogetherCommandNow(playingIntent ? "PLAY" : "PAUSE", songId, songId);
-        }
-        togetherLastSongId = songId;
-        togetherLastPlaying = playingIntent;
-        togetherLastSeekRevision = seek;
-    }
-
-    private void reportTogetherQueueNow() throws java.io.IOException {
-        netease.reportTogetherPlaylist(togetherRoomId, togetherUserId,
-                ++togetherQueueVersion, currentTogetherSongIds());
-    }
-
-    private void reportTogetherCommandNow(String type, long former, long target)
-            throws java.io.IOException {
-        reportTogetherCommandNow(type, former, target, backend.position());
-    }
-
-    private void reportTogetherCommandNow(String type, long former, long target, long progressMs)
-            throws java.io.IOException {
-        netease.reportTogetherCommand(togetherRoomId, type,
-                Math.max(0L, progressMs), playingIntent, former, target,
-                ++togetherClientSeq);
-    }
-
-    private void applyTogetherSnapshot(NeteaseClient.TogetherSnapshot snapshot, boolean initial,
-            boolean keepLocalPlaybackState)
-            throws java.io.IOException {
-        if (snapshot == null || !togetherActive) return;
-        NeteaseClient.TogetherCommand command = snapshot.command;
-        String remoteSignature = command == null ? "" : command.userId + ":"
-                + command.serverSeq + ":" + command.commandType + ":"
-                + command.targetSongId + ":" + command.progressMs + ":" + command.playStatus;
-        boolean newCommand = command != null && command.userId != togetherUserId
-                && isNewTogetherRemoteCommand(command.serverSeq, remoteSignature,
-                        togetherLastRemoteSeq, togetherLastRemoteCommand,
-                        togetherPendingRemoteSeq, togetherPendingRemoteCommand);
-
-        String remoteQueueSignature = songIdsSignature(snapshot.songIds);
-        boolean replaceQueue = !snapshot.songIds.isEmpty()
-                && !remoteQueueSignature.equals(currentTogetherQueueSignature());
-
-        // The playlist and its matching GOTO are separate server writes. A poll can
-        // therefore observe the new list together with the previous play command.
-        // Never index into that list using playIndex: the same numeric slot can be a
-        // completely different song, which would then be reported as a local GOTO
-        // and race the real command (jump -> jump back, depending on write order).
-        // Preserve the current song when it is present; otherwise wait until the
-        // command naming a song in the new list arrives.
-        Track localTrack = currentTrack();
-        final long localSongId = localTrack != null ? localTrack.neteaseId : 0L;
-        final long replacementTarget = replaceQueue
-                ? togetherReplacementTarget(snapshot.songIds, localSongId,
-                        newCommand ? command.targetSongId : 0L)
-                : 0L;
-        if (replaceQueue && replacementTarget == 0L) return;
-
-        List<NeteaseSong> replacement = replaceQueue
-                ? togetherSongDetails(snapshot.songIds) : Collections.<NeteaseSong>emptyList();
-        if (!replaceQueue && !newCommand) return;
-
-        togetherSuppressReportsUntil = System.currentTimeMillis() + 1800L;
-        final boolean shouldReplace = replaceQueue && !replacement.isEmpty();
-        final List<NeteaseSong> songs = replacement;
-        final NeteaseClient.TogetherCommand remote = newCommand ? command : null;
-        final String applyingRemoteSignature = newCommand ? remoteSignature : "";
-        if (newCommand) {
-            togetherPendingRemoteCommand = applyingRemoteSignature;
-            togetherPendingRemoteSeq = command.serverSeq;
-        }
-        onMain(() -> {
-            if (!togetherActive) {
-                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
-                    togetherPendingRemoteCommand = "";
-                    togetherPendingRemoteSeq = -1L;
-                }
-                return;
-            }
-
-            Track currentBeforeReplacement = currentTrack();
-            long targetId = remote != null && remote.targetSongId != 0L
-                    ? remote.targetSongId
-                    : (shouldReplace ? replacementTarget : localSongId);
-            List<Track> replacementTracks = Collections.emptyList();
-            int targetIndex;
-            if (shouldReplace) {
-                List<Track> tracks = new ArrayList<>(songs.size());
-                for (NeteaseSong song : songs) tracks.add(toTrack(song));
-                replacementTracks = tracks;
-                targetIndex = indexOfNeteaseTrack(tracks, targetId);
-                // A detail response can omit an unavailable song. Do not destroy the
-                // live queue or consume its GOTO until the target is actually usable.
-                if (targetIndex < 0) {
-                    if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
-                        togetherPendingRemoteCommand = "";
-                        togetherPendingRemoteSeq = -1L;
-                    }
-                    return;
-                }
-                currentQueuePlaylistId = 0L;
-                queue.clear();
-                queue.addAll(replacementTracks);
-                post(() -> queueTracks.set(new ArrayList<>(queue)));
-            } else {
-                targetIndex = indexOfNeteaseTrack(targetId);
-            }
-
-            if (targetIndex < 0) {
-                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
-                    togetherPendingRemoteCommand = "";
-                    togetherPendingRemoteSeq = -1L;
-                }
-                return;
-            }
-
-            if (remote != null) {
-                togetherLastRemoteSeq = remote.serverSeq;
-                togetherLastRemoteCommand = applyingRemoteSignature;
-                if (applyingRemoteSignature.equals(togetherPendingRemoteCommand)) {
-                    togetherPendingRemoteCommand = "";
-                    togetherPendingRemoteSeq = -1L;
-                }
-                if (!initial) {
-                    String message = togetherCommandToast(remote.commandType);
-                    if (!message.isEmpty()) showToast(message);
-                }
-                togetherLeaderUserId = togetherLeaderAfterRemoteCommand(
-                        togetherLeaderUserId, remote);
-            }
-
-            // A PROGRESS report describes only a seek. NetEase still attaches the
-            // sender's playStatus to it, but applying that field here incorrectly
-            // starts a locally-paused participant (or pauses a locally-playing one)
-            // whenever the other participant scrubs. Preserve the local state for
-            // pure timeline commands; PLAY/PAUSE remain separate room commands.
-            boolean desiredPlaying = keepLocalPlaybackState || remote == null
-                    || "PROGRESS".equalsIgnoreCase(remote.commandType)
-                    ? playingIntent : remote.shouldPlay();
-            boolean changedTrack = currentBeforeReplacement == null
-                    || currentBeforeReplacement.neteaseId != targetId;
-            // Repeat-one and a one-song queue produce a GOTO to the same id. If this
-            // follower is sitting at EOF waiting for the leader, seeking the exhausted
-            // decoder is insufficient (and playingIntent is already true, so resume is
-            // skipped); reopen the source through playAt just like a real track change.
-            boolean replayCompletedTrack = !changedTrack && remote != null
-                    && isTogetherTrackSwitch(remote.commandType)
-                    && togetherPendingAutoAdvanceSongId == targetId
-                    && togetherPendingAutoAdvanceIndex == targetIndex;
-            long progress = togetherAppliedProgress(remote, initial,
-                    changedTrack || replayCompletedTrack,
-                    backend.position());
-            // A queue-only reorder can move the current song without changing the
-            // audible source. Keep playback running and only rebind its index.
-            if (!changedTrack && shouldReplace && playIndex != targetIndex) {
-                playIndex = targetIndex;
-                final int reboundIndex = targetIndex;
-                post(() -> index.set(reboundIndex));
-            }
-            if (changedTrack || replayCompletedTrack) {
-                pendingTogetherDesiredPlaying = desiredPlaying;
-                pendingTogetherTargetSongId = targetId;
-                pendingResumeMs = progress;
-                pendingResumeIndex = targetIndex;
-                playAt(targetIndex);
-            } else if (remote != null) {
-                long drift = Math.abs(Math.max(0L, backend.position()) - progress);
-                if (drift > 3000L || "PROGRESS".equalsIgnoreCase(remote.commandType)
-                        || "GOTO".equalsIgnoreCase(remote.commandType)) {
-                    resetNaturalEndFadeAfterSeek();
-                    seekRevision.incrementAndGet();
-                    stoppedLyricPositionMs = progress;
-                    backend.seek(progress);
-                    post(() -> positionMs.set(progress));
-                }
-                applyTogetherPlaying(desiredPlaying);
-            }
-            baselineTogetherLocal();
-        });
-    }
-
-    /** Resolve the start point carried by a room snapshot without letting an old
-     *  track's play head leak into a live switch. NetEase's GOTO/NEXT/PREV command
-     *  can be observed while its sender is still resolving the replacement source,
-     *  in which case {@code progress} is the outgoing song's timestamp. This is
-     *  particularly visible when the receiver's render pump is suspended because its
-     *  UI-side zero baseline cannot be published until rendering resumes. A deliberate
-     *  initial join is different: it must adopt the room's current point rather than
-     *  restart it. */
-    static long togetherAppliedProgress(NeteaseClient.TogetherCommand command,
-            boolean initial, boolean changedTrack, long localPositionMs) {
-        if (command == null) return Math.max(0L, localPositionMs);
-        long reported = Math.max(0L, command.progressMs);
-        if (!initial && changedTrack && isTogetherTrackSwitch(command.commandType)) return 0L;
-        return reported;
-    }
-
-    private static boolean isTogetherTrackSwitch(String commandType) {
-        return "GOTO".equalsIgnoreCase(commandType)
-                || "NEXT".equalsIgnoreCase(commandType)
-                || "PREV".equalsIgnoreCase(commandType);
-    }
-
-    /** Room creator wins when the API supplies it. Older/partial responses may omit
-     *  creatorId, so all clients deterministically fall back to the smallest known
-     *  participant id (including themselves) rather than each electing itself. */
-    static long togetherLeaderId(NeteaseClient.TogetherRoom room, long localUserId) {
-        if (room != null && room.creatorId > 0L) return room.creatorId;
-        long leader = localUserId > 0L ? localUserId : Long.MAX_VALUE;
-        if (room != null) {
-            for (NeteaseClient.TogetherUser user : room.users) {
-                if (user != null && user.userId > 0L && user.userId < leader) {
-                    leader = user.userId;
-                }
-            }
-        }
-        return leader == Long.MAX_VALUE ? 0L : leader;
-    }
-
-    static boolean shouldWaitForTogetherLeader(boolean active, long localUserId,
-            long leaderUserId) {
-        return active && localUserId > 0L && leaderUserId > 0L
-                && localUserId != leaderUserId;
-    }
-
-    /** Track selection transfers authority; transport-only commands do not. */
-    static long togetherLeaderAfterRemoteCommand(long currentLeaderUserId,
-            NeteaseClient.TogetherCommand command) {
-        if (command != null && command.userId > 0L
-                && isTogetherTrackSwitch(command.commandType)) {
-            return command.userId;
-        }
-        return currentLeaderUserId;
-    }
-
-    /** Selects a stable target when a remote playlist is observed. A non-zero
-     *  command target is authoritative, but only if that exact id is already in
-     *  the received list. Without one, the currently audible song must survive a
-     *  reorder; returning zero tells the caller to defer an unmatched replacement. */
-    static long togetherReplacementTarget(List<Long> remoteSongIds, long localSongId,
-            long commandTargetSongId) {
-        if (remoteSongIds == null || remoteSongIds.isEmpty()) return 0L;
-        long desired = commandTargetSongId != 0L ? commandTargetSongId : localSongId;
-        if (desired == 0L) return 0L;
-        for (Long id : remoteSongIds) {
-            if (id != null && id == desired) return desired;
-        }
-        return 0L;
-    }
-
-    /** NetEase's serverSeq is a server timestamp. Eventual-consistency reads may
-     *  briefly return an older playCommand after a newer GOTO was already seen; a
-     *  different signature alone must not make that stale command executable. */
-    static boolean isNewTogetherRemoteCommand(long candidateSeq, String candidateSignature,
-            long appliedSeq, String appliedSignature, long pendingSeq, String pendingSignature) {
-        String signature = candidateSignature == null ? "" : candidateSignature;
-        if (signature.equals(appliedSignature) || signature.equals(pendingSignature)) return false;
-        long newestSeenSeq = Math.max(appliedSeq, pendingSeq);
-        return candidateSeq > newestSeenSeq || candidateSeq == newestSeenSeq;
-    }
-
-    private void applyTogetherPlaying(boolean shouldPlay) {
-        if (shouldPlay == playingIntent) return;
-        cancelFadeAtGain(1f);
-        if (shouldPlay) {
-            backend.resume();
-            playingIntent = true;
-            post(() -> playing.set(true));
-        } else {
-            backend.pause();
-            playingIntent = false;
-            post(() -> playing.set(false));
-        }
-        notifyPlayback();
-    }
-
-    private List<NeteaseSong> togetherSongDetails(List<Long> ids) throws java.io.IOException {
-        Map<Long, NeteaseSong> byId = new HashMap<>();
-        for (int start = 0; start < ids.size(); start += 200) {
-            int end = Math.min(ids.size(), start + 200);
-            for (NeteaseSong song : netease.songDetails(ids.subList(start, end))) {
-                byId.put(song.id, song);
-            }
-        }
-        List<NeteaseSong> ordered = new ArrayList<>();
-        for (Long id : ids) {
-            NeteaseSong song = byId.get(id);
-            if (song != null) ordered.add(song);
-        }
-        fillMissingCovers(ordered);
-        buildSongThumbs(ordered, "128");
-        return ordered;
-    }
-
-    private int indexOfNeteaseTrack(long songId) {
-        return indexOfNeteaseTrack(queue, songId);
-    }
-
-    private static int indexOfNeteaseTrack(List<Track> tracks, long songId) {
-        for (int i = 0; i < tracks.size(); i++) {
-            if (tracks.get(i).neteaseId == songId) return i;
-        }
-        return -1;
-    }
-
-    private List<Long> currentTogetherSongIds() {
-        List<Long> ids = new ArrayList<>();
-        for (Track track : queue) {
-            if (track.source == Track.Source.NETEASE && track.neteaseId != 0L) {
-                ids.add(track.neteaseId);
-            }
-        }
-        return ids;
-    }
-
-    private String currentTogetherQueueSignature() {
-        return songIdsSignature(currentTogetherSongIds());
-    }
-
-    private static String songIdsSignature(List<Long> ids) {
-        StringBuilder out = new StringBuilder();
-        if (ids != null) for (Long id : ids) out.append(id).append(',');
-        return out.toString();
-    }
-
-    private void baselineTogetherLocal() {
-        togetherLastQueueSignature = currentTogetherQueueSignature();
-        Track current = currentTrack();
-        togetherLastSongId = current != null ? current.neteaseId : 0L;
-        togetherLastPlaying = playingIntent;
-        togetherLastSeekRevision = seekRevision.get();
-    }
-
-    private String buildTogetherInvitation() {
-        Track current = currentTrack();
-        long songId = current != null ? current.neteaseId : 0L;
-        return "https://st.music.163.com/listen-together/share/?songId=" + songId
-                + "&roomId=" + togetherRoomId + "&inviterId=" + togetherUserId;
-    }
-
-    private static String inviteParameter(String text, String name) {
-        if (text == null || text.trim().isEmpty()) return "";
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-                "(?:[?&]|\\b)" + java.util.regex.Pattern.quote(name)
-                        + "=([^&#\\s]+)", java.util.regex.Pattern.CASE_INSENSITIVE)
-                .matcher(text.trim());
-        if (!matcher.find()) return "";
-        try {
-            return java.net.URLDecoder.decode(matcher.group(1), "UTF-8");
-        } catch (Throwable ignored) {
-            return matcher.group(1);
-        }
-    }
-
     private static String safeMessage(Throwable error) {
         String message = error == null ? null : error.getMessage();
         return message == null || message.trim().isEmpty() ? "未知错误" : message;
-    }
-
-    private static String togetherCommandToast(String commandType) {
-        if (commandType == null) return "";
-        if ("PROGRESS".equalsIgnoreCase(commandType)) return "对方调整了播放进度";
-        if ("GOTO".equalsIgnoreCase(commandType)
-                || "NEXT".equalsIgnoreCase(commandType)
-                || "PREV".equalsIgnoreCase(commandType)) return "对方切换了歌曲";
-        if ("PLAY".equalsIgnoreCase(commandType)) return "对方开始播放";
-        if ("PAUSE".equalsIgnoreCase(commandType)) return "对方暂停了播放";
-        return "";
     }
 
     // --- Login (fully async: qrLoginKey/qrLoginCheck are blocking HTTP, must
     //     never run on the render thread the QML handlers call from) ----------
 
     private volatile String pendingUnikey;
+    private volatile String pendingPluginLoginProvider = "";
+    private volatile String pendingPluginLoginChallenge = "";
+    private volatile String pluginQrMethodId = "";
+    private volatile String pluginWebMethodId = "";
+    private volatile String pluginCredentialMethodId = "";
+    private volatile LoginMethod activeWebLoginMethod;
     /** QR module matrix (true=dark) as nested Lists so QML can index [y][x]. */
     public final Property<List<List<Boolean>>> qrImage =
             new Property<>(Collections.<List<Boolean>>emptyList());
@@ -5863,7 +6962,7 @@ public final class PlayerController {
 
     /** Open the shell-owned official-site login window. */
     public void startWebLogin() {
-        Runnable launcher = webLoginLauncher;
+        WebLoginLauncher launcher = webLoginLauncher;
         if (launcher == null) {
             webLoginError.set("当前平台不支持内嵌网页登录，请粘贴 Cookie 登录");
             return;
@@ -5872,17 +6971,24 @@ public final class PlayerController {
         webLoginError.set("");
         webLoginBusy.set(true);
         try {
-            launcher.run();
+            LoginMethod method = activeWebLoginMethod;
+            if (!pendingPluginLoginProvider.isEmpty() && method != null) {
+                launcher.launch(method.webUrl, method.cookieUrl,
+                        method.credentialCookieName, loginProviderName.peek());
+            } else {
+                webLoginBusy.set(false);
+                webLoginError.set("请先安装并启用支持登录的音源插件");
+            }
         } catch (Throwable e) {
             Logger.warn("web login launcher failed: {}", safeMessage(e));
             webLoginBusy.set(false);
-            webLoginError.set("无法打开网易云登录页面");
+            webLoginError.set("无法打开登录页面");
         }
     }
 
     /** Called by a shell after reading the official WebView cookie store. */
     public void completeWebLogin(String cookieHeader) {
-        importLoginCookie(cookieHeader);
+        importLoginCookie(cookieHeader, pluginWebMethodId);
     }
 
     /** Paste-login fallback invoked directly by QML. */
@@ -5890,7 +6996,7 @@ public final class PlayerController {
         if (Boolean.TRUE.equals(webLoginBusy.peek())) return;
         webLoginBusy.set(true);
         webLoginError.set("");
-        importLoginCookie(cookieHeader);
+        importLoginCookie(cookieHeader, pluginCredentialMethodId);
     }
 
     /** Shell callback when its browser window is closed before obtaining MUSIC_U. */
@@ -5901,7 +7007,7 @@ public final class PlayerController {
     /** Shell callback for browser creation/native-engine failures. */
     public void failWebLogin(String message) {
         final String safe = message == null || message.trim().isEmpty()
-                ? "无法打开网易云登录页面" : message.trim();
+                ? "无法打开音源登录页面" : message.trim();
         post(() -> {
             webLoginBusy.set(false);
             webLoginError.set(safe);
@@ -5912,8 +7018,28 @@ public final class PlayerController {
         webLoginError.set("");
     }
 
-    private void importLoginCookie(String cookieHeader) {
+    private void importLoginCookie(String cookieHeader, String pluginMethodId) {
         final String candidate = cookieHeader == null ? "" : cookieHeader;
+        if (!pendingPluginLoginProvider.isEmpty()
+                && pluginMethodId != null && !pluginMethodId.isEmpty()) {
+            pluginAccounts.submit(pendingPluginLoginProvider, pluginMethodId, candidate)
+                    .whenComplete((challenge, error) -> post(() -> {
+                        if (error != null) {
+                            webLoginBusy.set(false);
+                            webLoginError.set(safeMessage(error));
+                            return;
+                        }
+                        applyPluginLoginChallenge(challenge, true);
+                    }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            post(() -> {
+                webLoginBusy.set(false);
+                webLoginError.set("当前没有可用的登录插件");
+            });
+            return;
+        }
         worker.submit(() -> {
             try {
                 long accountId = netease.importLoginCookies(candidate);
@@ -5942,6 +7068,24 @@ public final class PlayerController {
     /** Mint a login key + matrix off-thread; publishes to {@link #qrImage}/{@link #qrStatus}. */
     public void startQrLogin() {
         post(() -> qrStatus.set(0));
+        if (!pendingPluginLoginProvider.isEmpty() && !pluginQrMethodId.isEmpty()) {
+            final String provider = pendingPluginLoginProvider;
+            pluginAccounts.begin(provider, pluginQrMethodId).whenComplete((challenge, error) -> post(() -> {
+                if (!provider.equals(pendingPluginLoginProvider)) return;
+                if (error != null) {
+                    Logger.warn("plugin {} QR login start failed: {}", provider, safeMessage(error));
+                    qrStatus.set(800);
+                    return;
+                }
+                pendingPluginLoginChallenge = challenge.id;
+                applyPluginLoginChallenge(challenge, false);
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            post(() -> qrStatus.set(800));
+            return;
+        }
         worker.submit(() -> {
             try {
                 String key = netease.qrLoginKey();
@@ -5960,6 +7104,17 @@ public final class PlayerController {
 
     /** Poll the scan status off-thread; updates {@link #qrStatus}. */
     public void pollQrLogin() {
+        if (!pendingPluginLoginProvider.isEmpty() && !pendingPluginLoginChallenge.isEmpty()) {
+            final String provider = pendingPluginLoginProvider;
+            final String challenge = pendingPluginLoginChallenge;
+            pluginAccounts.poll(provider, challenge).whenComplete((result, error) -> post(() -> {
+                if (!provider.equals(pendingPluginLoginProvider)
+                        || !challenge.equals(pendingPluginLoginChallenge)) return;
+                if (error == null) applyPluginLoginChallenge(result, false);
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) return;
         String key = pendingUnikey;
         if (key == null) return;
         worker.submit(() -> {
@@ -5972,6 +7127,83 @@ public final class PlayerController {
                 // transient network blip — keep waiting
             }
         });
+    }
+
+    private void applyPluginLoginChallenge(LoginChallenge challenge, boolean credentialFlow) {
+        if (challenge == null) return;
+        if (challenge.id != null && !challenge.id.isEmpty()) {
+            pendingPluginLoginChallenge = challenge.id;
+        }
+        if (challenge.qrContent != null && !challenge.qrContent.isEmpty()) {
+            qrImage.set(QrMatrix.encode(challenge.qrContent));
+        }
+        switch (challenge.status) {
+            case "scanned": qrStatus.set(802); break;
+            case "success":
+                qrStatus.set(803);
+                webLoginBusy.set(false);
+                webLoginError.set("");
+                webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
+                refreshPluginAccount(pendingPluginLoginProvider, challenge.account);
+                showToast("登录成功");
+                break;
+            case "expired":
+                qrStatus.set(800);
+                if (!credentialFlow) startQrLogin();
+                break;
+            case "failed":
+                pendingCredentialEncryptedNotice = false;
+                qrStatus.set(800);
+                webLoginBusy.set(false);
+                webLoginError.set(challenge.message == null || challenge.message.isEmpty()
+                        ? "登录失败" : challenge.message);
+                break;
+            default: qrStatus.set(801); break;
+        }
+    }
+
+    private void refreshPluginAccount(String provider, AccountProfile supplied) {
+        if (provider == null || provider.isEmpty()) return;
+        if (supplied != null) {
+            publishPluginAccount(provider, supplied);
+            return;
+        }
+        if (!pluginHasCapability(provider, ProviderCapability.ACCOUNT)) return;
+        pluginAccounts.account(provider).whenComplete((account, error) -> post(() -> {
+            if (error == null && provider.equals(pluginRegistry.primaryProvider())) {
+                publishPluginAccount(provider, account);
+            }
+        }));
+    }
+
+    private void publishPluginAccount(String provider, AccountProfile account) {
+        if (account == null || !provider.equals(pluginRegistry.primaryProvider())) return;
+        loggedIn.set(account.loggedIn);
+        userName.set(orEmpty(account.displayName));
+        userAvatar.set(orEmpty(account.avatarUrl));
+        if (!account.loggedIn) {
+            userVipType.set(0);
+            userLevel.set(0);
+            userSignature.set("");
+        } else {
+            userVipType.set(account.membershipTier);
+            userLevel.set(account.level);
+            userSignature.set(orEmpty(account.signature));
+        }
+        if (account.loggedIn) {
+            publishPendingCredentialEncryptedNotice();
+            if (pluginHostApi.consumeCredentialUnlock()) {
+                showToast("已从系统密钥库安全恢复登录凭据");
+            }
+            refreshPluginLiked(provider);
+            loadMyPlaylists();
+            loadRecent();
+        } else {
+            pendingCredentialEncryptedNotice = false;
+            pluginLikedSet.clear();
+            likedCount.set(0);
+            currentLiked.set(false);
+        }
     }
 
     private static List<List<Boolean>> toMatrix(boolean[][] m) {
@@ -6012,6 +7244,8 @@ public final class PlayerController {
                     userVipType.set(vip);
                     userLevel.set(lvl);
                     userSignature.set(sig);
+                    if (in) publishPendingCredentialEncryptedNotice();
+                    else pendingCredentialEncryptedNotice = false;
                 });
                 if (in) {
                     if (id > 0 && netease.consumeCredentialUnlock()) {
@@ -6020,7 +7254,6 @@ public final class PlayerController {
                     loadHome();
                     loadMyPlaylists();
                     refreshLiked();
-                    restoreListenTogetherRoom();
                 }
             } catch (Throwable e) {
                 Logger.warn("refreshLogin failed: {}", e.toString());
@@ -6040,8 +7273,36 @@ public final class PlayerController {
     }
 
     public void logout() {
-        clearTogetherRoom(false);
+        pendingCredentialEncryptedNotice = false;
+        String provider = pendingPluginLoginProvider;
+        if (!provider.isEmpty()) {
+            legacyCredentialMigrationGeneration.incrementAndGet();
+            pluginAccounts.logout(provider).whenComplete((ignored, error) -> post(() -> {
+                if (error != null) {
+                    showToast("退出登录失败：" + safeMessage(error));
+                    return;
+                }
+                legacyCredentialMigrationAttempted = true;
+                netease.logout();
+                clearPublishedAccount();
+                showToast("已退出登录");
+            }));
+            return;
+        }
+        if (onlineSourcesArePluginOnly()) {
+            legacyCredentialMigrationGeneration.incrementAndGet();
+            legacyCredentialMigrationAttempted = true;
+            netease.logout();
+            clearPublishedAccount();
+            return;
+        }
         netease.logout();
+        clearPublishedAccount();
+        showToast("已退出登录");
+    }
+
+    private void clearPublishedAccount() {
+        pendingCredentialEncryptedNotice = false;
         uid = 0;
         loggedIn.set(false);
         userName.set("");
@@ -6055,7 +7316,6 @@ public final class PlayerController {
         myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
         recommendations.set(Collections.<NeteaseSong>emptyList());
         recentSongs.set(Collections.<NeteaseSong>emptyList());
-        showToast("已退出登录");
     }
 
     /** Persist the queue + live playback position + play mode right now. The only
@@ -6071,6 +7331,7 @@ public final class PlayerController {
     }
 
     public void shutdown() {
+        appShuttingDown = true;
         // Capture the final position before release() tears down the backend (a
         // released MediaPlayer's position() is undefined/0).
         saveSessionState();
@@ -6086,14 +7347,13 @@ public final class PlayerController {
         backend.release();
         worker.shutdownNow();
         searchWorker.shutdownNow();
-        customWorker.shutdownNow();
-        customSearchWorker.shutdownNow();
         cacheWorker.shutdownNow();
         lyricWorker.shutdownNow();
         retryWorker.shutdownNow();
         monetFetchWorker.shutdownNow();
         monetWorker.shutdownNow();
-        togetherWorker.shutdownNow();
+        pluginManager.close();
+        pluginHostApi.close();
     }
 
     // --- Disk cache management (called from QML settings page) -------------

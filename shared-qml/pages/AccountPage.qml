@@ -99,9 +99,11 @@ Rectangle {
                                 visible: player.userAvatar.length > 0
                                 // See CoverImage.qml: decode-time downscale
                                 // (mipmap-quality) instead of a plain bilinear
-                                // draw-time scale, which aliases into moiré.
-                                sourceSize.width: width
-                                sourceSize.height: height
+                                // draw-time scale, which aliases into moiré,
+                                // scaled by the device pixel ratio so it decodes
+                                // at display resolution instead of 1x.
+                                sourceSize.width: Math.round(72 * player.pixelRatio)
+                                sourceSize.height: Math.round(72 * player.pixelRatio)
                             }
                         }
 
@@ -111,7 +113,7 @@ Rectangle {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: player.userName.length > 0 ? player.userName : "网易云用户"
+                                text: player.userName.length > 0 ? player.userName : "音源用户"
                                 color: Theme.color.onSurfaceColor
                                 font.family: Theme.typography.titleMedium.family
                                 font.pixelSize: Theme.typography.titleMedium.size

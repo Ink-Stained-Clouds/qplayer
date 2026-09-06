@@ -75,6 +75,7 @@ public final class DesktopWindow {
 
     private long window;
     private volatile float uiScale = 1f;
+    private volatile java.util.function.DoubleConsumer scaleListener;
     // Framebuffer size cached from the main-thread callback so the render thread
     // never has to call GLFW.
     private volatile int fbW = INITIAL_W;
@@ -263,7 +264,10 @@ public final class DesktopWindow {
         // first frame; LyricCompositor uses the same cache for settled lyric chrome.
         v.renderer().setPictureCache(true);
         v.setClipboard(clipboard);
-        if (controller != null) v.context("player", controller);
+        if (controller != null) {
+            v.context("player", controller);
+            v.networkPolicy(controller::allowRemoteQmlResource);
+        }
         if (settings != null) v.context("settings", settings);
         // hostWindow must always be registered, even on mac/Linux where there's no
         // custom title bar -- qml4j's compiler rejects an undeclared top-level
@@ -760,6 +764,19 @@ public final class DesktopWindow {
             float s = sx.get(0);
             uiScale = s > 0 ? s : 1f;
         }
+        notifyScale();
+    }
+
+    private void notifyScale() {
+        java.util.function.DoubleConsumer listener = scaleListener;
+        if (listener != null) listener.accept(uiScale);
+    }
+
+    /** Notified with the window's content scale at startup and whenever the user
+     *  drags the window to a display with a different one. */
+    public void setScaleListener(java.util.function.DoubleConsumer listener) {
+        this.scaleListener = listener;
+        if (listener != null) listener.accept(uiScale);
     }
 
     @SuppressWarnings("resource")
@@ -768,7 +785,7 @@ public final class DesktopWindow {
             onNativeFramebufferResize(w, h);
         });
         GLFW.glfwSetWindowContentScaleCallback(window, (win, sx, sy) -> {
-            if (sx > 0) uiScale = sx;
+            if (sx > 0) { uiScale = sx; notifyScale(); }
         });
         // With a tray: close hides to it (real quit = tray "Quit"). Without a tray:
         // close just quits, so the app can't vanish to nowhere.

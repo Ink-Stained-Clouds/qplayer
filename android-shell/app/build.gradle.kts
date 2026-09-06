@@ -10,8 +10,8 @@ android {
         applicationId = "dev.t1m3.qplayer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 67
-        versionName = "1.3.0"
+        versionCode = 70
+        versionName = "1.4.2"
         manifestPlaceholders["appLabel"] = "QPlayer"
     }
 
@@ -50,6 +50,18 @@ android {
             versionNameSuffix = "-debug"
             manifestPlaceholders["appLabel"] = "QPlayer (debug)"
         }
+        // Release-speed binary with a side-by-side id, signed by the debug
+        // keystore so a local machine without QPLAYER_KEYSTORE can still
+        // install it. Use this to measure frame time; debug is too slow.
+        create("perf") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".perf"
+            versionNameSuffix = "-perf"
+            isDebuggable = false
+            matchingFallbacks += "release"
+            signingConfig = signingConfigs.getByName("debug")
+            manifestPlaceholders["appLabel"] = "QPlayer (perf)"
+        }
     }
 
     packaging {
@@ -85,6 +97,7 @@ tasks.matching { it.name == "preBuild" }.configureEach {
 }
 tasks.matching {
     it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders"
+            || it.name == "mergePerfJniLibFolders"
 }.configureEach {
     dependsOn(extractSkijaSo)
 }
@@ -102,7 +115,7 @@ dependencies {
     skijaNative("io.github.humbleui:skija-android-arm64:0.143.17")
 
     // The RECODE refactor merged parser/engine/compiler/render into one module.
-    implementation("io.github.timer-err:qml4j-core:0.2.29")
+    implementation("io.github.timer-err:qml4j-core:0.2.32")
 
     // Our platform-neutral player core (netease + lyrics + audio abstraction +
     // QML bridge). Pulls gson + zxing-core transitively; all Android-dexable.
