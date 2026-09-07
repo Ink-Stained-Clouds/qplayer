@@ -12,6 +12,8 @@ import io.github.humbleui.skija.Typeface;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 // Font cache for the lyric renderer. drawString uses a single typeface with no
 // automatic fallback, so the lyric face must itself cover the glyphs we draw —
@@ -61,6 +63,12 @@ public final class Fonts {
     private static Typeface icon;
     private static final Map<Long, Font> cache = new HashMap<>();
     private static final Map<Long, Font> iconCache = new HashMap<>();
+    private static final Object LOCK = new Object();
+    private static final Executor WARMUP = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "qplayer-font-warmup");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @FunctionalInterface
     public interface BundledFontLoader {
@@ -198,9 +206,11 @@ public final class Fonts {
      * as soon as Skija has created its native Typeface.
      */
     public static void init(BundledFontLoader loader) {
-        bundledLoader = loader;
-        java.util.Arrays.fill(bundledFaces, null);
-        reapply();
+        synchronized (LOCK) {
+            bundledLoader = loader;
+            java.util.Arrays.fill(bundledFaces, null);
+            reapply();
+        }
     }
 
     /** Load already supplied bundled weights without retaining their byte arrays.
@@ -226,8 +236,10 @@ public final class Fonts {
      *  rather than leaving the lyric page blank or full of tofu. Live: the next
      *  {@link #get} call (and thus the next lyric repaint) picks up the change. */
     public static void setSelection(String sel) {
-        selection = (sel != null && !sel.isEmpty()) ? sel : null;
-        reapply();
+        synchronized (LOCK) {
+            selection = (sel != null && !sel.isEmpty()) ? sel : null;
+            reapply();
+        }
     }
 
     /** Every family name the platform's font manager knows about, for the picker UI
@@ -419,7 +431,7 @@ public final class Fonts {
         System.arraycopy(bundledFaces, 0, faces, 0, faces.length);
     }
 
-    private static synchronized Typeface bundledFace(Weight weight) {
+    private static Typeface bundledFace(Weight weight) {
         int index = weight.ordinal();
         Typeface face = bundledFaces[index];
         if (face != null || bundledLoader == null) return face;
@@ -464,6 +476,49 @@ public final class Fonts {
     }
 
     public static Font get(Weight w, float size) {
+        synchronized (LOCK) {
+            return getLocked(w, size);
+        }
+    }
+
+    /** Decode the current lyric face and resolve script fallbacks off the render
+     *  thread so the first lyric-page frame is not stalled on xz/OTF work. */
+    public static void warmup(Weight weight, float mainSize) {
+        synchronized (LOCK) {
+            if (bundledLoader == null && bundledFaces[weight.ordinal()] == null
+                    && activeFamily == null) {
+                return;
+            }
+            LyricFontSizing.Sizes sizes = LyricFontSizing.fromMain(mainSize);
+            Font base = getLocked(weight, sizes.main);
+            getLocked(weight, sizes.mainSubline);
+            getLocked(weight, sizes.background);
+            getLocked(weight, sizes.backgroundSubline);
+            KOREAN.fontFor(base);
+            THAI.fontFor(base);
+            JAPANESE.fontFor(base);
+        }
+    }
+
+    public static void warmupAsync(Weight weight, float mainSize) {
+        WARMUP.execute(() -> {
+            try {
+                warmup(weight, mainSize);
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    public static void warmupFromConfig() {
+        LyricConfig.FontWeight configured = LyricConfig.instance.fontWeight.getValue();
+        Weight weight = Weight.REGULAR;
+        if (configured == LyricConfig.FontWeight.THIN) weight = Weight.THIN;
+        else if (configured == LyricConfig.FontWeight.LIGHT) weight = Weight.LIGHT;
+        else if (configured == LyricConfig.FontWeight.MEDIUM) weight = Weight.MEDIUM;
+        warmupAsync(weight, LyricConfig.instance.lyricFontSize.getValue());
+    }
+
+    private static Font getLocked(Weight w, float size) {
         long key = ((long) Float.floatToIntBits(size) << 2) | w.ordinal();
         Font f = cache.get(key);
         if (f == null) {
@@ -494,18 +549,18 @@ public final class Fonts {
      *  The Korean candidates are pan-CJK (Noto Sans CJK / Droid Sans Fallback), so a
      *  Korean line mixed with Han/Latin stays in one coherent face. */
     public static Font korean(Font base) {
-        return KOREAN.fontFor(base);
+        synchronized (LOCK) { return KOREAN.fontFor(base); }
     }
 
     /** The Thai face for {@code base}'s size/weight, mirroring {@link #korean(Font)}. */
     public static Font thai(Font base) {
-        return THAI.fontFor(base);
+        synchronized (LOCK) { return THAI.fontFor(base); }
     }
 
     /** The kana face for {@code base}'s size/weight, mirroring {@link #korean(Font)}.
      *  Shared Han doesn't need this (PingFang already covers it); only kana does. */
     public static Font japanese(Font base) {
-        return JAPANESE.fontFor(base);
+        synchronized (LOCK) { return JAPANESE.fontFor(base); }
     }
 
     /** Retarget a face to {@code weight}, preferring the family's own static face and

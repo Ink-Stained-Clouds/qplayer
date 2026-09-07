@@ -232,6 +232,9 @@ public class LyricRenderer {
     // Per-syllable advances obtained from the full-line HarfBuzz result. These are
     // used only to choose wrap boundaries; actual drawing uses each row's TextBlob.
     private float[][] cachedSylWidths;
+    private int lineLayoutRemaining;
+    private static final int LAYOUT_BUDGET = 8;
+    private static final int LAYOUT_FIRST_BUDGET = 33;
     private float[] lineTopsBuf = new float[0];
     private float[] effHeightsBuf = new float[0];
     private float[] interludeBuf = new float[0];
@@ -369,11 +372,71 @@ public class LyricRenderer {
         cachedRowStarts = null;
         cachedSylWidths = null;
         cachedLineHeights = null;
+        lineLayoutRemaining = 0;
         layoutKeyLines = null;
         layoutKeyLyricFont = null;
         layoutKeySubFont = null;
         layoutKeyBgFont = null;
         layoutKeyBgSubFont = null;
+    }
+
+    private int pivotLineIndex(long positionMs, int n) {
+        int pivot = 0;
+        for (int gi = 0; gi < groups.size(); gi++) {
+            if (groups.get(gi).startMs <= positionMs) pivot = groups.get(gi).from;
+            else break;
+        }
+        if (pivot < 0) pivot = 0;
+        if (pivot >= n) pivot = Math.max(0, n - 1);
+        return pivot;
+    }
+
+    private boolean shapeLineIfNeeded(int i, Font lyricFont, Font subFont,
+                                      Font bgFont, Font bgSubFont,
+                                      float rowHeightLyric, float rowHeightBg,
+                                      float rowHeightLyricWrap, float rowHeightBgWrap,
+                                      float subLineHeight, float bgSubLineHeight,
+                                      float lineGap, float columnWidth, boolean scaleOn,
+                                      boolean showRomaji, boolean showTranslation) {
+        if (i < 0 || i >= layoutKeyN || cachedShapedRows[i] != null) return false;
+        LyricLine line = lines.get(i);
+        boolean isBg = LyricTimeline.isBackground(line.vocalChannel);
+        Font font = isBg ? bgFont : lyricFont;
+        Font lineSubFont = isBg ? bgSubFont : subFont;
+        float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
+        float lineSubHeight = isBg ? bgSubLineHeight : subLineHeight;
+        float wrapW = (isBg || !scaleOn) ? columnWidth : columnWidth / EMPHASIS_SCALE;
+
+        List<Syllable> rowSyllables = textShaper.splitOversizedSyllables(
+                line.syllables, font, wrapW);
+        cachedLayoutSyllables.set(i, rowSyllables);
+        float[] widths = textShaper.shapeSyllableAdvances(rowSyllables, font);
+        cachedSylWidths[i] = widths;
+        cachedRowStarts[i] = LyricTextLayout.wrapStarts(rowSyllables, widths, wrapW);
+        int subRowCount = Math.max(1, cachedRowStarts[i].length - 1);
+        cachedShapedRows[i] = new ShapedRow[subRowCount];
+        for (int r = 0; r < subRowCount; r++) {
+            int from = cachedRowStarts[i][r];
+            int to = cachedRowStarts[i][r + 1];
+            cachedShapedRows[i][r] = textShaper.shapeMainRow(rowSyllables, from, to, font);
+        }
+
+        float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
+        boolean hasSub = (line.romaji != null && showRomaji)
+                || (line.translation != null && showTranslation);
+        if (hasSub && subRowCount > 1) lh += WRAP_SUB_GAP;
+        if (line.romaji != null && showRomaji) {
+            cachedRomajiRows[i] = textShaper.shapeWrappedText(line.romaji, lineSubFont, wrapW);
+            lh += lineSubHeight * cachedRomajiRows[i].length;
+        }
+        if (line.translation != null && showTranslation) {
+            cachedTranslationRows[i] = textShaper.shapeWrappedText(
+                    line.translation, lineSubFont, wrapW);
+            lh += lineSubHeight * cachedTranslationRows[i].length;
+        }
+        cachedLineHeights[i] = lh + lineGap;
+        lineLayoutRemaining--;
+        return true;
     }
 
     /** Screen-space {top, bottom} of the currently-lit lines from the last
@@ -479,7 +542,7 @@ public class LyricRenderer {
         // and caret arrays.
         int n = lines.size();
         int colW = Math.round(columnWidth);
-        boolean layoutValid = cachedRowStarts != null
+        boolean layoutKeyMatches = cachedRowStarts != null
                 && cachedShapedRows != null
                 && cachedLayoutSyllables != null
                 && layoutKeyLines == lines
@@ -497,75 +560,23 @@ public class LyricRenderer {
                 && layoutKeySubFont == subFont
                 && layoutKeyBgFont == bgFont
                 && layoutKeyBgSubFont == bgSubFont;
-        if (!layoutValid) {
-            int[][] rowStarts = new int[n][];
-            float[] lineHeights = new float[n];
-            ShapedText[][] romajiRows = new ShapedText[n][];
-            ShapedText[][] translationRows = new ShapedText[n][];
-            ShapedRow[][] shapedRows = new ShapedRow[n][];
-            List<List<Syllable>> layoutSyllables = new ArrayList<>(n);
-            float[][] sylWidths = new float[n][];
-            for (int i = 0; i < n; i++) {
-                LyricLine line = lines.get(i);
-                boolean isBg = LyricTimeline.isBackground(line.vocalChannel);
-                Font font = isBg ? bgFont : lyricFont;
-                Font lineSubFont = isBg ? bgSubFont : subFont;
-                float rowHeight = isBg ? rowHeightBg : rowHeightLyric;
-                float lineSubHeight = isBg ? bgSubLineHeight : subLineHeight;
-
-                // Wrap against the EMPHASIZED width: a main line scales up to
-                // EMPHASIS_SCALE when active, so break it as if the column were
-                // 1/EMPHASIS_SCALE narrower — then the scaled-up line fills the
-                // real column exactly instead of overflowing and clipping mid-word.
-                // BG lines never scale past 1.0, and when emphasis is off no line
-                // scales, so both wrap to the full column.
-                float wrapW = (isBg || !scaleOn) ? columnWidth : columnWidth / EMPHASIS_SCALE;
-
-                List<Syllable> rowSyllables = textShaper.splitOversizedSyllables(
-                        line.syllables, font, wrapW);
-                layoutSyllables.add(rowSyllables);
-                float[] widths = textShaper.shapeSyllableAdvances(rowSyllables, font);
-                sylWidths[i] = widths;
-                rowStarts[i] = LyricTextLayout.wrapStarts(rowSyllables, widths, wrapW);
-                int subRowCount = Math.max(1, rowStarts[i].length - 1);
-                shapedRows[i] = new ShapedRow[subRowCount];
-                for (int r = 0; r < subRowCount; r++) {
-                    int from = rowStarts[i][r];
-                    int to = rowStarts[i][r + 1];
-                    shapedRows[i][r] = textShaper.shapeMainRow(rowSyllables, from, to, font);
-                }
-
-                float lh = rowHeight + (subRowCount - 1) * (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
-                boolean hasSub = (line.romaji != null && showRomaji) || (line.translation != null && showTranslation);
-                // Wrapped rows use the tight wrap height, so a sub-line sitting right
-                // under the last row feels cramped — give it a little extra breathing
-                // room (reserved here so neighbours don't overlap; drawn at subY).
-                if (hasSub && subRowCount > 1) lh += WRAP_SUB_GAP;
-                if (line.romaji != null && showRomaji) {
-                    romajiRows[i] = textShaper.shapeWrappedText(line.romaji, lineSubFont, wrapW);
-                    lh += lineSubHeight * romajiRows[i].length;
-                }
-                if (line.translation != null && showTranslation) {
-                    translationRows[i] = textShaper.shapeWrappedText(
-                            line.translation, lineSubFont, wrapW);
-                    lh += lineSubHeight * translationRows[i].length;
-                }
-                lh += lineGap;
-                // BG lines reserve their full layout height upfront so neighbouring
-                // lines never shift when the BG scales in / collapses.
-                lineHeights[i] = lh;
-            }
+        if (!layoutKeyMatches) {
             LyricTextShaper.closeRows(cachedShapedRows);
             rowRenderer.clearRasterCache();
             LyricTextShaper.closeTexts(cachedRomajiRows);
             LyricTextShaper.closeTexts(cachedTranslationRows);
-            cachedRowStarts = rowStarts;
-            cachedLineHeights = lineHeights;
-            cachedRomajiRows = romajiRows;
-            cachedTranslationRows = translationRows;
-            cachedShapedRows = shapedRows;
-            cachedLayoutSyllables = layoutSyllables;
-            cachedSylWidths = sylWidths;
+            cachedRowStarts = new int[n][];
+            cachedLineHeights = new float[n];
+            cachedRomajiRows = new ShapedText[n][];
+            cachedTranslationRows = new ShapedText[n][];
+            cachedShapedRows = new ShapedRow[n][];
+            cachedLayoutSyllables = new ArrayList<>(n);
+            cachedSylWidths = new float[n][];
+            for (int i = 0; i < n; i++) {
+                cachedLayoutSyllables.add(null);
+                cachedLineHeights[i] = rowHeightLyric + lineGap;
+            }
+            lineLayoutRemaining = n;
             layoutKeyLines = lines;
             layoutKeyN = n;
             layoutKeyLyricSize = lyricFontSize;
@@ -581,6 +592,35 @@ public class LyricRenderer {
             layoutKeySubFont = subFont;
             layoutKeyBgFont = bgFont;
             layoutKeyBgSubFont = bgSubFont;
+        }
+        if (lineLayoutRemaining > 0) {
+            int budget = lineLayoutRemaining == n ? LAYOUT_FIRST_BUDGET : LAYOUT_BUDGET;
+            int pivot = pivotLineIndex(positionMs, n);
+            int shaped = 0;
+            for (int d = 0; d < n && shaped < budget; d++) {
+                int left = pivot - d;
+                int right = pivot + d;
+                if (d == 0) {
+                    if (shapeLineIfNeeded(pivot, lyricFont, subFont, bgFont, bgSubFont,
+                            rowHeightLyric, rowHeightBg, rowHeightLyricWrap, rowHeightBgWrap,
+                            subLineHeight, bgSubLineHeight, lineGap, columnWidth, scaleOn,
+                            showRomaji, showTranslation)) shaped++;
+                    continue;
+                }
+                if (right < n && shapeLineIfNeeded(right, lyricFont, subFont, bgFont, bgSubFont,
+                        rowHeightLyric, rowHeightBg, rowHeightLyricWrap, rowHeightBgWrap,
+                        subLineHeight, bgSubLineHeight, lineGap, columnWidth, scaleOn,
+                        showRomaji, showTranslation)) {
+                    shaped++;
+                    if (shaped >= budget) break;
+                }
+                if (left >= 0 && shapeLineIfNeeded(left, lyricFont, subFont, bgFont, bgSubFont,
+                        rowHeightLyric, rowHeightBg, rowHeightLyricWrap, rowHeightBgWrap,
+                        subLineHeight, bgSubLineHeight, lineGap, columnWidth, scaleOn,
+                        showRomaji, showTranslation)) {
+                    shaped++;
+                }
+            }
         }
         int[][] rowStarts = cachedRowStarts;
         float[] lineHeights = cachedLineHeights;
@@ -1030,6 +1070,7 @@ public class LyricRenderer {
             }
 
             int[] starts = rowStarts[i];
+            if (starts == null || cachedShapedRows[i] == null) continue;
             int subRowCount = Math.max(1, starts.length - 1);
 
             // Track widest sub-row so right-aligned sub-lines line up with
