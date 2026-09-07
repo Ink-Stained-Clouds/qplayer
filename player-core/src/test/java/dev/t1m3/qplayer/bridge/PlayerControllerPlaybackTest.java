@@ -593,6 +593,116 @@ public class PlayerControllerPlaybackTest {
         }
     }
 
+    @Test
+    public void myPlaylistsMergeEverySourceInOrder() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("my-playlists-merge").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            java.lang.reflect.Field orderField =
+                    PlayerController.class.getDeclaredField("myPlaylistSourceOrder");
+            orderField.setAccessible(true);
+            orderField.set(controller, Arrays.asList("primary", "secondary"));
+            java.lang.reflect.Field slicesField =
+                    PlayerController.class.getDeclaredField("myPlaylistsBySource");
+            slicesField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, java.util.List<dev.t1m3.qplayer.media.Playlist>> slices =
+                    (java.util.Map<String, java.util.List<dev.t1m3.qplayer.media.Playlist>>)
+                            slicesField.get(controller);
+            // Inserted secondary-first to prove publication follows the source order,
+            // not whichever source answered first.
+            slices.put("secondary", Arrays.asList(playlist("b:playlist:1", "second")));
+            slices.put("primary", Arrays.asList(playlist("a:playlist:1", "first")));
+
+            java.lang.reflect.Method publish =
+                    PlayerController.class.getDeclaredMethod("publishMyPlaylists");
+            publish.setAccessible(true);
+            publish.invoke(controller);
+
+            assertEquals(2, controller.sourceMyPlaylists.peek().size());
+            assertEquals("first", controller.sourceMyPlaylists.peek().get(0).name);
+            assertEquals("second", controller.sourceMyPlaylists.peek().get(1).name);
+            assertEquals(2, controller.playlistCount.peek().intValue());
+
+            java.lang.reflect.Method drop = PlayerController.class.getDeclaredMethod(
+                    "dropMyPlaylistsForSource", String.class);
+            drop.setAccessible(true);
+            drop.invoke(controller, "primary");
+
+            // Signing out of one source must not empty 我的 for the others.
+            assertEquals(1, controller.sourceMyPlaylists.peek().size());
+            assertEquals("second", controller.sourceMyPlaylists.peek().get(0).name);
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void switchingPrimarySourceDropsItsContentButKeepsMyPlaylists() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("primary-switch-clear").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            controller.sourceRecommendPlaylists.set(
+                    Arrays.asList(playlist("a:playlist:9", "recommended")));
+            controller.loggedIn.set(true);
+            controller.userName.set("someone");
+            java.lang.reflect.Field orderField =
+                    PlayerController.class.getDeclaredField("myPlaylistSourceOrder");
+            orderField.setAccessible(true);
+            orderField.set(controller, Arrays.asList("secondary"));
+            java.lang.reflect.Field slicesField =
+                    PlayerController.class.getDeclaredField("myPlaylistsBySource");
+            slicesField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, java.util.List<dev.t1m3.qplayer.media.Playlist>> slices =
+                    (java.util.Map<String, java.util.List<dev.t1m3.qplayer.media.Playlist>>)
+                            slicesField.get(controller);
+            slices.put("secondary", Arrays.asList(playlist("b:playlist:1", "kept")));
+
+            java.lang.reflect.Method clear =
+                    PlayerController.class.getDeclaredMethod("clearSourceScopedContent");
+            clear.setAccessible(true);
+            clear.invoke(controller);
+
+            assertTrue(controller.sourceRecommendPlaylists.peek().isEmpty());
+            assertFalse(controller.loggedIn.peek());
+            assertEquals("", controller.userName.peek());
+
+            java.lang.reflect.Method publish =
+                    PlayerController.class.getDeclaredMethod("publishMyPlaylists");
+            publish.setAccessible(true);
+            publish.invoke(controller);
+            assertEquals(1, controller.sourceMyPlaylists.peek().size());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    private static dev.t1m3.qplayer.media.Playlist playlist(String id, String name) {
+        dev.t1m3.qplayer.media.Playlist playlist = new dev.t1m3.qplayer.media.Playlist();
+        playlist.id = id;
+        playlist.name = name;
+        return playlist;
+    }
+
     private static void waitForPauseCalls(FakeAudioBackend backend, int target,
                                           long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;

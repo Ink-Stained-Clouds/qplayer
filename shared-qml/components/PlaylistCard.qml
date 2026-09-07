@@ -15,6 +15,9 @@ Item {
     property int count: 0
     property string coverUrl: ""
     property string coverThumbPath: ""
+    // Set only where one grid mixes several sources (我的), so a card says which
+    // account it came from.
+    property string sourceName: ""
     property real tile: 160
     property bool _menuArmed: false
     signal clicked()
@@ -84,7 +87,8 @@ Item {
         width: card.width - 24
         height: 20
         verticalAlignment: Text.AlignVCenter
-        text: card.count > 0 ? (card.count + " 首歌曲") : "暂无歌曲"
+        text: (card.count > 0 ? (card.count + " 首歌曲") : "暂无歌曲")
+              + (card.sourceName ? " · " + card.sourceName : "")
         color: Theme.color.onSurfaceVariantColor
         fontSize: 12
         elide: Text.ElideRight

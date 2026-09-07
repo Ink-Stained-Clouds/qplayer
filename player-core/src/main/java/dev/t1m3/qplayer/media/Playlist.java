@@ -11,6 +11,9 @@ public final class Playlist {
     public String artworkUrl = "";
     public String coverUrl = "";
     public String coverThumbPath = "";
+    /** Display name of the source that owns this playlist. Set by the host when a
+     *  list mixes several sources (我的); empty in single-source contexts. */
+    public String sourceName = "";
     public MediaRef owner;
     public long trackCount;
     public long playCount;

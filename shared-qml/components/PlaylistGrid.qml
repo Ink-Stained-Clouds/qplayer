@@ -63,6 +63,7 @@ Flickable {
                 count: modelData.trackCount
                 coverUrl: modelData.coverUrl
                 coverThumbPath: modelData.coverThumbPath || ""
+                sourceName: modelData.sourceName || ""
                 onClicked: { grid.pendingPlaylist = modelData; grid.openPlaylist() }
             }
         }
