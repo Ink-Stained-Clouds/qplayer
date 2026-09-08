@@ -13,6 +13,9 @@ Item {
     property var playlistId: 0
     property string name: ""
     property int count: 0
+    // Fallback subtitle for sources that only publish a play count on a card
+    // (NetEase's home blocks, QQ's anonymous recommendations).
+    property real playCount: 0
     property string coverUrl: ""
     property string coverThumbPath: ""
     // Set only where one grid mixes several sources (我的), so a card says which
@@ -24,6 +27,14 @@ Item {
 
     implicitWidth: tile
     implicitHeight: tile + 72
+
+    readonly property string subtitle: {
+        if (count > 0) return count + " 首歌曲"
+        if (playCount >= 100000000) return (playCount / 100000000).toFixed(1) + " 亿次播放"
+        if (playCount >= 10000) return Math.round(playCount / 10000) + " 万次播放"
+        if (playCount > 0) return playCount + " 次播放"
+        return "暂无歌曲"
+    }
 
     Rectangle {
         id: container
@@ -87,8 +98,7 @@ Item {
         width: card.width - 24
         height: 20
         verticalAlignment: Text.AlignVCenter
-        text: (card.count > 0 ? (card.count + " 首歌曲") : "暂无歌曲")
-              + (card.sourceName ? " · " + card.sourceName : "")
+        text: card.subtitle + (card.sourceName ? " · " + card.sourceName : "")
         color: Theme.color.onSurfaceVariantColor
         fontSize: 12
         elide: Text.ElideRight

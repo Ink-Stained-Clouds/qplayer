@@ -21,6 +21,7 @@ import dev.t1m3.qplayer.media.LoginMethod;
 import dev.t1m3.qplayer.media.MediaId;
 import dev.t1m3.qplayer.media.Page;
 import dev.t1m3.qplayer.media.Playlist;
+import dev.t1m3.qplayer.media.HomeSection;
 import dev.t1m3.qplayer.media.ProviderHome;
 import dev.t1m3.qplayer.media.Song;
 import dev.t1m3.qplayer.media.StreamDescriptor;
@@ -587,6 +588,13 @@ public final class PlayerController {
             new Property<>(Collections.<Song>emptyList());
     public final Property<List<Playlist>> sourceRecommendPlaylists =
             new Property<>(Collections.<Playlist>emptyList());
+    /** Titled playlist groups the source wants drawn above the plain grid, e.g.
+     *  NetEase's radar lists. Each carries the range it occupies in
+     *  {@link #sourceSectionPlaylists}: QML positions cards from one flat list. */
+    public final Property<List<HomeSection>> sourceHomeSections =
+            new Property<>(Collections.<HomeSection>emptyList());
+    public final Property<List<Playlist>> sourceSectionPlaylists =
+            new Property<>(Collections.<Playlist>emptyList());
     /** True while {@link #loadHome} is in flight — lets HomePage.qml tell "still
      *  loading" from "tried and failed" (both look like empty lists otherwise) so
      *  it can show a tap-to-retry affordance instead of a permanent spinner. */
@@ -1009,6 +1017,7 @@ public final class PlayerController {
 
     /** Reset everything published on behalf of the source that is no longer primary. */
     private void clearSourceScopedContent() {
+        clearHomeSections();
         sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
         sourceRecommendations.set(Collections.<Song>emptyList());
         sourceRecentSongs.set(Collections.<Song>emptyList());
@@ -5835,25 +5844,60 @@ public final class PlayerController {
         playAt((playIndex + 1) % queue.size());
     }
 
+    /** How many plain recommended playlists to ask the source for; the titled
+     *  sections it also returns are extra and are not counted against this. */
+    private volatile int homePlaylistLimit = 12;
+    private boolean homeRequested;
+
+    public void setHomePlaylistLimit(int value) {
+        int next = Math.max(1, Math.min(100, value));
+        if (next == homePlaylistLimit) return;
+        homePlaylistLimit = next;
+        // Startup seeds this before the first load; only a real change reloads.
+        if (homeRequested) loadHome();
+    }
+
+    private void publishHomeSections(List<HomeSection> sections) {
+        List<HomeSection> published = new ArrayList<>();
+        List<Playlist> cards = new ArrayList<>();
+        for (HomeSection section : sections) {
+            section.start = cards.size();
+            section.count = section.playlists.size();
+            cards.addAll(section.playlists);
+            published.add(section);
+        }
+        sourceSectionPlaylists.set(Collections.unmodifiableList(cards));
+        sourceHomeSections.set(Collections.unmodifiableList(published));
+    }
+
+    private void clearHomeSections() {
+        sourceHomeSections.set(Collections.<HomeSection>emptyList());
+        sourceSectionPlaylists.set(Collections.<Playlist>emptyList());
+    }
+
     /** Load the home content: recommended songs (login) + recommended playlists. */
     public void loadHome() {
         post(() -> homeLoading.set(true));
         // Switching away and back fast would otherwise let the first source's
         // in-flight result land on top of the second one's.
         final long generation = homeGeneration.incrementAndGet();
+        homeRequested = true;
         PluginManifest provider = primaryProviderWith(ProviderCapability.HOME);
         if (provider != null) {
-            pluginProviders.home(provider.id, 50).whenComplete((home, error) -> post(() -> {
+            pluginProviders.home(provider.id, homePlaylistLimit)
+                    .whenComplete((home, error) -> post(() -> {
                 if (generation != homeGeneration.get()) return;
                 if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
                 homeLoading.set(false);
                 if (error != null) {
                     Logger.warn("plugin {} home failed: {}", provider.id, safeMessage(error));
+                    clearHomeSections();
                     sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
                     sourceRecommendations.set(Collections.<Song>emptyList());
                     return;
                 }
                 ProviderHome value = home != null ? home : new ProviderHome();
+                publishHomeSections(value.sections);
                 sourceRecommendPlaylists.set(Collections.unmodifiableList(
                         new ArrayList<>(value.playlists)));
                 sourceRecommendations.set(Collections.unmodifiableList(
@@ -5861,6 +5905,7 @@ public final class PlayerController {
             }));
             return;
         }
+        clearHomeSections();
         // No source can serve home right now: publish the empty state instead of
         // leaving the previous source's recommendations up forever.
         sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());

@@ -25,11 +25,69 @@ Item {
                                 ? player.sourceRecommendPlaylists : player.recommendPlaylists
     property var homeSongs: player.sourceContentActive
                             ? player.sourceRecommendations : player.recommendations
+    // Titled groups the source supplies (NetEase radar, ...) and the one flat
+    // card list they all index into.
+    property var homeSections: player.sourceContentActive ? player.sourceHomeSections : []
+    property var sectionCards: player.sourceContentActive ? player.sourceSectionPlaylists : []
     property int recCount: homePlaylists ? homePlaylists.length : 0
     property int dailyCount: homeSongs ? homeSongs.length : 0
+    property int sectionCount: homeSections ? homeSections.length : 0
+    property int sectionCardCount: sectionCards ? sectionCards.length : 0
+
+    property real hdrH: 40
+    property bool dailyFirst: settings.value("homeDailyFirst") === true
+    property real dailyBlockH: dailyCount > 0 ? hdrH + dailyCount * rowH + 4 : 0
+
+    // Every section's header y and each of its cards' x/y, laid out once per
+    // geometry change: the cards come as one flat list, so plain arrays keep the
+    // per-card bindings a lookup instead of a search.
+    property var sectionHeaderY: {
+        var out = []
+        var y = page.greetH + (page.dailyFirst ? page.dailyBlockH : 0)
+        for (var i = 0; i < page.sectionCount; i++) {
+            out.push(y)
+            var rows = Math.ceil(page.homeSections[i].count / page.cols)
+            y += page.hdrH + rows * (page.cardH + page.gap)
+        }
+        return out
+    }
+    property real sectionsH: {
+        if (page.sectionCount === 0) return 0
+        var last = page.sectionCount - 1
+        var rows = Math.ceil(page.homeSections[last].count / page.cols)
+        return page.sectionHeaderY[last] + page.hdrH + rows * (page.cardH + page.gap)
+               - page.sectionHeaderY[0]
+    }
+    property var sectionCardX: {
+        var out = []
+        for (var i = 0; i < page.sectionCount; i++) {
+            var section = page.homeSections[i]
+            for (var j = 0; j < section.count; j++)
+                out[section.start + j] = page.pad + (j % page.cols) * (page.tile + page.gap)
+        }
+        return out
+    }
+    property var sectionCardY: {
+        var out = []
+        for (var i = 0; i < page.sectionCount; i++) {
+            var section = page.homeSections[i]
+            var top = page.sectionHeaderY[i] + page.hdrH
+            for (var j = 0; j < section.count; j++)
+                out[section.start + j] = top + Math.floor(j / page.cols) * (page.cardH + page.gap)
+        }
+        return out
+    }
+
+    // The plain grid keeps its own header only when sections precede it, so a
+    // source without sections looks exactly like it always did.
+    property real mainHdrH: sectionCount > 0 && recCount > 0 ? hdrH : 0
+    property real mainHdrY: greetH + (dailyFirst ? dailyBlockH : 0) + sectionsH
+    property real gridTop: mainHdrY + mainHdrH
     property real gridH: Math.ceil(recCount / cols) * (cardH + gap)
-    property real dailyHdrY: greetH + gridH + 4
-    property real dailyTop: dailyHdrY + (dailyCount > 0 ? 40 : 0)
+    property real dailyHdrY: dailyFirst ? greetH : gridTop + gridH + 4
+    property real dailyTop: dailyHdrY + (dailyCount > 0 ? hdrH : 0)
+    property real contentH: (dailyFirst ? gridTop + gridH
+                                        : dailyTop + dailyCount * rowH) + 12
 
     // A tap holds the "尝试连接中" state for at least this long even if the
     // request itself fails near-instantly (e.g. no network at all) -- a flash
@@ -60,7 +118,7 @@ Item {
         return Math.min(rows, Math.max(0, vis))
     }
     property int firstGridRow: {
-        var f = Math.floor((homeFlick.contentY - greetH) / cardRowH) - 1
+        var f = Math.floor((homeFlick.contentY - gridTop) / cardRowH) - 1
         var maxR = Math.max(0, Math.ceil(recCount / Math.max(1, cols)) - gridWindowRows)
         if (f > maxR) f = maxR
         if (f < 0) f = 0
@@ -68,7 +126,7 @@ Item {
     }
     property int firstCard: firstGridRow * cols
     property int cardWindow: {
-        var gridBottom = greetH + gridH
+        var gridBottom = gridTop + gridH
         if (gridBottom < homeFlick.contentY - cardRowH) return 0
         return gridWindowRows * cols
     }
@@ -89,11 +147,11 @@ Item {
         anchors.fill: parent
         clip: true
         contentWidth: width
-        contentHeight: page.dailyTop + page.dailyCount * page.rowH + 12
+        contentHeight: page.contentH
 
         Item {
             width: page.width
-            height: page.dailyTop + page.dailyCount * page.rowH + 12
+            height: page.contentH
             // Cards/rows have fixed index-derived positions; skip re-measuring the
             // whole page on unrelated version bumps (the play clock) once laid out.
             cachedLayout: true
@@ -107,6 +165,44 @@ Item {
             }
 
             Repeater {
+                model: page.homeSections
+                Text {
+                    x: 16
+                    y: page.sectionHeaderY[index]
+                    height: page.hdrH
+                    verticalAlignment: Text.AlignVCenter
+                    text: modelData.title
+                    color: Theme.color.primary
+                    fontSize: 18
+                }
+            }
+
+            Repeater {
+                model: page.sectionCards
+                PlaylistCard {
+                    playlistId: modelData.id
+                    tile: page.tile
+                    x: page.sectionCardX[index]
+                    y: page.sectionCardY[index]
+                    name: modelData.name
+                    count: modelData.trackCount
+                    playCount: modelData.playCount || 0
+                    coverUrl: modelData.coverUrl
+                    coverThumbPath: modelData.coverThumbPath || ""
+                    onClicked: { page.pendingPlaylist = modelData; page.openPlaylist() }
+                }
+            }
+
+            Text {
+                visible: page.mainHdrH > 0
+                x: 16; y: page.mainHdrY; height: page.hdrH
+                verticalAlignment: Text.AlignVCenter
+                text: "推荐歌单"
+                color: Theme.color.primary
+                fontSize: 18
+            }
+
+            Repeater {
                 model: page.homePlaylists
                 windowStart: page.firstCard
                 windowCount: page.cardWindow
@@ -114,9 +210,10 @@ Item {
                     playlistId: modelData.id
                     tile: page.tile
                     x: page.pad + (index % page.cols) * (page.tile + page.gap)
-                    y: page.greetH + Math.floor(index / page.cols) * (page.cardH + page.gap)
+                    y: page.gridTop + Math.floor(index / page.cols) * (page.cardH + page.gap)
                     name: modelData.name
                     count: modelData.trackCount
+                    playCount: modelData.playCount || 0
                     coverUrl: modelData.coverUrl
                     coverThumbPath: modelData.coverThumbPath || ""
                     onClicked: { page.pendingPlaylist = modelData; page.openPlaylist() }
@@ -125,7 +222,7 @@ Item {
 
             Text {
                 visible: page.dailyCount > 0
-                x: 16; y: page.dailyHdrY; height: 40
+                x: 16; y: page.dailyHdrY; height: page.hdrH
                 verticalAlignment: Text.AlignVCenter
                 text: "每日推荐"
                 color: Theme.color.primary
@@ -159,6 +256,7 @@ Item {
         anchors.centerIn: parent
         visible: !player.sourceSetupRequired
                  && page.recCount === 0 && page.dailyCount === 0
+                 && page.sectionCardCount === 0
         width: emptyRow.width + 40
         height: 44
 

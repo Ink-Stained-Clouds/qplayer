@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.plugin;
 
 import dev.t1m3.qplayer.media.Album;
+import dev.t1m3.qplayer.media.HomeSection;
 import dev.t1m3.qplayer.media.LyricsPayload;
 import dev.t1m3.qplayer.media.MediaId;
 import dev.t1m3.qplayer.media.MediaKind;
@@ -323,6 +324,21 @@ public final class PluginProviderService {
         if (playlists instanceof List) {
             for (Object item : boundedList(playlists, "home playlists", 100)) {
                 home.playlists.add(parsePlaylist(provider, map(item, "playlist")));
+            }
+        }
+        Object sections = value.get("sections");
+        if (sections instanceof List) {
+            for (Object item : boundedList(sections, "home sections", 6)) {
+                Map<String, Object> object = map(item, "home section");
+                HomeSection section = new HomeSection();
+                section.title = boundedString(object.get("title"), MAX_LABEL_CHARS,
+                        "home section title", false);
+                for (Object entry : boundedList(object.get("playlists"),
+                        "home section playlists", 30)) {
+                    section.playlists.add(parsePlaylist(provider, map(entry, "playlist")));
+                }
+                // A titled group with nothing in it is only chrome.
+                if (!section.playlists.isEmpty()) home.sections.add(section);
             }
         }
         return home;

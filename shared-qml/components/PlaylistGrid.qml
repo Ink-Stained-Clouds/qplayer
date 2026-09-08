@@ -61,6 +61,7 @@ Flickable {
                 y: grid.pad + Math.floor(index / grid.cols) * (grid.cardH + grid.gap)
                 name: modelData.name
                 count: modelData.trackCount
+                playCount: modelData.playCount || 0
                 coverUrl: modelData.coverUrl
                 coverThumbPath: modelData.coverThumbPath || ""
                 sourceName: modelData.sourceName || ""

@@ -63,6 +63,11 @@ public final class SettingsCatalog {
     public static final int PAGE_TRANSITION_SLIDE_VERTICAL = 3;
     public static final int PAGE_TRANSITION_NONE = 4;
 
+    /** Daily picks above the recommendation grid instead of below it. */
+    public static final String HOME_DAILY_FIRST_KEY = "homeDailyFirst";
+    /** How many plain recommended playlists the home page asks a source for. */
+    public static final String HOME_PLAYLIST_LIMIT_KEY = "homePlaylistLimit";
+
     private SettingsCatalog() {}
 
     public static List<SettingSpec> specs() {
@@ -96,6 +101,16 @@ public final class SettingsCatalog {
                 .build());
         out.add(SettingSpec.toggle("showLocalTab", APPEARANCE, "显示本地标签", true)
                 .desc("关闭后隐藏底部导航栏和侧栏中的“本地”入口")
+                .build());
+        out.add(SettingSpec.toggle(HOME_DAILY_FIRST_KEY, APPEARANCE, "每日推荐置顶", true)
+                .desc("把每日推荐歌曲放在推荐页最上面，而不是推荐歌单下面")
+                .group("home")
+                .build());
+        out.add(SettingSpec.stepper(HOME_PLAYLIST_LIMIT_KEY, APPEARANCE, "推荐歌单数量",
+                        12, 4, 50, 2)
+                .desc("推荐页显示的推荐歌单上限；音源自己的分类歌单(如雷达)不计入")
+                .unit(" 个")
+                .group("home")
                 .build());
 
         // ---- 播放 -----------------------------------------------------------

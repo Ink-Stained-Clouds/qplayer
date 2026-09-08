@@ -411,6 +411,9 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 case "fade": controller.setFadeEnabled(bool("fade")); break;
                 case "highQuality": controller.setHighQualityEnabled(bool("highQuality")); break;
                 case "maxCacheSizeMB": controller.setCacheMaxSizeMB(intOf("maxCacheSizeMB")); break;
+                case SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY:
+                    controller.setHomePlaylistLimit(intOf(SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY));
+                    break;
                 default: break;
             }
         }
@@ -430,6 +433,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         controller.setFadeEnabled(bool("fade"));
         controller.setHighQualityEnabled(bool("highQuality"));
         controller.setCacheMaxSizeMB(intOf("maxCacheSizeMB"));
+        controller.setHomePlaylistLimit(intOf(SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY));
     }
 
     private void applyLyricConfig() {

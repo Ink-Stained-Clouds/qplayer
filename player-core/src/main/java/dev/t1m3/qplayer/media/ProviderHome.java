@@ -7,4 +7,6 @@ import java.util.List;
 public final class ProviderHome {
     public List<Song> songs = new ArrayList<>();
     public List<Playlist> playlists = new ArrayList<>();
+    /** Titled groups drawn before the plain recommendation grid. */
+    public List<HomeSection> sections = new ArrayList<>();
 }
