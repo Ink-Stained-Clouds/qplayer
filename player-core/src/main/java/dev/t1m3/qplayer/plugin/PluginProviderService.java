@@ -368,20 +368,30 @@ public final class PluginProviderService {
         if (artists instanceof List) {
             for (Object rawArtist : boundedList(artists, "song artists", 64)) {
                 Map<String, Object> artist = map(rawArtist, "song.artist");
+                // A credit carrying no display name is nothing the UI can show, and
+                // real catalogs do contain them (cloud-disk uploads, delisted or
+                // merged artists). Dropping that one credit keeps the rest of an
+                // otherwise valid playlist/album openable, which rejecting the whole
+                // response would not.
+                String name = boundedString(artist.get("name"), MAX_LABEL_CHARS,
+                        "artist.name", false);
+                if (name.isEmpty()) continue;
                 song.artists.add(new MediaRef(
-                        qualify(provider, MediaKind.ARTIST, artist.get("id")),
-                        boundedString(artist.get("name"), MAX_LABEL_CHARS,
-                                "artist.name", true)));
+                        qualify(provider, MediaKind.ARTIST, artist.get("id")), name));
             }
         }
         populateSongArtistAliases(song);
         Object rawAlbum = object.get("album");
         if (rawAlbum instanceof Map) {
             Map<String, Object> album = map(rawAlbum, "song.album");
-            song.album = new MediaRef(
-                    qualify(provider, MediaKind.ALBUM, album.get("id")),
-                    boundedString(album.get("name"), MAX_LABEL_CHARS,
-                            "album.name", true));
+            // Same rule as the credits above: an unnamed album reference is left
+            // unset (the field is optional anyway) instead of failing the song.
+            String albumName = boundedString(album.get("name"), MAX_LABEL_CHARS,
+                    "album.name", false);
+            if (!albumName.isEmpty()) {
+                song.album = new MediaRef(
+                        qualify(provider, MediaKind.ALBUM, album.get("id")), albumName);
+            }
         }
         return song;
     }
@@ -438,9 +448,11 @@ public final class PluginProviderService {
         if (object.get("artists") instanceof List) {
             for (Object item : boundedList(object.get("artists"), "album artists", 64)) {
                 Map<String, Object> artist = map(item, "album.artist");
-                album.artists.add(new MediaRef(qualify(provider, MediaKind.ARTIST, artist.get("id")),
-                        boundedString(artist.get("name"), MAX_LABEL_CHARS,
-                                "artist.name", true)));
+                String name = boundedString(artist.get("name"), MAX_LABEL_CHARS,
+                        "artist.name", false);
+                if (name.isEmpty()) continue;
+                album.artists.add(new MediaRef(
+                        qualify(provider, MediaKind.ARTIST, artist.get("id")), name));
             }
         }
         if (!album.artists.isEmpty()) {
