@@ -444,6 +444,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         c.dropShadow.setValue(bool("lyricShadow"));
         c.linearAnimForPlainLrc.setValue(bool("lyricLinearAnim"));
         c.edgeBlur.setValue(bool("lyricEdgeBlur"));
+        Fonts.warmupFromConfig();
     }
 
     // ---- fonts --------------------------------------------------------------
@@ -463,6 +464,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         String v = family != null ? family : "";
         if (store != null) store.putString(FONT_KEY, v);
         Fonts.setSelection(v);
+        Fonts.warmupFromConfig();
         fontFamilyChanged.set(fontFamilyChanged.peek() + 1);
     }
 

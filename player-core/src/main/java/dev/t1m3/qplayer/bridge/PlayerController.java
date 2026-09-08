@@ -587,6 +587,8 @@ public final class PlayerController {
     public final Property<Boolean> homeLoading = new Property<>(Boolean.FALSE);
     public final Property<List<NeteasePlaylist>> myPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<NeteaseSong>> recentSongs = new Property<>(Collections.<NeteaseSong>emptyList());
+    /** 我的 aggregates every enabled source that can list user playlists, so a
+     *  second account's playlists stay visible no matter which source is primary. */
     public final Property<List<Playlist>> sourceMyPlaylists =
             new Property<>(Collections.<Playlist>emptyList());
     public final Property<List<Song>> sourceRecentSongs =
@@ -755,6 +757,9 @@ public final class PlayerController {
     private volatile boolean pendingCredentialEncryptedNotice;
     private volatile boolean legacyCredentialMigrationAttempted;
     private final AtomicLong legacyCredentialMigrationGeneration = new AtomicLong();
+    /** Discard home/account results of a source that is no longer the primary one. */
+    private final AtomicLong homeGeneration = new AtomicLong();
+    private final AtomicLong accountGeneration = new AtomicLong();
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
      *  exact same text as last time. qml4j's property-changed notification
@@ -965,6 +970,12 @@ public final class PlayerController {
         sourcePlugins.set(rows);
         pluginUiContributions.set(pluginManager.uiContributions());
         publishCatalogInstalledState();
+        // Home content, the account header and the liked set all belong to whichever
+        // source was primary until now. Drop them before the new source's own loads
+        // start, otherwise the previous source's recommendations and signed-in user
+        // stay on screen (and a source without HOME/ACCOUNT would never replace them).
+        boolean primaryChanged = !primary.equals(orEmpty(primarySourcePlugin.peek()));
+        if (primaryChanged) clearSourceScopedContent();
         primarySourcePlugin.set(primary);
         boolean sourceReady = primaryProvider() != null;
         sourceContentActive.set(sourceReady);
@@ -979,7 +990,34 @@ public final class PlayerController {
         currentLiked.set(false);
         routeInstalledPluginTracks();
         refreshPrimaryPluginLoginMetadata();
+        // The enabled set may have changed (enable/disable/remove), so 我的 has to be
+        // re-aggregated even when the primary source stayed the same.
+        loadMyPlaylists();
         if (!primary.isEmpty()) loadHome();
+    }
+
+    /** Reset everything published on behalf of the source that is no longer primary. */
+    private void clearSourceScopedContent() {
+        sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
+        sourceRecommendations.set(Collections.<Song>emptyList());
+        sourceRecentSongs.set(Collections.<Song>emptyList());
+        clearPublishedPluginAccount();
+    }
+
+    /** Account header state only (unlike {@link #clearPublishedAccount}, 我的 is
+     *  aggregated across sources and must survive a primary switch). */
+    private void clearPublishedPluginAccount() {
+        accountGeneration.incrementAndGet();
+        pendingCredentialEncryptedNotice = false;
+        loggedIn.set(false);
+        userName.set("");
+        userAvatar.set("");
+        userVipType.set(0);
+        userLevel.set(0);
+        userSignature.set("");
+        pluginLikedSet.clear();
+        likedCount.set(0);
+        currentLiked.set(false);
     }
 
     /** Open the app-wide source setup flow from Home or any future empty state. */
@@ -1403,11 +1441,22 @@ public final class PlayerController {
             pluginQrLoginAvailable.set(false);
             pluginCredentialLoginAvailable.set(false);
             webLoginAvailable.set(false);
+            // Nothing can own the account header now, so it must not keep showing the
+            // previous source's user (the "logged into a source I just switched away
+            // from" state that made 我的/首页 disagree with the selected source).
+            clearPublishedPluginAccount();
             return;
         }
         final PluginManifest provider = selected;
         loginProviderName.set(provider.name);
         pluginLoginActive.set(true);
+        // Claim the login provider before the metadata round trip: restoring a stored
+        // session (and logging out of it) must not depend on that call succeeding.
+        pendingPluginLoginProvider = provider.id;
+        // A persisted session is what the account header should show; ask for it
+        // independently so a failed/slow methods() can't leave the user "logged out"
+        // until the next restart.
+        refreshPluginAccount(provider.id, null);
         pluginAccounts.methods(provider.id).whenComplete((methods, error) -> post(() -> {
             if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
             if (error != null) {
@@ -1420,7 +1469,6 @@ public final class PlayerController {
                 else if ("web".equals(method.type) && web == null) web = method;
                 else if ("credential".equals(method.type) && credential == null) credential = method;
             }
-            pendingPluginLoginProvider = provider.id;
             pluginQrMethodId = qr != null ? qr.id : "";
             pluginWebMethodId = web != null ? web.id : "";
             pluginCredentialMethodId = credential != null ? credential.id : "";
@@ -1439,7 +1487,6 @@ public final class PlayerController {
                 }
                 loginCredentialLabel.set(credential.credentialLabel);
             }
-            refreshPluginAccount(provider.id, null);
             migrateLegacyCredentialsIfAvailable(provider.id);
         }));
     }
@@ -5758,9 +5805,13 @@ public final class PlayerController {
     /** Load the home content: recommended songs (login) + recommended playlists. */
     public void loadHome() {
         post(() -> homeLoading.set(true));
+        // Switching away and back fast would otherwise let the first source's
+        // in-flight result land on top of the second one's.
+        final long generation = homeGeneration.incrementAndGet();
         PluginManifest provider = primaryProviderWith(ProviderCapability.HOME);
         if (provider != null) {
             pluginProviders.home(provider.id, 50).whenComplete((home, error) -> post(() -> {
+                if (generation != homeGeneration.get()) return;
                 if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
                 homeLoading.set(false);
                 if (error != null) {
@@ -5777,14 +5828,16 @@ public final class PlayerController {
             }));
             return;
         }
+        // No source can serve home right now: publish the empty state instead of
+        // leaving the previous source's recommendations up forever.
+        sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
+        sourceRecommendations.set(Collections.<Song>emptyList());
         if (onlineSourcesArePluginOnly()) {
             recommendations.set(Collections.<NeteaseSong>emptyList());
             recommendPlaylists.set(Collections.<NeteasePlaylist>emptyList());
             homeLoading.set(false);
             return;
         }
-        sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
-        sourceRecommendations.set(Collections.<Song>emptyList());
         worker.submit(() -> {
             try {
                 List<NeteasePlaylist> picks = netease.personalizedPlaylists(12);
@@ -6431,23 +6484,72 @@ public final class PlayerController {
                 }));
     }
 
-    /** Load the signed-in user's playlists (favorites + created). */
+    /** Per-source slices of 我的, keyed by provider id. Main thread only. */
+    private final Map<String, List<Playlist>> myPlaylistsBySource = new LinkedHashMap<>();
+    /** Provider order the current aggregation publishes in (primary first). */
+    private List<String> myPlaylistSourceOrder = Collections.emptyList();
+    /** Discards results of a superseded aggregation (source enabled/disabled/switched). */
+    private final AtomicLong myPlaylistsGeneration = new AtomicLong();
+    private int myPlaylistsPending;
+
+    /** Load the signed-in user's playlists (favorites + created) from every enabled
+     *  source, not just the primary one: sources keep independent accounts, and a
+     *  playlist stays openable by its own provider regardless of which one is primary. */
     public void loadMyPlaylists() {
-        PluginManifest provider = primaryProviderWith(ProviderCapability.USER_PLAYLISTS);
-        if (provider != null) {
-            pluginProviders.userPlaylists(provider.id, 100).whenComplete((playlists, error) -> post(() -> {
-                if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
-                if (error != null) {
-                    Logger.warn("plugin {} user playlists failed: {}", provider.id,
-                            safeMessage(error));
-                    showToast("加载歌单失败，请检查网络或插件状态");
-                    return;
-                }
-                sourceMyPlaylists.set(playlists);
-                playlistCount.set(playlists.size());
-            }));
+        List<PluginManifest> providers = new ArrayList<>();
+        String primary = pluginRegistry.primaryProvider();
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.capabilitySet().contains(ProviderCapability.USER_PLAYLISTS)) {
+                if (manifest.id.equals(primary)) providers.add(0, manifest);
+                else providers.add(manifest);
+            }
+        }
+        if (!providers.isEmpty()) {
+            final long generation = myPlaylistsGeneration.incrementAndGet();
+            final List<String> order = new ArrayList<>();
+            for (PluginManifest manifest : providers) order.add(manifest.id);
+            post(() -> {
+                myPlaylistSourceOrder = order;
+                // A source that is gone (disabled/removed) must not keep contributing.
+                myPlaylistsBySource.keySet().retainAll(order);
+                myPlaylistsPending = order.size();
+                publishMyPlaylists();
+            });
+            for (PluginManifest manifest : providers) {
+                final String providerId = manifest.id;
+                final String providerName = manifest.name;
+                pluginProviders.userPlaylists(providerId, 100)
+                        .whenComplete((playlists, error) -> post(() -> {
+                            if (generation != myPlaylistsGeneration.get()) return;
+                            myPlaylistsPending--;
+                            if (error != null) {
+                                Logger.warn("plugin {} user playlists failed: {}", providerId,
+                                        safeMessage(error));
+                                myPlaylistsBySource.remove(providerId);
+                            } else {
+                                for (Playlist playlist : playlists) {
+                                    playlist.sourceName = providerName;
+                                }
+                                myPlaylistsBySource.put(providerId, playlists);
+                            }
+                            publishMyPlaylists();
+                            // A signed-out source simply reports an error, so only
+                            // complain once every source failed while signed in.
+                            if (myPlaylistsPending == 0 && myPlaylistsBySource.isEmpty()
+                                    && Boolean.TRUE.equals(loggedIn.peek())) {
+                                showToast("加载歌单失败，请检查网络或插件状态");
+                            }
+                        }));
+            }
             return;
         }
+        myPlaylistsGeneration.incrementAndGet();
+        post(() -> {
+            myPlaylistSourceOrder = Collections.emptyList();
+            myPlaylistsBySource.clear();
+            myPlaylistsPending = 0;
+            publishMyPlaylists();
+        });
         if (onlineSourcesArePluginOnly()) {
             myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
             return;
@@ -6492,6 +6594,19 @@ public final class PlayerController {
                 offlineMyPlaylistsFallback();
             }
         });
+    }
+
+    /** Flatten {@link #myPlaylistsBySource} into 我的, primary source first. Called
+     *  after every per-source completion so the primary's playlists appear without
+     *  waiting on a slow secondary source. */
+    private void publishMyPlaylists() {
+        List<Playlist> merged = new ArrayList<>();
+        for (String providerId : myPlaylistSourceOrder) {
+            List<Playlist> slice = myPlaylistsBySource.get(providerId);
+            if (slice != null) merged.addAll(slice);
+        }
+        sourceMyPlaylists.set(Collections.unmodifiableList(merged));
+        playlistCount.set(merged.size());
     }
 
     /** {@link #loadMyPlaylists} couldn't reach the network (or has no live uid to
@@ -7169,7 +7284,12 @@ public final class PlayerController {
             return;
         }
         if (!pluginHasCapability(provider, ProviderCapability.ACCOUNT)) return;
+        final long generation = accountGeneration.incrementAndGet();
         pluginAccounts.account(provider).whenComplete((account, error) -> post(() -> {
+            // A switch away (or a logout) that happened while this was in flight
+            // already bumped the generation: publishing now would restore the
+            // account header of a source the user has left.
+            if (generation != accountGeneration.get()) return;
             if (error == null && provider.equals(pluginRegistry.primaryProvider())) {
                 publishPluginAccount(provider, account);
             }
@@ -7285,6 +7405,7 @@ public final class PlayerController {
                 legacyCredentialMigrationAttempted = true;
                 netease.logout();
                 clearPublishedAccount();
+                dropMyPlaylistsForSource(provider);
                 showToast("已退出登录");
             }));
             return;
@@ -7302,20 +7423,20 @@ public final class PlayerController {
     }
 
     private void clearPublishedAccount() {
-        pendingCredentialEncryptedNotice = false;
         uid = 0;
-        loggedIn.set(false);
-        userName.set("");
-        userAvatar.set("");
-        userVipType.set(0);
-        userLevel.set(0);
-        userSignature.set("");
         likedSet.clear();
-        likedCount.set(0);
-        playlistCount.set(0);
         myPlaylists.set(Collections.<NeteasePlaylist>emptyList());
         recommendations.set(Collections.<NeteaseSong>emptyList());
         recentSongs.set(Collections.<NeteaseSong>emptyList());
+        sourceRecentSongs.set(Collections.<Song>emptyList());
+        clearPublishedPluginAccount();
+        publishMyPlaylists();
+    }
+
+    /** 我的 keeps the other sources' playlists after one source signs out. */
+    private void dropMyPlaylistsForSource(String providerId) {
+        myPlaylistsBySource.remove(providerId);
+        publishMyPlaylists();
     }
 
     /** Persist the queue + live playback position + play mode right now. The only

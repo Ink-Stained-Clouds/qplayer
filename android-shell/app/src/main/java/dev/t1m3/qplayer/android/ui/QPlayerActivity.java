@@ -32,6 +32,7 @@ import dev.t1m3.qplayer.model.Track;
 import dev.t1m3.qplayer.settings.SettingsCatalog;
 import dev.t1m3.qplayer.settings.SettingsCore;
 import dev.t1m3.qplayer.resources.CompressedResources;
+import dev.t1m3.qplayer.resources.DiskDecompressedResourceCache;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -208,7 +209,9 @@ public final class QPlayerActivity extends Activity {
 
         // Lyric renderer fonts: the bundled PingFang SC weights from shared-qml
         // (the lyric face must itself cover CJK + Latin — no automatic fallback).
-        FileResourceLoader resources = new FileResourceLoader(getAssets());
+        FileResourceLoader files = new FileResourceLoader(getAssets());
+        DiskDecompressedResourceCache resources = new DiskDecompressedResourceCache(
+                files, new java.io.File(getCacheDir(), "expanded-resources").toPath());
         try {
             dev.t1m3.qplayer.lyric.skia.Fonts.init(weight -> CompressedResources.load(resources,
                     "fonts/PingFangSC-" + bundledFontWeightName(weight) + ".otf"));
@@ -216,6 +219,7 @@ public final class QPlayerActivity extends Activity {
             // shaped ligature name, same as the QML scene's icons).
             dev.t1m3.qplayer.lyric.skia.Fonts.initIcon(
                     readAssetBytes("fonts/MaterialSymbolsRounded.ttf"));
+            dev.t1m3.qplayer.lyric.skia.Fonts.warmupFromConfig();
         } catch (IOException ignored) {
         }
 

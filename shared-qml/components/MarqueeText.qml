@@ -22,11 +22,17 @@ Item {
     property int fontWeight: Font.Normal
     property bool centered: false
     property real fadeWidth: 20
-    // Gap between the tail of one copy and the beginning of the next.
-    property real repeatGap: 32
+    // Gap between the tail of one copy and the beginning of the next, written as
+    // real spacer glyphs rather than a pixel offset: both copies are shaped into
+    // ONE line, so no width arithmetic can ever place the next copy on top of the
+    // previous one's tail. Plain spaces keep the font selection (which is picked
+    // from the string's own script) identical to the single-copy probe.
+    property string gapText: "      "
     // Scroll pace (px/s) and the pause held at the beginning of each cycle.
     property real speed: 32
     property int pauseMs: 1000
+    // What the marquee actually paints: two copies separated by the gap.
+    property string loopText: root.text + root.gapText + root.text
 
     implicitHeight: probe.implicitHeight
     // A plain Item's height does not default to implicitHeight in qml4j. Bind
@@ -43,15 +49,28 @@ Item {
         font.pixelSize: root.fontSize
         font.weight: root.fontWeight
     }
+    // The scrolling line's own width. One cycle travels loopWidth - probeWidth,
+    // i.e. exactly one copy plus the gap, measured without a trailing space whose
+    // advance a shaper may or may not report.
+    Text {
+        id: loopProbe
+        visible: false
+        text: root.loopText
+        font.family: root.fontFamily
+        font.pixelSize: root.fontSize
+        font.weight: root.fontWeight
+    }
     property bool overflowing: root.width > 0 && probe.implicitWidth > root.width
+    property real cycleWidth: Math.max(0, loopProbe.implicitWidth - probe.implicitWidth)
 
     onOverflowingChanged: if (!overflowing) label.scrollX = 0
 
-    // The common, zero-offscreen-cost path for text that fits.
+    // The common, zero-offscreen-cost path for text that fits. Emptied rather than
+    // only hidden while scrolling, so the two paths can never paint at once.
     Text {
         visible: !root.overflowing
         anchors.fill: parent
-        text: root.text
+        text: root.overflowing ? "" : root.text
         color: root.textColor
         font.family: root.fontFamily
         font.pixelSize: root.fontSize
@@ -73,13 +92,16 @@ Item {
         visible: false
         clip: true
 
+        // Both copies in one shaped line: the second one enters the viewport
+        // before the first has left it, and the shaper -- not a computed offset --
+        // is what keeps them apart.
         Text {
             id: label
             property real scrollX: 0
             x: scrollX
             anchors.verticalCenter: parent.verticalCenter
-            width: probe.implicitWidth
-            text: root.text
+            width: loopProbe.implicitWidth
+            text: root.overflowing ? root.loopText : ""
             color: root.textColor
             font.family: root.fontFamily
             font.pixelSize: root.fontSize
@@ -87,37 +109,25 @@ Item {
             elide: Text.ElideNone
             horizontalAlignment: Text.AlignLeft
 
-            // Scroll exactly one copy plus the fixed gap. At the endpoint the
-            // following copy occupies the first copy's initial position, so the
-            // loop reset is pixel-identical and cannot flash or leave a long gap.
+            // Scroll exactly one copy plus the gap, so the second copy ends up
+            // where the first one started. Rewinding before the pause (rather
+            // than relying on the endpoint alone) keeps the held frame at the
+            // exact start of the text even if the measured cycle width is a
+            // fraction off the shaped one.
             SequentialAnimation {
                 running: root.overflowing && root.visible
                 loops: Animation.Infinite
+                ScriptAction { script: label.scrollX = 0 }
                 PauseAnimation { duration: root.pauseMs }
                 NumberAnimation {
                     target: label
                     property: "scrollX"
                     from: 0
-                    to: -(probe.implicitWidth + root.repeatGap)
-                    duration: (probe.implicitWidth + root.repeatGap) / root.speed * 1000
+                    to: -root.cycleWidth
+                    duration: root.cycleWidth / root.speed * 1000
                     easing.type: Easing.Linear
                 }
             }
-        }
-
-        // The next copy enters before the first one has left the viewport. Only
-        // repeatGap can ever be empty, independent of the viewport/text widths.
-        Text {
-            x: label.scrollX + probe.implicitWidth + root.repeatGap
-            anchors.verticalCenter: parent.verticalCenter
-            width: probe.implicitWidth
-            text: root.text
-            color: root.textColor
-            font.family: root.fontFamily
-            font.pixelSize: root.fontSize
-            font.weight: root.fontWeight
-            elide: Text.ElideNone
-            horizontalAlignment: Text.AlignLeft
         }
     }
 
@@ -136,7 +146,7 @@ Item {
         // glyph remains fully opaque instead of being mistaken for overflow.
         property bool fadeLeft: label.scrollX < 0
                                 && label.scrollX + probe.implicitWidth > 0
-        property real nextX: label.scrollX + probe.implicitWidth + root.repeatGap
+        property real nextX: label.scrollX + root.cycleWidth
         property bool fadeRight: (label.scrollX < root.width
                                   && label.scrollX + probe.implicitWidth > root.width)
                                  || (nextX < root.width

@@ -439,31 +439,34 @@ Item {
     // this column centers across the full width). Plain anchors, no positioner: the
     // play clock republishes positionMs/lyricProgress ~5x/s and a Column/Layout here
     // would re-run its distribution pass each of those frames (see MiniPlayer).
+    //
+    // Occupies only the left half (full width when coverOnly) so it cannot cover the
+    // host lyric column. qml4j hit-tests clip to parent bounds even without clip:true,
+    // so the inner column must be as wide as the transport row — not the cover.
     Item {
         id: landscapeChrome
         visible: overlay.landscape
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: overlay.coverOnly ? overlay.width : overlay.width / 2
+        Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutBack } }
 
-        // Target region: half the page (cover left, lyrics right) or the whole width
-        // when there's no side lyric column. Like SPlayer's content-left, the cover
-        // column's centre-x AND size EASE between the two states (springy OutBack)
-        // rather than snapping when lyrics appear/disappear.
-        readonly property real regionW: overlay.coverOnly ? overlay.width : overlay.width / 2
         readonly property real targetCoverSize:
-            Math.max(120, Math.min(regionW - 96, overlay.height - 248, 360))
+            Math.max(120, Math.min(width - 96, overlay.height - 248, 360))
         property real coverSize: targetCoverSize
-        property real centerX: regionW / 2
         Behavior on coverSize { NumberAnimation { duration: 500; easing.type: Easing.OutBack } }
-        Behavior on centerX { NumberAnimation { duration: 500; easing.type: Easing.OutBack } }
+        // 5×40px IconButtons + 4 gaps. Floor for hit-testing; spacing shrinks below this.
+        readonly property real transportMinWidth: 272
 
         Item {
             id: col
-            width: landscapeChrome.coverSize
+            width: Math.max(landscapeChrome.coverSize,
+                            Math.min(parent.width - 48, landscapeChrome.transportMinWidth))
             // cover + (title 26 + artist 18 + gaps + progress + labels + buttons 48).
             height: landscapeChrome.coverSize + 196
             anchors.verticalCenter: parent.verticalCenter
-            anchors.horizontalCenter: parent.left
-            anchors.horizontalCenterOffset: landscapeChrome.centerX
+            anchors.horizontalCenter: parent.horizontalCenter
 
             PlaybackCoverImage {
                 id: lCover
@@ -562,7 +565,7 @@ Item {
             Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                spacing: 18
+                spacing: Math.max(4, Math.min(18, (col.width - 200) / 4))
                 IconButton {
                     type: "standard"
                     icon: player.playMode === 1 ? "shuffle"

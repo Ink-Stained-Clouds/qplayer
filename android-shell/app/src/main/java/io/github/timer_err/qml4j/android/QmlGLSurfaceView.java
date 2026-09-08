@@ -254,6 +254,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         if (hitTextEditable) showImeOnUiThread();
                     }
                 });
+                wakeRenderer();
                 return true;
             case MotionEvent.ACTION_MOVE:
                 queueEvent(new Runnable() {
@@ -273,6 +274,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         if (view != null) view.dispatchPointerMove(x, y);
                     }
                 });
+                wakeRenderer();
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
@@ -294,10 +296,21 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         if (view != null) view.dispatchPointerUp(x, y);
                     }
                 });
+                wakeRenderer();
                 return true;
             default:
                 return false;
         }
+    }
+
+    /** Pointer dispatch runs on the GL thread via queueEvent and does not go
+     *  through PlayerController.post(), so it never calls renderWake. Idle
+     *  frames switch this view to WHEN_DIRTY; without a wake the click/scroll
+     *  updates QML state but never draws — the screen looks frozen until Home
+     *  or Back (which do post() and wake). */
+    private void wakeRenderer() {
+        setRenderMode(RENDERMODE_CONTINUOUSLY);
+        requestRender();
     }
 
     // Status-bar inset in logical px, fed to the lyric compositor for column gating.

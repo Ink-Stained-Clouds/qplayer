@@ -1,4 +1,4 @@
-package dev.t1m3.qplayer.desktop.resources;
+package dev.t1m3.qplayer.resources;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -26,7 +26,7 @@ public class DiskDecompressedResourceCacheTest {
         for (int i = 0; i < original.length; i++) original[i] = (byte) (i * 31);
         byte[] compressed = xz(original);
         AtomicInteger compressedReads = new AtomicInteger();
-        var loader = (io.github.timer_err.qml4j.render.ResourceLoader) source -> {
+        io.github.timer_err.qml4j.render.ResourceLoader loader = source -> {
             if (!"fonts/Test.otf.xz".equals(source)) return null;
             compressedReads.incrementAndGet();
             return compressed;
@@ -40,8 +40,8 @@ public class DiskDecompressedResourceCacheTest {
         assertEquals(1, compressedReads.get());
 
         Path entry;
-        try (var files = Files.list(directory)) {
-            entry = files.findFirst().orElseThrow();
+        try (java.util.stream.Stream<Path> files = Files.list(directory)) {
+            entry = files.findFirst().orElseThrow(java.util.NoSuchElementException::new);
         }
         byte[] corrupt = Files.readAllBytes(entry);
         Arrays.fill(corrupt, corrupt.length - 32, corrupt.length, (byte) 0);

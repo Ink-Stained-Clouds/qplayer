@@ -15,7 +15,7 @@ import dev.t1m3.qplayer.desktop.media.MprisControls;
 import dev.t1m3.qplayer.desktop.media.WindowsMediaControls;
 import dev.t1m3.qplayer.desktop.resources.ClasspathResourceLoader;
 import dev.t1m3.qplayer.desktop.resources.DiskCompiledSceneCache;
-import dev.t1m3.qplayer.desktop.resources.DiskDecompressedResourceCache;
+import dev.t1m3.qplayer.resources.DiskDecompressedResourceCache;
 import dev.t1m3.qplayer.desktop.security.DesktopCredentialProtection;
 import dev.t1m3.qplayer.desktop.settings.DesktopThemeMonitor;
 import dev.t1m3.qplayer.desktop.settings.JsonSettingsStore;
@@ -156,6 +156,7 @@ public final class Main {
             case REGULAR -> "Regular";
             case MEDIUM -> "Medium";
         } + ".otf"));
+        Fonts.warmupFromConfig();
         byte[] qmlBytes = resources.load("Main.qml");
         if (qmlBytes == null) throw new IllegalStateException("Main.qml not found on classpath");
         String qml = new String(qmlBytes, StandardCharsets.UTF_8);

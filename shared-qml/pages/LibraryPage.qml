@@ -12,11 +12,16 @@ Item {
     signal openPlaylist()
     signal requestLogin()
 
+    // Playlists are aggregated across sources, so a signed-in secondary source
+    // still fills this page while the primary one is signed out.
+    property bool hasPlaylists: player.playlistCount > 0
+
     PlaylistGrid {
         id: grid
         anchors.fill: parent
-        visible: player.loggedIn
-        list: player.sourceContentActive ? player.sourceMyPlaylists : player.myPlaylists
+        visible: player.loggedIn || page.hasPlaylists
+        list: (player.sourceContentActive || page.hasPlaylists)
+              ? player.sourceMyPlaylists : player.myPlaylists
         onOpenPlaylist: { page.pendingPlaylist = grid.pendingPlaylist; page.openPlaylist() }
     }
 
@@ -54,7 +59,7 @@ Item {
     ColumnLayout {
         anchors.centerIn: parent
         spacing: 12
-        visible: !player.loggedIn
+        visible: !player.loggedIn && !page.hasPlaylists
         Text {
             Layout.alignment: Qt.AlignHCenter
             text: "登录后查看你的歌单"
