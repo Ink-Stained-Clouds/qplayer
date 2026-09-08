@@ -44,19 +44,23 @@ Menu {
             if (mediaArtistIds)
                 items.push({ text: "查看歌手", icon: "person",
                              action: menu._openArtistPickerAction(mediaArtistIds, mediaArtistNames) })
-            if (player.loggedIn && player.sourcePlaylistMutationAvailable) {
-                var sourceLists = player.sourceMyPlaylists
-                var sourceSubs = []
-                var sourceCount = sourceLists ? sourceLists.length : 0
-                for (var spi = 0; spi < sourceCount; spi++) {
-                    if (!sourceLists[spi].mutable) continue
-                    sourceSubs.push(menu._addMediaItem(sourceLists[spi], "" + songId))
-                }
-                if (sourceSubs.length > 0)
-                    items.push({ text: "添加到歌单", icon: "playlist_add", subItems: sourceSubs })
-                if (menu.inOwnedPlaylist && player.openSourcePlaylistId !== "")
-                    items.push({ text: "从此歌单移除", icon: "playlist_remove", action: menu._removeMediaPlaylistAction("" + songId) })
+            // 我的 mixes every signed-in source, but a playlist only accepts songs
+            // from its own source: offering the others would just fail server-side.
+            // Media ids are "<source>:<kind>:<native>", so the prefix is the filter.
+            var sourcePrefix = ("" + songId).split(":")[0] + ":"
+            var sourceLists = player.sourceMyPlaylists
+            var sourceSubs = []
+            var sourceCount = sourceLists ? sourceLists.length : 0
+            for (var spi = 0; spi < sourceCount; spi++) {
+                if (!sourceLists[spi].mutable) continue
+                if (("" + sourceLists[spi].id).indexOf(sourcePrefix) !== 0) continue
+                sourceSubs.push(menu._addMediaItem(sourceLists[spi], "" + songId))
             }
+            if (sourceSubs.length > 0)
+                items.push({ text: "添加到歌单", icon: "playlist_add", subItems: sourceSubs })
+            if (menu.inOwnedPlaylist && player.openSourcePlaylistId !== ""
+                    && ("" + player.openSourcePlaylistId).indexOf(sourcePrefix) === 0)
+                items.push({ text: "从此歌单移除", icon: "playlist_remove", action: menu._removeMediaPlaylistAction("" + songId) })
             if (player.isMediaInCustomPlaylist("" + songId))
                 items.push({ text: "移出播放列表", icon: "playlist_remove", action: menu._removeMediaCustomAction("" + songId) })
             else

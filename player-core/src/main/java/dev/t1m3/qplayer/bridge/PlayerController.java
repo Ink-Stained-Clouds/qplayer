@@ -238,7 +238,13 @@ public final class PlayerController {
             java.util.Collections.synchronizedMap(new HashMap<String, Integer>());
     private final Queue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> likedSet = new HashSet<>();
+    /** Union of every signed-in source's liked songs, keyed by canonical id. The ids
+     *  carry their provider, so a lookup is inherently scoped to the song's own
+     *  source even while another source is primary. */
     private final Set<String> pluginLikedSet = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Per-source slices behind {@link #pluginLikedSet}, so one source signing out or
+     *  failing to answer only drops its own ids. Main thread only. */
+    private final Map<String, Set<String>> pluginLikedBySource = new LinkedHashMap<>();
     private final Random rng = new Random();
 
     // Playback control runs on the host's main thread (always alive — unlike the GL
@@ -593,7 +599,11 @@ public final class PlayerController {
             new Property<>(Collections.<Playlist>emptyList());
     public final Property<List<Song>> sourceRecentSongs =
             new Property<>(Collections.<Song>emptyList());
+    /** Whether the primary source can create playlists (drives 我的's new-playlist
+     *  action, which necessarily targets one source). */
     public final Property<Boolean> sourcePlaylistMutationAvailable = new Property<>(false);
+    /** Whether the source of the playlist currently open supports heart
+     *  recommendations — not the primary one, since 我的 lists several sources. */
     public final Property<Boolean> sourceHeartRecommendationAvailable = new Property<>(false);
     /** Currently opened playlist. */
     public final Property<List<NeteaseSong>> playlistTracks = new Property<>(Collections.<NeteaseSong>emptyList());
@@ -760,6 +770,7 @@ public final class PlayerController {
     /** Discard home/account results of a source that is no longer the primary one. */
     private final AtomicLong homeGeneration = new AtomicLong();
     private final AtomicLong accountGeneration = new AtomicLong();
+    private final AtomicLong pluginLikedGeneration = new AtomicLong();
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
      *  exact same text as last time. qml4j's property-changed notification
@@ -986,13 +997,13 @@ public final class PlayerController {
                 ProviderCapability.PLAYLIST_MUTATION) != null);
         sourceHeartRecommendationAvailable.set(primaryProviderWith(
                 ProviderCapability.HEART_RECOMMENDATION) != null);
-        pluginLikedSet.clear();
-        currentLiked.set(false);
         routeInstalledPluginTracks();
         refreshPrimaryPluginLoginMetadata();
-        // The enabled set may have changed (enable/disable/remove), so 我的 has to be
-        // re-aggregated even when the primary source stayed the same.
+        // The enabled set may have changed (enable/disable/remove), so 我的 and the
+        // liked sets have to be re-aggregated even when the primary source stayed
+        // the same.
         loadMyPlaylists();
+        refreshPluginLiked();
         if (!primary.isEmpty()) loadHome();
     }
 
@@ -1015,9 +1026,6 @@ public final class PlayerController {
         userVipType.set(0);
         userLevel.set(0);
         userSignature.set("");
-        pluginLikedSet.clear();
-        likedCount.set(0);
-        currentLiked.set(false);
     }
 
     /** Open the app-wide source setup flow from Home or any future empty state. */
@@ -3410,6 +3418,11 @@ public final class PlayerController {
     }
 
     private void playQueue(List<Track> q, int start, long sourcePlaylistId) {
+        // Checked before the queue is replaced: a rejected selection must leave the
+        // shared session's queue exactly as the room sees it.
+        if (q != null && start >= 0 && start < q.size() && blockedByPluginSession(q.get(start))) {
+            return;
+        }
         currentQueuePlaylistId = sourcePlaylistId;
         if (sourcePlaylistId != 0L) currentQueueMediaPlaylistId = "";
         queue.clear();
@@ -3460,6 +3473,7 @@ public final class PlayerController {
 
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        if (blockedByPluginSession(queue.get(i))) return;
         String requestedMediaId = queue.get(i).canonicalId();
         if (pendingPluginDesiredPlaying != null
                 && !pendingPluginTargetMediaId.equals(requestedMediaId)) {
@@ -4616,6 +4630,25 @@ public final class PlayerController {
     private static String providerOf(Track track) {
         try { return MediaId.parse(track.canonicalId()).provider(); }
         catch (IllegalArgumentException ignored) { return ""; }
+    }
+
+    /** True when a plugin currently drives a shared playback session (listen
+     *  together holds the auto-advance block for as long as the room lasts) and
+     *  {@code track} is not one of that provider's songs. Everyone else in the room
+     *  can only receive that provider's ids, so a local file or another source's
+     *  song would desynchronize the room instead of playing for anyone. */
+    private boolean blockedByPluginSession(Track track) {
+        String owner = pluginAutoAdvanceBlocker;
+        if (owner.isEmpty() || track == null || owner.equals(providerOf(track))) return false;
+        showToast(pluginDisplayName(owner) + "正在一起听，暂时只能播放该音源的歌曲");
+        return true;
+    }
+
+    private String pluginDisplayName(String pluginId) {
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.id.equals(pluginId) && !manifest.name.isEmpty()) return manifest.name;
+        }
+        return pluginId;
     }
 
     private static boolean hasFreshPluginStream(Track track) {
@@ -6197,6 +6230,11 @@ public final class PlayerController {
         currentPlaylistId = 0L;
         openPlaylistId.set(0L);
         openSourcePlaylistId.set(id.toString());
+        // Capabilities belong to the playlist's own source, not to whichever source
+        // happens to be primary: an open QQ playlist must not offer NetEase's
+        // heart-recommendation button (and vice versa).
+        sourceHeartRecommendationAvailable.set(
+                pluginHasCapability(id.provider(), ProviderCapability.HEART_RECOMMENDATION));
         playlistLoading.set(true);
         playlistOffline.set(false);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
@@ -6895,25 +6933,42 @@ public final class PlayerController {
         });
     }
 
-    private void refreshPluginLiked(String provider) {
-        if (!pluginHasCapability(provider, ProviderCapability.LIKE)) {
-            pluginLikedSet.clear();
-            likedCount.set(0);
-            currentLiked.set(false);
-            return;
+    /** Load the liked set of every signed-in source, not just the primary one: the
+     *  heart on a QQ song has to reflect QQ's own favourites even while NetEase is
+     *  the primary source. */
+    private void refreshPluginLiked() {
+        List<PluginManifest> providers = new ArrayList<>();
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.capabilitySet().contains(ProviderCapability.LIKE)) providers.add(manifest);
         }
-        pluginProviders.likedSongs(provider).whenComplete((ids, error) -> post(() -> {
-            if (!provider.equals(pluginRegistry.primaryProvider())) return;
-            if (error != null) {
-                Logger.warn("plugin {} liked list failed: {}", provider, safeMessage(error));
-                return;
-            }
-            pluginLikedSet.clear();
-            pluginLikedSet.addAll(ids);
-            likedCount.set(ids.size());
-            Track current = currentTrack();
-            currentLiked.set(current != null && ids.contains(current.canonicalId()));
-        }));
+        final long generation = pluginLikedGeneration.incrementAndGet();
+        final List<String> order = new ArrayList<>();
+        for (PluginManifest manifest : providers) order.add(manifest.id);
+        post(() -> {
+            pluginLikedBySource.keySet().retainAll(order);
+            publishPluginLiked();
+        });
+        for (PluginManifest manifest : providers) {
+            final String providerId = manifest.id;
+            pluginProviders.likedSongs(providerId).whenComplete((ids, error) -> post(() -> {
+                if (generation != pluginLikedGeneration.get()) return;
+                if (error != null) {
+                    Logger.warn("plugin {} liked list failed: {}", providerId, safeMessage(error));
+                    pluginLikedBySource.remove(providerId);
+                } else {
+                    pluginLikedBySource.put(providerId, new java.util.LinkedHashSet<>(ids));
+                }
+                publishPluginLiked();
+            }));
+        }
+    }
+
+    private void publishPluginLiked() {
+        pluginLikedSet.clear();
+        for (Set<String> slice : pluginLikedBySource.values()) pluginLikedSet.addAll(slice);
+        likedCount.set(pluginLikedSet.size());
+        Track current = currentTrack();
+        currentLiked.set(current != null && pluginLikedSet.contains(current.canonicalId()));
     }
 
     /** Like / unlike the current netease track. */
@@ -7315,14 +7370,13 @@ public final class PlayerController {
             if (pluginHostApi.consumeCredentialUnlock()) {
                 showToast("已从系统密钥库安全恢复登录凭据");
             }
-            refreshPluginLiked(provider);
+            refreshPluginLiked();
             loadMyPlaylists();
             loadRecent();
         } else {
             pendingCredentialEncryptedNotice = false;
-            pluginLikedSet.clear();
-            likedCount.set(0);
-            currentLiked.set(false);
+            pluginLikedBySource.remove(provider);
+            publishPluginLiked();
         }
     }
 
@@ -7405,7 +7459,7 @@ public final class PlayerController {
                 legacyCredentialMigrationAttempted = true;
                 netease.logout();
                 clearPublishedAccount();
-                dropMyPlaylistsForSource(provider);
+                dropSourceUserData(provider);
                 showToast("已退出登录");
             }));
             return;
@@ -7431,12 +7485,16 @@ public final class PlayerController {
         sourceRecentSongs.set(Collections.<Song>emptyList());
         clearPublishedPluginAccount();
         publishMyPlaylists();
+        publishPluginLiked();
     }
 
-    /** 我的 keeps the other sources' playlists after one source signs out. */
-    private void dropMyPlaylistsForSource(String providerId) {
+    /** 我的 and the liked hearts keep the other sources' data after one source
+     *  signs out; only the leaving source's own slice goes away. */
+    private void dropSourceUserData(String providerId) {
         myPlaylistsBySource.remove(providerId);
         publishMyPlaylists();
+        pluginLikedBySource.remove(providerId);
+        publishPluginLiked();
     }
 
     /** Persist the queue + live playback position + play mode right now. The only
