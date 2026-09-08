@@ -60,6 +60,9 @@ Item {
             if (slot && slot.node && slot.node.type === "input")
                 inputs[slot.node.id] = slot.inputValue;
 
+            if (slot && slot.node && slot.node.type === "switch")
+                inputs[slot.node.id] = slot.switchValue;
+
         }
         player.pluginDialogAction(actionId, JSON.stringify(inputs));
     }

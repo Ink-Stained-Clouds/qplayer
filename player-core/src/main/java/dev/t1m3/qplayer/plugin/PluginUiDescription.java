@@ -111,6 +111,18 @@ public final class PluginUiDescription {
                 out.put("value", text(node.get("value"), "input value", MAX_VALUE, true));
                 out.put("secret", flag(node.get("secret"), false));
                 return out;
+            case "switch":
+                // Shares the input id space: a switch reports its state through the
+                // same inputs map a text field does.
+                out.put("id", id(node.get("id"), "switch id"));
+                if (!inputIds.add((String) out.get("id"))) {
+                    throw new IllegalArgumentException("duplicate plugin UI input id");
+                }
+                out.put("label", text(node.get("label"), "switch label", MAX_SUBTITLE, false));
+                out.put("desc", text(node.get("desc"), "switch description", MAX_TEXT, true));
+                out.put("checked", flag(node.get("checked"), false));
+                out.put("enabled", flag(node.get("enabled"), true));
+                return out;
             case "button":
                 out.put("id", id(node.get("id"), "button id"));
                 out.put("label", text(node.get("label"), "button label", MAX_LABEL, false));
