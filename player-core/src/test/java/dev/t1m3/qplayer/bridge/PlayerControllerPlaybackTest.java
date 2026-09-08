@@ -740,12 +740,12 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
-    public void listenTogetherOnlyPlaysTheHostingSourcesSongs() throws Exception {
+    public void aPluginDrivingPlaybackOnlyAllowsItsOwnSongs() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
         PlayerController controller = null;
         try {
-            Path base = temporaryFolder.newFolder("listen-together-guard").toPath();
+            Path base = temporaryFolder.newFolder("plugin-playback-guard").toPath();
             AppDirs.setBase(base.toString());
             AppDirs.setCacheBase(base.resolve("cache").toString());
             controller = new PlayerController(
@@ -764,7 +764,7 @@ public class PlayerControllerPlaybackTest {
             other.source = Track.Source.PLUGIN;
             other.mediaId = "qq:song:004X";
 
-            // No session: everything plays.
+            // No plugin driving playback: everything plays.
             assertFalse((Boolean) blocked.invoke(controller, local));
 
             java.lang.reflect.Field owner =
@@ -774,9 +774,9 @@ public class PlayerControllerPlaybackTest {
 
             assertFalse("the hosting source's own songs still play",
                     (Boolean) blocked.invoke(controller, netease));
-            assertTrue("local files cannot be shared with the room",
+            assertTrue("a local file is not addressable by the driving plugin",
                     (Boolean) blocked.invoke(controller, local));
-            assertTrue("another source's songs cannot be shared with the room",
+            assertTrue("another source's songs are not addressable either",
                     (Boolean) blocked.invoke(controller, other));
         } finally {
             if (controller != null) controller.shutdown();

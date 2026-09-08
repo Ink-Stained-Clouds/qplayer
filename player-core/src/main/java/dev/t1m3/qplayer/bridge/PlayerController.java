@@ -3419,7 +3419,7 @@ public final class PlayerController {
 
     private void playQueue(List<Track> q, int start, long sourcePlaylistId) {
         // Checked before the queue is replaced: a rejected selection must leave the
-        // shared session's queue exactly as the room sees it.
+        // queue exactly as the plugin driving playback last set it.
         if (q != null && start >= 0 && start < q.size() && blockedByPluginSession(q.get(start))) {
             return;
         }
@@ -4632,15 +4632,15 @@ public final class PlayerController {
         catch (IllegalArgumentException ignored) { return ""; }
     }
 
-    /** True when a plugin currently drives a shared playback session (listen
-     *  together holds the auto-advance block for as long as the room lasts) and
-     *  {@code track} is not one of that provider's songs. Everyone else in the room
-     *  can only receive that provider's ids, so a local file or another source's
-     *  song would desynchronize the room instead of playing for anyone. */
+    /** True when a plugin is currently driving playback (it holds the auto-advance
+     *  block) and {@code track} is not one of that provider's songs. Whatever the
+     *  plugin is coordinating, it can only address its own ids, so starting a local
+     *  file or another source's song would break that coordination rather than play
+     *  anything meaningful. The host stays out of what the feature actually is. */
     private boolean blockedByPluginSession(Track track) {
         String owner = pluginAutoAdvanceBlocker;
         if (owner.isEmpty() || track == null || owner.equals(providerOf(track))) return false;
-        showToast(pluginDisplayName(owner) + "正在一起听，暂时只能播放该音源的歌曲");
+        showToast(pluginDisplayName(owner) + "正在接管播放，暂时只能播放该音源的歌曲");
         return true;
     }
 
