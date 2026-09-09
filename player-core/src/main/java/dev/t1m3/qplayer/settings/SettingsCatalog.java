@@ -25,12 +25,14 @@ public final class SettingsCatalog {
     public static final String DESKTOP = "desktop";
     public static final String ANDROID = "android";
 
-    public static final String APPEARANCE = "外观";
-    public static final String PLAYBACK = "播放";
-    public static final String LYRIC = "歌词";
-    public static final String LOCAL = "本地";
-    public static final String PLUGINS = "插件";
-    public static final String ABOUT = "关于";
+    // Stable ids, not labels: the page titles a tab with
+    // settings.category.<id> from the language catalog.
+    public static final String APPEARANCE = "appearance";
+    public static final String PLAYBACK = "playback";
+    public static final String LYRIC = "lyric";
+    public static final String LOCAL = "local";
+    public static final String PLUGINS = "plugins";
+    public static final String ABOUT = "about";
 
     public static final List<String> CATEGORIES = Collections.unmodifiableList(
             Arrays.asList(APPEARANCE, PLAYBACK, LYRIC, LOCAL, PLUGINS, ABOUT));
@@ -63,6 +65,12 @@ public final class SettingsCatalog {
     public static final int PAGE_TRANSITION_SLIDE_VERTICAL = 3;
     public static final int PAGE_TRANSITION_NONE = 4;
 
+    /** UI language: 0 follows the platform, 1 zh_CN, 2 en_US. */
+    public static final String LANGUAGE_KEY = "language";
+    public static final int LANGUAGE_SYSTEM = 0;
+    public static final int LANGUAGE_ZH_CN = 1;
+    public static final int LANGUAGE_EN_US = 2;
+
     /** Daily picks above the recommendation grid instead of below it. */
     public static final String HOME_DAILY_FIRST_KEY = "homeDailyFirst";
     /** How many plain recommended playlists the home page asks a source for. */
@@ -74,119 +82,138 @@ public final class SettingsCatalog {
         List<SettingSpec> out = new ArrayList<>();
 
         // ---- 外观 -----------------------------------------------------------
-        out.add(SettingSpec.segmented("darkMode", APPEARANCE, "深色模式", MODE_SYSTEM,
-                        "跟随系统", "浅色", "深色")
+        out.add(SettingSpec.dropdown(LANGUAGE_KEY, APPEARANCE, "settings.language.title",
+                        LANGUAGE_SYSTEM, "settings.language.system",
+                        "settings.language.zhCN", "settings.language.enUS")
                 .build());
-        out.add(SettingSpec.dropdown(PAGE_TRANSITION_KEY, APPEARANCE, "页面切换动画",
-                        PAGE_TRANSITION_ZOOM,
-                        "Zoom In / Out", "淡入淡出", "水平滑动", "垂直滑动", "无动画")
-                .desc("应用于导航页面，修改后立即生效；歌词页使用独立展开动画")
+        out.add(SettingSpec.segmented("darkMode", APPEARANCE, "settings.darkMode.title", MODE_SYSTEM,
+                        "settings.darkMode.system", "settings.darkMode.light",
+                        "settings.darkMode.dark")
                 .build());
-        out.add(SettingSpec.toggle("monet", APPEARANCE, "莫奈取色", true)
-                .desc("随封面动态生成主题配色")
+        out.add(SettingSpec.dropdown(PAGE_TRANSITION_KEY, APPEARANCE,
+                        "settings.pageTransition.title", PAGE_TRANSITION_ZOOM,
+                        "settings.pageTransition.zoom", "settings.pageTransition.fade",
+                        "settings.pageTransition.slideH", "settings.pageTransition.slideV",
+                        "settings.pageTransition.none")
+                .desc("settings.pageTransition.desc")
+                .build());
+        out.add(SettingSpec.toggle("monet", APPEARANCE, "settings.monet.title", true)
+                .desc("settings.monet.desc")
                 .accessory("swatch")
                 .build());
-        out.add(SettingSpec.action("pickFont", APPEARANCE, "字体", "选择")
+        out.add(SettingSpec.action("pickFont", APPEARANCE, "settings.font.title",
+                        "settings.font.button")
                 .provider("fontName")
-                .desc("歌词页立即生效；其余界面文字需要重启软件")
+                .desc("settings.font.desc")
                 .build());
-        out.add(SettingSpec.radio("graphicsBackend", APPEARANCE, "图形后端", 0,
-                        "OpenGL", "Vulkan")
-                .desc("切换后重启软件生效；若 Vulkan 初始化失败，将自动切回 OpenGL")
+        out.add(SettingSpec.radio("graphicsBackend", APPEARANCE, "settings.graphicsBackend.title", 0,
+                        "settings.graphicsBackend.opengl", "settings.graphicsBackend.vulkan")
+                .desc("settings.graphicsBackend.desc")
                 .onlyOn(DESKTOP)
                 .build());
-        out.add(SettingSpec.toggle("windowDecorated", APPEARANCE, "使用系统标题栏", false)
-                .desc("仅 Windows 生效；关闭时使用 QPlayer 标题栏，切换后重启软件生效")
+        out.add(SettingSpec.toggle("windowDecorated", APPEARANCE,
+                        "settings.windowDecorated.title", false)
+                .desc("settings.windowDecorated.desc")
                 .onlyOn(DESKTOP)
                 .build());
-        out.add(SettingSpec.toggle("showLocalTab", APPEARANCE, "显示本地标签", true)
-                .desc("关闭后隐藏底部导航栏和侧栏中的“本地”入口")
+        out.add(SettingSpec.toggle("showLocalTab", APPEARANCE, "settings.showLocalTab.title", true)
+                .desc("settings.showLocalTab.desc")
                 .build());
-        out.add(SettingSpec.toggle(HOME_DAILY_FIRST_KEY, APPEARANCE, "每日推荐置顶", true)
-                .desc("把每日推荐歌曲放在推荐页最上面，而不是推荐歌单下面")
+        out.add(SettingSpec.toggle(HOME_DAILY_FIRST_KEY, APPEARANCE,
+                        "settings.homeDailyFirst.title", true)
+                .desc("settings.homeDailyFirst.desc")
                 .group("home")
                 .build());
-        out.add(SettingSpec.stepper(HOME_PLAYLIST_LIMIT_KEY, APPEARANCE, "推荐歌单数量",
-                        12, 4, 50, 2)
-                .desc("推荐页显示的推荐歌单上限；音源自己的分类歌单(如雷达)不计入")
-                .unit(" 个")
+        out.add(SettingSpec.stepper(HOME_PLAYLIST_LIMIT_KEY, APPEARANCE,
+                        "settings.homePlaylistLimit.title", 12, 4, 50, 2)
+                .desc("settings.homePlaylistLimit.desc")
                 .group("home")
                 .build());
 
         // ---- 播放 -----------------------------------------------------------
         // Default follows the UI locale: the mirror only helps from mainland China.
-        out.add(SettingSpec.toggle("mirror", PLAYBACK, "下载加速镜像", isSimplifiedChinese())
-                .desc("通过 GitHub Proxy 加速应用更新、插件目录、安装和更新")
+        out.add(SettingSpec.toggle("mirror", PLAYBACK, "settings.mirror.title",
+                        isSimplifiedChinese())
+                .desc("settings.mirror.desc")
                 .build());
-        out.add(SettingSpec.toggle("fade", PLAYBACK, "淡入淡出", false)
-                .desc("切歌/播放结束时音量渐变，而不是直接切断")
+        out.add(SettingSpec.toggle("fade", PLAYBACK, "settings.fade.title", false)
+                .desc("settings.fade.desc")
                 .build());
-        out.add(SettingSpec.toggle("highQuality", PLAYBACK, "高音质播放", true)
-                .desc("关闭后使用低音质播放以节省流量")
+        out.add(SettingSpec.toggle("highQuality", PLAYBACK, "settings.highQuality.title", true)
+                .desc("settings.highQuality.desc")
                 .build());
 
         // ---- 歌词 -----------------------------------------------------------
         // One card per control, like every other tab: no group() here, so each
         // row is its own card and the wide-window grid can pair them up.
-        out.add(SettingSpec.slider("lyricFontSize", LYRIC, "字号", 28, 14, 40, 1)
+        out.add(SettingSpec.slider("lyricFontSize", LYRIC, "settings.lyricFontSize.title",
+                        28, 14, 40, 1)
                 .unit(" px").dots()
                 .build());
-        out.add(SettingSpec.segmented("lyricFontWeight", LYRIC, "字重", 2,
-                        "极细", "细", "常规", "中等")
+        out.add(SettingSpec.segmented("lyricFontWeight", LYRIC, "settings.lyricFontWeight.title", 2,
+                        "settings.lyricFontWeight.thin", "settings.lyricFontWeight.light",
+                        "settings.lyricFontWeight.regular", "settings.lyricFontWeight.medium")
                 .build());
-        out.add(SettingSpec.slider("lyricLineSpacing", LYRIC, "行间距", 200, 100, 250, 5)
+        out.add(SettingSpec.slider("lyricLineSpacing", LYRIC, "settings.lyricLineSpacing.title",
+                        200, 100, 250, 5)
                 .scale(100).unit("×").dots()
                 .build());
-        out.add(SettingSpec.toggle("lyricSpring", LYRIC, "弹簧动效", true)
-                .desc("滚动与逐字上抬使用弹簧物理")
+        out.add(SettingSpec.toggle("lyricSpring", LYRIC, "settings.lyricSpring.title", true)
+                .desc("settings.lyricSpring.desc")
                 .build());
-        out.add(SettingSpec.toggle("lyricScale", LYRIC, "放大缩放", true)
-                .desc("当前行放大、其余行略缩")
+        out.add(SettingSpec.toggle("lyricScale", LYRIC, "settings.lyricScale.title", true)
+                .desc("settings.lyricScale.desc")
                 .build());
-        out.add(SettingSpec.toggle("lyricGlow", LYRIC, "单词发光", true)
-                .desc("仅逐字歌词：唱到的单词显示白色辉光和飘带上浮(较耗电)。"
-                        + "歌词阴影开启时仅持续1.5秒以上的单词发光，关闭时所有单词都发光")
+        out.add(SettingSpec.toggle("lyricGlow", LYRIC, "settings.lyricGlow.title", true)
+                .desc("settings.lyricGlow.desc")
                 .build());
-        out.add(SettingSpec.toggle("lyricShadow", LYRIC, "歌词阴影", true)
-                .desc("为歌词、背景声部和翻译添加柔和投影")
+        out.add(SettingSpec.toggle("lyricShadow", LYRIC, "settings.lyricShadow.title", true)
+                .desc("settings.lyricShadow.desc")
                 .build());
-        out.add(SettingSpec.toggle("lyricLinearAnim", LYRIC, "非逐字歌词线性动画", false)
-                .desc("关闭时整行一起点亮")
+        out.add(SettingSpec.toggle("lyricLinearAnim", LYRIC, "settings.lyricLinearAnim.title", false)
+                .desc("settings.lyricLinearAnim.desc")
                 .build());
-        out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "边缘模糊", false)
-                .desc("未聚焦歌词按远近渐进高斯模糊(较耗电)")
+        out.add(SettingSpec.toggle("lyricEdgeBlur", LYRIC, "settings.lyricEdgeBlur.title", false)
+                .desc("settings.lyricEdgeBlur.desc")
                 .build());
-        out.add(SettingSpec.toggle("desktopLyricEnabled", LYRIC, "桌面歌词", false)
-                .desc("使用独立渲染线程显示置顶歌词浮窗")
+        out.add(SettingSpec.toggle("desktopLyricEnabled", LYRIC, "settings.desktopLyric.title", false)
+                .desc("settings.desktopLyric.desc")
                 .onlyOn(DESKTOP)
                 .build());
-        out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC, "进度条样式", 1,
-                        "波浪", "直线")
+        out.add(SettingSpec.segmented("lyricProgressStyle", LYRIC,
+                        "settings.lyricProgressStyle.title", 1,
+                        "settings.lyricProgressStyle.wave",
+                        "settings.lyricProgressStyle.line")
                 .build());
-        out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "背景动效", 0, "动态", "静态")
-                .desc("动态流动 / 静态(渲染一次,更省电)")
+        out.add(SettingSpec.radio(BG_MODE_KEY, LYRIC, "settings.lyricBgMode.title", 0,
+                        "settings.lyricBgMode.dynamic", "settings.lyricBgMode.static")
+                .desc("settings.lyricBgMode.desc")
                 .build());
-        out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "流体样式", BG_STYLE_PIXI_RENDERER,
-                        "Pixi Renderer", "Mesh Gradient", "Classic")
-                .desc("切换歌词页的流体背景算法")
+        out.add(SettingSpec.dropdown(BG_STYLE_KEY, LYRIC, "settings.lyricBgStyle.title",
+                        BG_STYLE_PIXI_RENDERER,
+                        "settings.lyricBgStyle.pixi", "settings.lyricBgStyle.mesh",
+                        "settings.lyricBgStyle.classic")
+                .desc("settings.lyricBgStyle.desc")
                 .build());
         // ---- 本地 -----------------------------------------------------------
-        out.add(SettingSpec.slider("maxCacheSizeMB", LOCAL, "最大缓存", 200, 50, 1024, 1)
+        out.add(SettingSpec.slider("maxCacheSizeMB", LOCAL, "settings.maxCacheSize.title",
+                        200, 50, 1024, 1)
                 .unit(" MB").group("cache")
                 .build());
-        out.add(SettingSpec.action("clearCache", LOCAL, "当前占用", "清除缓存")
+        out.add(SettingSpec.action("clearCache", LOCAL, "settings.cacheUsage.title",
+                        "settings.cacheUsage.button")
                 .provider("cacheUsage").inlineProvider().buttonType("outlined")
                 .group("cache")
                 .build());
-        out.add(SettingSpec.path("cacheFolder", LOCAL, "缓存目录", "")
-                .desc("本地音乐库与音源插件缓存都存在这里；修改后不会自动搬运旧文件，会重新扫描并在新目录下重建缓存")
-                .hint("目录路径")
+        out.add(SettingSpec.path("cacheFolder", LOCAL, "settings.cacheFolder.title", "")
+                .desc("settings.cacheFolder.desc")
+                .hint("settings.folder.hint")
                 .group("cache")
                 .onlyOn(DESKTOP)
                 .build());
-        out.add(SettingSpec.path("musicFolder", LOCAL, "本地音乐目录", "")
-                .desc("修改后将自动重新扫描该目录中的音乐文件")
-                .hint("目录路径")
+        out.add(SettingSpec.path("musicFolder", LOCAL, "settings.musicFolder.title", "")
+                .desc("settings.musicFolder.desc")
+                .hint("settings.folder.hint")
                 .onlyOn(DESKTOP)
                 .build());
 
@@ -195,10 +222,9 @@ public final class SettingsCatalog {
                 .icon("link")
                 .provider("version").inlineProvider()
                 // Hard-coded breaks: qml4j's auto-wrap mis-measures this width.
-                .desc("跨平台、可扩展的本地与在线音乐播放器\nMaterial You 风格 · Apple Music 风逐字歌词\n"
-                        + "由自研 qml4j 引擎强力驱动 · Skia 渲染后端")
+                .desc("settings.about.desc")
                 .build());
-        out.add(SettingSpec.action("checkUpdate", ABOUT, "检查更新", "")
+        out.add(SettingSpec.action("checkUpdate", ABOUT, "settings.checkUpdate.title", "")
                 .icon("system_update")
                 .build());
 

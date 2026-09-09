@@ -61,7 +61,7 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "选择字体"
+                text: i18n.t("font.picker.title")
                 color: Theme.color.onSurfaceColor
                 fontSize: 18
             }
@@ -70,7 +70,7 @@ Rectangle {
                 id: searchField
                 Layout.fillWidth: true
                 type: "outlined"
-                label: "搜索字体名称"
+                label: i18n.t("font.picker.search")
             }
 
             Rectangle {
@@ -82,7 +82,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "内置字体 PingFang SC"
+                    text: i18n.t("font.picker.bundled")
                     color: settings.fontFamily() === "" ? Theme.color.primary : Theme.color.onSurfaceColor
                     fontSize: 14
                 }
@@ -102,7 +102,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "系统默认字体"
+                    text: i18n.t("font.picker.system")
                     color: settings.fontFamily() === "system" ? Theme.color.primary : Theme.color.onSurfaceColor
                     fontSize: 14
                 }
@@ -188,7 +188,7 @@ Rectangle {
 
             Button {
                 Layout.alignment: Qt.AlignHCenter
-                type: "text"; text: "取消"
+                type: "text"; text: i18n.t("common.cancel")
                 onClicked: dialog.closed()
             }
         }

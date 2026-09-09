@@ -43,11 +43,11 @@ Rectangle {
     onSuccessRevisionChanged: if (active) dialog.closed()
 
     function statusText(code) {
-        if (code === 0) return "正在获取二维码…";
-        if (code === 802) return "已扫码，请在手机上确认";
-        if (code === 803) return "登录成功";
-        if (code === 800) return "二维码已过期，正在刷新…";
-        return "请使用 " + player.loginProviderName + " 扫码";
+        if (code === 0) return i18n.t("login.qr.loading");
+        if (code === 802) return i18n.t("login.qr.confirm");
+        if (code === 803) return i18n.t("login.qr.done");
+        if (code === 800) return i18n.t("login.qr.expired");
+        return i18n.t("login.qr.scan", player.loginProviderName);
     }
 
     Timer {
@@ -86,7 +86,7 @@ Rectangle {
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: "登录" + player.loginProviderName
+                text: i18n.t("login.title", player.loginProviderName)
                 color: Theme.color.onSurfaceColor
                 fontSize: 20
             }
@@ -95,7 +95,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: !player.pluginLoginActive
-                text: "当前主音源没有提供登录功能。请先在设置的插件页面导入并启用支持登录的音源插件。"
+                text: i18n.t("login.unsupported")
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -109,9 +109,9 @@ Rectangle {
                 Layout.preferredHeight: 40
                 selectedIndex: dialog.loginMode
                 buttons: [
-                    { text: "扫码", selected: dialog.loginMode === 0,
+                    { text: i18n.t("login.mode.qr"), selected: dialog.loginMode === 0,
                       enabled: !player.pluginLoginActive || player.pluginQrLoginAvailable },
-                    { text: "网页登录", selected: dialog.loginMode === 1,
+                    { text: i18n.t("login.mode.web"), selected: dialog.loginMode === 1,
                       enabled: player.webLoginAvailable },
                     { text: "Cookie", selected: dialog.loginMode === 2,
                       enabled: !player.pluginLoginActive || player.pluginCredentialLoginAvailable }
@@ -200,7 +200,7 @@ Rectangle {
                         Layout.alignment: Qt.AlignHCenter
                         type: "filled"
                         icon: "open_in_new"
-                        text: player.webLoginBusy ? "正在等待登录…" : "打开官方网站"
+                        text: i18n.t(player.webLoginBusy ? "login.web.waiting" : "login.web.open")
                         enabled: !player.webLoginBusy
                         onClicked: player.startWebLogin()
                     }
@@ -247,7 +247,7 @@ Rectangle {
                     Button {
                         Layout.fillWidth: true
                         type: "filled"
-                        text: player.webLoginBusy ? "正在验证…" : "验证并登录"
+                        text: i18n.t(player.webLoginBusy ? "login.web.verifying" : "login.web.verify")
                         enabled: dialog.cookieText.trim().length > 0 && !player.webLoginBusy
                         onClicked: player.submitCookieLogin(dialog.cookieText)
                     }
@@ -258,7 +258,7 @@ Rectangle {
             Button {
                 Layout.alignment: Qt.AlignHCenter
                 type: "text"
-                text: "取消"
+                text: i18n.t("common.cancel")
                 enabled: !player.webLoginBusy
                 onClicked: {
                     player.cancelWebLogin();

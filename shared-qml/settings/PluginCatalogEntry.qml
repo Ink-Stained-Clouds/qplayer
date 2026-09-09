@@ -34,7 +34,7 @@ SettingCard {
         Button {
             type: "filledTonal"
             icon: "download"
-            text: "查看"
+            text: i18n.t("plugin.catalog.view")
             onClicked: player.requestPluginSettings(card.pluginData.id)
         }
     }

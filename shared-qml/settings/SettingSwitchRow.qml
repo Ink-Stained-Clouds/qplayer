@@ -6,7 +6,7 @@ import "."
 // SettingSpec.SWITCH. `spec` is the descriptor handed down by SettingsPage's
 // Loader; the value is read/written by key, so this one file serves every toggle
 // in the catalog. An "swatch" accessory draws the live Monet seed beside the
-// title, as the hand-written 莫奈取色 card did.
+// title, as the hand-written Monet card did.
 ColumnLayout {
     id: row
     property var spec: null
@@ -22,11 +22,11 @@ ColumnLayout {
             radius: 12
             color: Theme.color.primary
         }
-        SettingTitle { text: row.spec ? row.spec.title : "" }
+        SettingTitle { text: row.spec ? i18n.t(row.spec.title) : "" }
         Switch {
             checked: row.spec ? settings.value(row.spec.key) === true : false
             onClicked: settings.setValue(row.spec.key, checked)
         }
     }
-    SettingDesc { text: row.spec ? row.spec.desc : "" }
+    SettingDesc { text: row.spec ? i18n.t(row.spec.desc) : "" }
 }

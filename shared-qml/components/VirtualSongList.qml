@@ -36,14 +36,14 @@ Flickable {
     property bool removable: false
     // Every real song row gets the same right-click/long-press menu. Callers can
     // still turn it off for a deliberately read-only list; ownedPlaylist unlocks
-    // "从此歌单移除" inside a playlist the user owns.
+    // "remove from playlist" inside a playlist the user owns.
     property bool songMenu: true
     // Unified/mixed lists can decide eligibility per model row (SearchRow exposes
     // menuEnabled). Homogeneous lists keep the old all-rows behavior by default.
     property bool menuEligibilityFromModel: false
     property bool ownedPlaylist: false
     // Rows belong to the cached-songs list: with songMenu on, the row menu's
-    // "缓存此歌曲" entry becomes "删除缓存" (see SongContextMenu.inCacheList).
+    // the cache entry becomes "remove cache" (see SongContextMenu.inCacheList).
     property bool cacheList: false
     // Shows SongRow's offline "cached, plays without network" badge for rows whose
     // modelData.cachedOffline is true. Off by default so this stays a no-op for

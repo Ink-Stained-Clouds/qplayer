@@ -46,7 +46,7 @@ Item {
             Layout.fillWidth: true
             sourceComponent: root.header
             visible: root.header !== null
-            // 显式绑定高度，确保 Loader 正确反映 loaded item 的 implicitHeight
+            // Bind the height explicitly so the Loader reflects the loaded item.
             Layout.preferredHeight: item ? item.implicitHeight : 0
         }
         

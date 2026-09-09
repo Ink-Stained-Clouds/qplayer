@@ -39,7 +39,8 @@ Rectangle {
         return out
     }
     property string displayName: pluginData ? pluginData.name
-                                 : (catalogData ? catalogData.name : "插件")
+                                 : (catalogData ? catalogData.name
+                                    : i18n.t("plugin.page.fallbackName"))
 
     MouseArea { anchors.fill: parent }
 
@@ -117,9 +118,12 @@ Rectangle {
                     SettingDesc {
                         visible: page.pluginData !== null
                         text: page.pluginData
-                              ? ((page.pluginData.signed ? "已验证发布者签名" : "未验证来源")
-                                 + "\n权限：" + (page.pluginData.permissions.length > 0
-                                      ? page.pluginData.permissions : "无额外权限"))
+                              ? (i18n.t(page.pluginData.signed ? "plugin.page.signed"
+                                        : "plugin.page.unsigned")
+                                 + "\n" + i18n.t("plugin.entry.permissions",
+                                          page.pluginData.permissions.length > 0
+                                          ? page.pluginData.permissions
+                                          : i18n.t("plugin.entry.noPermissions")))
                               : ""
                     }
                 }
@@ -130,15 +134,14 @@ Rectangle {
                     Layout.rightMargin: 12
                     visible: page.pluginData === null && page.catalogData !== null
 
-                    SettingTitle { text: "安装插件" }
-                    SettingDesc {
-                        text: "插件包将从独立项目的最新发布下载，并在安装前验证发布者签名。"
-                    }
+                    SettingTitle { text: i18n.t("plugin.page.install.title") }
+                    SettingDesc { text: i18n.t("plugin.page.install.desc") }
                     Button {
                         Layout.alignment: Qt.AlignRight
                         type: "filled"
                         icon: "download"
-                        text: player.pluginInstallBusy ? "正在下载…" : "下载并安装"
+                        text: i18n.t(player.pluginInstallBusy ? "plugin.page.install.busy"
+                                     : "plugin.page.install.button")
                         enabled: !player.pluginInstallBusy
                         onClicked: player.installCatalogPlugin(page.pluginId)
                     }
@@ -152,16 +155,18 @@ Rectangle {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        SettingTitle { Layout.fillWidth: true; text: "启用插件" }
+                        SettingTitle {
+                            Layout.fillWidth: true
+                            text: i18n.t("plugin.page.enable.title")
+                        }
                         Switch {
                             checked: page.pluginData ? page.pluginData.enabled : false
                             onClicked: player.setSourcePluginEnabled(page.pluginId, checked)
                         }
                     }
                     SettingDesc {
-                        text: page.pluginData && page.pluginData.enabled
-                              ? "插件当前可以提供内容和功能。"
-                              : "停用后不会执行插件代码，也不会提供在线内容。"
+                        text: i18n.t(page.pluginData && page.pluginData.enabled
+                                     ? "plugin.page.enable.on" : "plugin.page.enable.off")
                     }
                     Button {
                         Layout.alignment: Qt.AlignRight
@@ -171,8 +176,9 @@ Rectangle {
                         type: page.pluginData && page.pluginData.primary
                               ? "filledTonal" : "outlined"
                         icon: page.pluginData && page.pluginData.primary ? "check" : "star"
-                        text: page.pluginData && page.pluginData.primary
-                              ? "当前主音源" : "设为主音源"
+                        text: i18n.t(page.pluginData && page.pluginData.primary
+                                     ? "plugin.page.primary.current"
+                                     : "plugin.page.primary.set")
                         onClicked: player.setPrimarySourcePlugin(page.pluginId)
                     }
                 }
@@ -184,13 +190,17 @@ Rectangle {
                     visible: page.pluginData !== null && page.catalogData !== null
                              && page.catalogData.updateAvailable
 
-                    SettingTitle { text: "发现新版本 " + (page.catalogData ? page.catalogData.version : "") }
-                    SettingDesc { text: "更新仍会经过完整的包摘要与发布者签名验证。" }
+                    SettingTitle {
+                        text: i18n.t("plugin.page.update.title",
+                                     page.catalogData ? page.catalogData.version : "")
+                    }
+                    SettingDesc { text: i18n.t("plugin.page.update.desc") }
                     Button {
                         Layout.alignment: Qt.AlignRight
                         type: "filledTonal"
                         icon: "update"
-                        text: player.pluginInstallBusy ? "正在下载…" : "更新"
+                        text: i18n.t(player.pluginInstallBusy ? "plugin.page.install.busy"
+                                     : "plugin.page.update.button")
                         enabled: !player.pluginInstallBusy
                         onClicked: player.installCatalogPlugin(page.pluginId)
                     }
@@ -208,13 +218,13 @@ Rectangle {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                SettingTitle { text: "插件设置" }
+                                SettingTitle { text: i18n.t("plugin.page.settings.title") }
                                 SettingDesc { text: modelData.id }
                             }
                             Button {
                                 type: "outlined"
                                 icon: "open_in_new"
-                                text: "打开"
+                                text: i18n.t("plugin.page.settings.open")
                                 onClicked: player.requestPluginUi(modelData.pluginId, modelData.id)
                             }
                         }
@@ -227,13 +237,13 @@ Rectangle {
                     Layout.rightMargin: 12
                     visible: page.pluginData !== null
 
-                    SettingTitle { text: "移除插件" }
-                    SettingDesc { text: "登录凭据和插件数据会保留，重新安装后可继续使用。" }
+                    SettingTitle { text: i18n.t("plugin.page.remove.title") }
+                    SettingDesc { text: i18n.t("plugin.page.remove.desc") }
                     Button {
                         Layout.alignment: Qt.AlignRight
                         type: "outlined"
                         icon: "delete"
-                        text: "移除"
+                        text: i18n.t("plugin.page.remove.button")
                         enabled: !player.pluginInstallBusy
                         onClicked: player.requestSourcePluginRemoval(page.pluginId)
                     }
@@ -246,14 +256,14 @@ Rectangle {
                     spacing: 12
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "该插件已不存在"
+                        text: i18n.t("plugin.page.missing")
                         color: Theme.color.onSurfaceVariantColor
                         fontSize: 15
                     }
                     Button {
                         Layout.alignment: Qt.AlignHCenter
                         type: "filledTonal"
-                        text: "返回"
+                        text: i18n.t("common.back")
                         onClicked: page.back()
                     }
                 }

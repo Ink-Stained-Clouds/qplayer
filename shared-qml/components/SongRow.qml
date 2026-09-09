@@ -25,7 +25,7 @@ Rectangle {
     property string rowArtistIdsCsv: ""
     property string rowArtistNamesCsv: ""
     property string coverThumbPath: ""
-    // Small per-row source badge (provider name / "本地") for lists that
+    // Small per-row source badge (provider name / local) for lists that
     // mix rows from more than one source — see SearchPage.qml. Empty (default)
     // shows nothing, so every other VirtualSongList caller is unaffected.
     property string tag: ""
@@ -34,12 +34,12 @@ Rectangle {
     // Long-press context menu. `song` is the raw model item (needs `.id`); the
     // menu only arms when `menuEnabled` (provider-backed lists opt in — local rows
     // have no playlist-track id). `inOwnedPlaylist` + `ownerPlaylistId` unlock the
-    // "从此歌单移除" entry, set only by the owned-playlist detail list.
+    // "remove from playlist" entry, set only by the owned-playlist detail list.
     property var song: null
     property bool menuEnabled: row.song !== null
     property bool inOwnedPlaylist: false
     // Cached-songs list mode (see SongContextMenu.inCacheList): flips the menu's
-    // "缓存此歌曲" entry to "删除缓存".
+    // cache entry to "remove cache".
     property bool inCacheList: false
     // Latched when a long-press fired, so the release's click doesn't also play the
     // song; cleared when the menu closes (or on the guarded click).
@@ -211,7 +211,7 @@ Rectangle {
     // model rows as the list scrolls (index/modelData rewritten in place, not
     // recreated) — a recycled Text's implicitWidth didn't reliably recompute when
     // its text changed afterward, so a delegate that first showed a short tag
-    // (e.g. "本地") then got recycled for a longer one (e.g. "自定义源") kept the
+    // (e.g. a short source name) then got recycled for a longer one kept the
     // old, too-narrow pill width and the label overflowed outside it. `row.tag`
     // itself already updates correctly on reuse (rowTitle/rowArtist prove that),
     // so deriving width from the string directly sidesteps the whole thing.

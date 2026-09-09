@@ -32,7 +32,7 @@ Rectangle {
     property real bioWidth: Math.max(0, width - 2 * pad)
     property bool bioOverflows: bioFullProbe.contentHeight > bioCappedProbe.contentHeight + 1
     // Room reserved under the avatar for the bio (collapsed 3 lines, or the
-    // full text once expanded) plus the 展开/收起 toggle when it's needed.
+    // full text once expanded) plus the expand/collapse toggle when it's needed.
     property real descReserve: player.artistBriefDesc === "" ? 0
         : 10 + (bioExpanded ? bioFullProbe.contentHeight : bioCappedProbe.contentHeight)
               + (bioOverflows ? 28 : 0)
@@ -134,7 +134,7 @@ Rectangle {
                         anchors.top: nameText.bottom
                         anchors.topMargin: 4
                         text: (page.albumCount > 0 || page.songCount > 0)
-                              ? (page.albumCount + " 张专辑 · " + page.songCount + " 首热门歌曲")
+                              ? i18n.t("artist.counts", page.albumCount, page.songCount)
                               : ""
                         color: Theme.color.onSurfaceVariantColor
                         fontSize: 13
@@ -185,7 +185,7 @@ Rectangle {
                         fontSize: 12
                     }
 
-                    // 展开/收起 -- bottom-right of the bio block, only shown once it
+                    // Expand/collapse -- bottom-right of the bio block, only shown once it
                     // actually overflows 3 lines.
                     Text {
                         id: bioToggle
@@ -195,7 +195,7 @@ Rectangle {
                         anchors.top: bioText.bottom
                         anchors.topMargin: 2
                         height: 24
-                        text: page.bioExpanded ? "收起" : "展开"
+                        text: i18n.t(page.bioExpanded ? "common.collapse" : "common.expand")
                         color: Theme.color.primary
                         fontSize: 12
                         font.weight: Font.Medium
@@ -210,7 +210,7 @@ Rectangle {
                         visible: page.albumCount > 0
                         x: page.pad; y: page.albumsHdrY; height: 40
                         verticalAlignment: Text.AlignVCenter
-                        text: "专辑"
+                        text: i18n.t("artist.albums")
                         color: Theme.color.primary
                         fontSize: 16
                     }
@@ -234,7 +234,7 @@ Rectangle {
                         visible: page.songCount > 0
                         x: page.pad; y: page.songsHdrY; height: 40
                         verticalAlignment: Text.AlignVCenter
-                        text: "热门歌曲"
+                        text: i18n.t("artist.topSongs")
                         color: Theme.color.primary
                         fontSize: 16
                     }

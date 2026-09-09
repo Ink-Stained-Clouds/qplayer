@@ -12,14 +12,14 @@ ColumnLayout {
         var current = settings.value(row.spec.key)
         var out = []
         for (var i = 0; i < row.spec.options.length; i++) {
-            out.push({ text: row.spec.options[i], selected: i === current })
+            out.push({ text: i18n.t(row.spec.options[i]), selected: i === current })
         }
         return out
     }
     spacing: 4
 
-    SettingTitle { text: row.spec ? row.spec.title : "" }
-    SettingDesc { text: row.spec ? row.spec.desc : "" }
+    SettingTitle { text: row.spec ? i18n.t(row.spec.title) : "" }
+    SettingDesc { text: row.spec ? i18n.t(row.spec.desc) : "" }
     SegmentedButton {
         Layout.fillWidth: true
         Layout.topMargin: 4

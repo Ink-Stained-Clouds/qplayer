@@ -3,7 +3,7 @@ import md3.Core
 import "."
 import "../components"
 
-// 为我推荐: greeting + recommended-playlist grid + daily song picks, all in one
+// Home: greeting + recommended-playlist grid + daily song picks, all in one
 // Flickable with absolute positioning (the layout primitive that behaves here).
 Item {
     id: page
@@ -89,7 +89,7 @@ Item {
     property real contentH: (dailyFirst ? gridTop + gridH
                                         : dailyTop + dailyCount * rowH) + 12
 
-    // A tap holds the "尝试连接中" state for at least this long even if the
+    // A tap holds the "connecting" state for at least this long even if the
     // request itself fails near-instantly (e.g. no network at all) -- a flash
     // too quick to actually read isn't feedback. A genuinely slow real request
     // still keeps showing it past 3s (refreshBusy also watches homeLoading).
@@ -104,11 +104,11 @@ Item {
 
     function greeting() {
         var h = new Date().getHours();
-        if (h < 6) return "夜深了";
-        if (h < 12) return "早上好";
-        if (h < 14) return "中午好";
-        if (h < 18) return "下午好";
-        return "晚上好";
+        if (h < 6) return i18n.t("home.greeting.night");
+        if (h < 12) return i18n.t("home.greeting.morning");
+        if (h < 14) return i18n.t("home.greeting.noon");
+        if (h < 18) return i18n.t("home.greeting.afternoon");
+        return i18n.t("home.greeting.evening");
     }
 
     property int cardRowH: Math.max(1, Math.round(cardH + gap))
@@ -159,7 +159,8 @@ Item {
             Text {
                 x: 16; y: 0; height: page.greetH
                 verticalAlignment: Text.AlignVCenter
-                text: page.greeting() + (player.loggedIn ? "，" + player.userName : "")
+                text: player.loggedIn ? i18n.t("home.greeting.user", page.greeting(), player.userName)
+                                      : page.greeting()
                 color: Theme.color.onSurfaceColor
                 fontSize: 26
             }
@@ -197,7 +198,7 @@ Item {
                 visible: page.mainHdrH > 0
                 x: 16; y: page.mainHdrY; height: page.hdrH
                 verticalAlignment: Text.AlignVCenter
-                text: "推荐歌单"
+                text: i18n.t("home.recommendPlaylists")
                 color: Theme.color.primary
                 fontSize: 18
             }
@@ -224,7 +225,7 @@ Item {
                 visible: page.dailyCount > 0
                 x: 16; y: page.dailyHdrY; height: page.hdrH
                 verticalAlignment: Text.AlignVCenter
-                text: "每日推荐"
+                text: i18n.t("home.dailyRecommend")
                 color: Theme.color.primary
                 fontSize: 18
             }
@@ -322,7 +323,7 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: page.refreshBusy ? "尝试连接中" : "点击刷新"
+                    text: i18n.t(page.refreshBusy ? "home.retrying" : "home.retry")
                     color: page.refreshBusy ? Theme.color.onSurfaceVariantColor : Theme.color.onSecondaryContainerColor
                     fontSize: 14
                 }

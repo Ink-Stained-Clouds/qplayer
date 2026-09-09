@@ -141,7 +141,7 @@ Item {
         onClicked: overlay.offsetPanelOpen = !overlay.offsetPanelOpen
     }
 
-    // Switch to cover view (issue #15: quick lyrics<->cover switching, à la 网易云).
+    // Switch to cover view (issue #15: quick lyrics<->cover switching).
     // Hidden once already in cover view — tap the cover itself to come back. Same
     // top row as offsetBtn, to its left — NOT stacked below (offsetPanel drops down
     // from there and would overlap a button placed underneath).
@@ -205,7 +205,7 @@ Item {
             anchors.topMargin: 18
             anchors.left: parent.left
             anchors.leftMargin: 18
-            text: "歌词偏移"
+            text: i18n.t("lyric.offset.title")
             color: Theme.color.onSurfaceColor
             font.family: Theme.typography.titleSmall.family
             font.pixelSize: Theme.typography.titleSmall.size
@@ -229,7 +229,7 @@ Item {
             anchors.right: parent.right
             anchors.leftMargin: 18
             anchors.rightMargin: 18
-            text: "仅对当前歌曲生效 · 负值提前，正值延后"
+            text: i18n.t("lyric.offset.desc")
             color: Theme.color.onSurfaceVariantColor
             font.family: Theme.typography.bodySmall.family
             font.pixelSize: Theme.typography.bodySmall.size
@@ -260,7 +260,7 @@ Item {
             anchors.topMargin: 1
             anchors.left: parent.left
             anchors.leftMargin: 18
-            text: "提前 5 秒"
+            text: i18n.t("lyric.offset.earlier")
             color: Theme.color.onSurfaceVariantColor
             font.family: Theme.typography.labelSmall.family
             font.pixelSize: Theme.typography.labelSmall.size
@@ -279,7 +279,7 @@ Item {
             anchors.topMargin: 1
             anchors.right: parent.right
             anchors.rightMargin: 18
-            text: "延后 5 秒"
+            text: i18n.t("lyric.offset.later")
             color: Theme.color.onSurfaceVariantColor
             font.family: Theme.typography.labelSmall.family
             font.pixelSize: Theme.typography.labelSmall.size
@@ -291,7 +291,7 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: 10
             type: "text"
-            text: "重置为 0"
+            text: i18n.t("lyric.offset.reset")
             enabled: offsetSlider.value !== 0
             onClicked: {
                 offsetSlider.value = 0

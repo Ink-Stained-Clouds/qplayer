@@ -18,7 +18,7 @@ Item {
     property real playCount: 0
     property string coverUrl: ""
     property string coverThumbPath: ""
-    // Set only where one grid mixes several sources (我的), so a card says which
+    // Set only where one grid mixes several sources (the library), so a card says which
     // account it came from.
     property string sourceName: ""
     property real tile: 160
@@ -29,11 +29,13 @@ Item {
     implicitHeight: tile + 72
 
     readonly property string subtitle: {
-        if (count > 0) return count + " 首歌曲"
-        if (playCount >= 100000000) return (playCount / 100000000).toFixed(1) + " 亿次播放"
-        if (playCount >= 10000) return Math.round(playCount / 10000) + " 万次播放"
-        if (playCount > 0) return playCount + " 次播放"
-        return "暂无歌曲"
+        if (count > 0) return i18n.t("common.songCount", count)
+        if (playCount >= 100000000)
+            return i18n.t("common.playCountYi", (playCount / 100000000).toFixed(1))
+        if (playCount >= 10000)
+            return i18n.t("common.playCountWan", Math.round(playCount / 10000))
+        if (playCount > 0) return i18n.t("common.playCount", playCount)
+        return i18n.t("common.songCountEmpty")
     }
 
     Rectangle {

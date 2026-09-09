@@ -202,7 +202,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.verticalCenter
             anchors.bottomMargin: 1
-            text: player.title.length > 0 ? player.title : "未播放"
+            text: player.title.length > 0 ? player.title : i18n.t("player.idle")
             textColor: Theme.color.onSurfaceColor
             fontSize: 15
         }

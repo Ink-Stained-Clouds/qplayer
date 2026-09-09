@@ -20,30 +20,33 @@ Item {
 
     Dialog {
         id: pluginWarningDialog
-        title: player.pendingPluginTrusted ? "安装音源插件" : "安装未验证的插件？"
+        title: i18n.t(player.pendingPluginTrusted ? "plugin.install.trusted.title"
+                      : "plugin.install.untrusted.title")
         icon: player.pendingPluginTrusted ? "verified_user" : "warning"
         closeOnScrim: false
-        acceptText: player.pluginInstallBusy ? "正在安装…"
-                    : (player.pendingPluginTrusted ? "安装" : "了解风险并安装")
-        rejectText: "取消"
-        text: player.pendingPluginName + " " + player.pendingPluginVersion
-              + "\n插件 ID：" + player.pendingPluginId
-              + "\n请求权限：" + player.pendingPluginPermissions
-              + (player.pendingPluginTrusted ? "\n\n该插件包已通过受信发布者签名验证。"
-                 : "\n\n该插件的发布者签名未被 QPlayer 信任。插件包含可执行 JavaScript/QML，可能读取获准的数据并代表您操作播放器。仅在信任其来源时继续。")
+        acceptText: i18n.t(player.pluginInstallBusy ? "plugin.install.busy"
+                           : (player.pendingPluginTrusted ? "plugin.install.accept"
+                              : "plugin.install.acceptRisky"))
+        rejectText: i18n.t("common.cancel")
+        text: i18n.t("plugin.install.body", player.pendingPluginName,
+                     player.pendingPluginVersion)
+              .replace("{2}", player.pendingPluginId)
+              .replace("{3}", player.pendingPluginPermissions)
+              + i18n.t(player.pendingPluginTrusted ? "plugin.install.trustedNote"
+                       : "plugin.install.untrustedNote")
         onAccepted: player.confirmPendingPluginInstall()
         onRejected: player.cancelPendingPluginInstall()
     }
 
     Dialog {
         id: pluginRemovalDialog
-        title: "移除音源插件？"
+        title: i18n.t("plugin.remove.title")
         icon: "delete"
         closeOnScrim: false
-        acceptText: player.pluginInstallBusy ? "正在移除…" : "移除"
-        rejectText: "取消"
-        text: "将移除 " + player.pendingPluginRemovalName
-              + " 的可执行插件文件。加密登录凭据和插件数据会保留，重新安装后可继续使用。"
+        acceptText: i18n.t(player.pluginInstallBusy ? "plugin.remove.busy"
+                           : "plugin.page.remove.button")
+        rejectText: i18n.t("common.cancel")
+        text: i18n.t("plugin.remove.body", player.pendingPluginRemovalName)
         onAccepted: player.confirmSourcePluginRemoval()
         onRejected: player.cancelSourcePluginRemoval()
     }

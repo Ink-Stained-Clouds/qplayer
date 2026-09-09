@@ -4,10 +4,10 @@ import md3.Core
 import "."
 import "../components"
 
-// 搜索页：空输入显示搜索历史 + 热门搜索，输入时实时搜索，结果可点击播放。
+// Search: history + hot keywords while empty, live results while typing.
 Item {
     id: page
-    // 0 = 折叠(5条), 1 = 展开(30条), 2 = 展开(70条), 3 = 展开全部(100条)
+    // 0 = collapsed (5), 1 = 30, 2 = 70, 3 = everything (100)
     property int historyExpandLevel: 0
 
     // Album/artist result grid geometry (playlist-card style), shared by both
@@ -62,7 +62,7 @@ Item {
             spacing: 4
 
             // Type selector + search field merged into one rounded bar (same
-            // outlined-pill look as the 一起听 invite-link field), instead of a
+            // outlined-pill look as a plugin dialog's invite-link field), instead of a
             // separate ComboBox and TextField -- neither component exposes a
             // "no own background/half-rounded" mode, so this is a small custom
             // composite (bare TextInput, kept as `id: query` so every other
@@ -79,7 +79,9 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
 
                 property int modeIndex: 0
-                readonly property var modeLabels: ["歌曲", "专辑", "歌手"]
+                readonly property var modeLabels: [i18n.t("search.mode.songs"),
+                                                   i18n.t("search.mode.albums"),
+                                                   i18n.t("search.mode.artists")]
                 readonly property var modeKeys: ["song", "album", "artist"]
                 // Reserve room for the clear button's own slot on the right,
                 // whether or not it's currently visible -- avoids a reactive
@@ -96,7 +98,7 @@ Item {
                 // Real MD3 outlined-field border: a notch cut into the top stroke
                 // for the floating label to sit ON (not just "near the top inside"),
                 // same component TextField.qml's own outlined mode uses -- matches
-                // the 一起听 invite-link field's look exactly (that's a plain
+                // an invite-link field's look exactly (that's a plain
                 // TextField{type:"outlined"}, same OutlinedBorder underneath).
                 OutlinedBorder {
                     anchors.fill: parent
@@ -199,8 +201,9 @@ Item {
                         // outlined field's label (-7 ~= half this label's own line
                         // height, so the 1-2px stroke passes through its middle).
                         y: inputArea.isFloating ? -7 : (inputArea.height - height) / 2
-                        text: searchBar.modeIndex === 1 ? "搜索专辑"
-                              : (searchBar.modeIndex === 2 ? "搜索歌手" : "搜索歌曲")
+                        text: i18n.t(searchBar.modeIndex === 1 ? "search.hint.albums"
+                                     : (searchBar.modeIndex === 2 ? "search.hint.artists"
+                                        : "search.hint.songs"))
                         color: Theme.color.onSurfaceVariantColor
                         opacity: inputArea.isFloating ? 0.8 : 0.7
                         font.family: Theme.typography.bodyLarge.family
@@ -261,9 +264,9 @@ Item {
                     // PlaylistContextMenu.qml uses for its card-associated popup.
                     outlined: true
                     model: [
-                        { text: "歌曲", action: function() { searchBar.selectMode(0) } },
-                        { text: "专辑", action: function() { searchBar.selectMode(1) } },
-                        { text: "歌手", action: function() { searchBar.selectMode(2) } }
+                        { text: i18n.t("search.mode.songs"), action: function() { searchBar.selectMode(0) } },
+                        { text: i18n.t("search.mode.albums"), action: function() { searchBar.selectMode(1) } },
+                        { text: i18n.t("search.mode.artists"), action: function() { searchBar.selectMode(2) } }
                     ]
                 }
             }
@@ -289,18 +292,19 @@ Item {
             visible: query.text.length === 0
 
             property int rowH: 52
-            // 分段展开: 5条(折叠) -> 30条 -> 70条 -> 100条(全部)
+            // Staged expansion: 5 (collapsed) -> 30 -> 70 -> 100 (all)
             property int collapsedCount: 5
             property int firstExpandCount: 30
             property int secondExpandCount: 70
             property int fullCount: 100
             property int histCount: player.searchHistory ? player.searchHistory.length : 0
-            // 纯三元表达式而非 { ... } block：qml4j 对 block 属性绑定兼容性差，
-            // block 绑定失败会导致 displayCount 失效、布局高度算错。
+            // A pure conditional expression rather than a { ... } block: qml4j
+            // handles block property bindings poorly, and a failed one would leave
+            // displayCount stale and the layout height wrong.
             property int displayCount: histCount === 0 ? 0 : (page.historyExpandLevel === 0 ? Math.min(collapsedCount, histCount) : (page.historyExpandLevel === 1 ? Math.min(firstExpandCount, histCount) : (page.historyExpandLevel === 2 ? Math.min(secondExpandCount, histCount) : Math.min(fullCount, histCount))))
             property int hotCount: player.hotSearches ? player.hotSearches.length : 0
             property bool hasHistory: player.searchHistory && player.searchHistory.length > 0
-            // 显示展开/收起按钮的条件：有超过 5 条历史记录
+            // The expand/collapse control only appears past 5 history entries.
             property bool showExpandToggle: histCount > collapsedCount
 
             // section y-offsets (explicit, no Column)
@@ -333,7 +337,7 @@ Item {
                     Text {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "搜索历史"
+                        text: i18n.t("search.history")
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                         color: Theme.color.onSurfaceColor
@@ -458,7 +462,8 @@ Item {
                     width: hotArea.width - 32; height: hotArea.expandH
                     visible: hotArea.showExpandToggle
 
-                    // 收起按钮：level >= 1 时显示；中间等级(1/2)且还有更多可展开时与展开按钮各占一半
+                    // Collapse: shown from level 1 up; at the middle levels it shares
+                    // the row with the expand control.
                     Rectangle {
                         visible: page.historyExpandLevel >= 1
                         anchors.left: parent.left
@@ -468,7 +473,7 @@ Item {
                         color: collapseMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
                         Text {
                             anchors.centerIn: parent
-                            text: "收起"
+                            text: i18n.t("common.collapse")
                             font.pixelSize: 14; color: Theme.color.primary
                         }
                         MouseArea {
@@ -478,7 +483,7 @@ Item {
                         }
                     }
 
-                    // 展开更多按钮：level <= 2 且仍有更多时显示
+                    // Expand: shown up to level 2 while more entries remain.
                     Rectangle {
                         visible: page.historyExpandLevel <= 2 && hotArea.histCount > (page.historyExpandLevel === 0 ? hotArea.collapsedCount : (page.historyExpandLevel === 1 ? hotArea.firstExpandCount : hotArea.secondExpandCount))
                         anchors.right: parent.right
@@ -488,7 +493,7 @@ Item {
                         color: expandMA.pressed ? Theme.color.surfaceContainerHigh : "transparent"
                         Text {
                             anchors.centerIn: parent
-                            text: "展开更多"
+                            text: i18n.t("search.expandMore")
                             font.pixelSize: 14; color: Theme.color.primary
                         }
                         MouseArea {
@@ -514,7 +519,7 @@ Item {
                 // --- Hot searches header ---
                 Text {
                     x: 16; y: hotArea.hotHeaderY
-                    text: "热门搜索"
+                    text: i18n.t("search.hot")
                     font.pixelSize: 18; font.weight: Font.DemiBold
                     color: Theme.color.onSurfaceColor
                     visible: hotArea.hotCount > 0

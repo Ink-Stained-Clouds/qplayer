@@ -58,7 +58,7 @@ Item {
         width: card.width - 16
         height: 18
         verticalAlignment: Text.AlignVCenter
-        text: card.count > 0 ? (card.count + " 首") : ""
+        text: card.count > 0 ? i18n.t("common.songCountShort", card.count) : ""
         color: Theme.color.onSurfaceVariantColor
         fontSize: 11
         elide: Text.ElideRight

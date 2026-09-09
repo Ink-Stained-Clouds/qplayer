@@ -4,7 +4,7 @@ import md3.Core
 import "."
 import "../components"
 
-// 最近: the active source plugin's listening history (signed in).
+// Recent: the active source plugin's listening history (signed in).
 Item {
     id: page
     signal requestLogin()
@@ -14,7 +14,7 @@ Item {
         anchors.fill: parent
         visible: player.loggedIn
         // Same guard as LocalPage/QueuePage: this page is always in the tree, so a
-        // bare bind keeps a SongRow per history entry alive while 最近 is hidden.
+        // bare bind keeps a SongRow per history entry alive while Recent is hidden.
         list: page.visible ? (player.sourceContentActive
                               ? player.sourceRecentSongs : player.recentSongs) : null
         onActivated: player.playRecentSong(recent.activatedIndex)
@@ -26,13 +26,13 @@ Item {
         visible: !player.loggedIn
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "登录后查看最近播放"
+            text: i18n.t("recent.signInPrompt")
             color: Theme.color.onSurfaceVariantColor
             fontSize: 15
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
-            type: "filled"; text: "扫码登录"
+            type: "filled"; text: i18n.t("recent.signInButton")
             onClicked: page.requestLogin()
         }
     }

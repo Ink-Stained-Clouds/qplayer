@@ -4,7 +4,7 @@ import md3.Core
 import "."
 import "../components"
 
-// 本地: tracks scanned from the device Music folder, plus issue #15's sort/
+// Local: tracks scanned from the device Music folder, plus issue #15's sort/
 // group-filter toolbar. Playback deliberately still plays through the ORIGINAL
 // scan-order queue (player.play(i) indexes into player.tracks/library) rather
 // than a reordered queue matching the current sort/filter — tapping a track
@@ -49,13 +49,14 @@ Item {
         var seen = {};
         var out = [];
         for (var i = 0; i < allTracks.length; i++) {
-            var v = groupMode === 1 ? (allTracks[i].artist || "未知艺术家") : folderOf(allTracks[i]);
+            var v = groupMode === 1 ? (allTracks[i].artist || i18n.t("local.unknownArtist"))
+                                    : folderOf(allTracks[i]);
             if (v !== "" && !seen[v]) { seen[v] = true; out.push(v); }
         }
         out.sort();
         return out;
     }
-    // Reset a stale selection (e.g. the folder no longer exists) back to "全部"
+    // Reset a stale selection (e.g. the folder no longer exists) back to "all"
     // instead of silently filtering to nothing.
     onGroupValuesChanged: if (groupValue !== "" && groupValues.indexOf(groupValue) < 0) groupValue = ""
 
@@ -63,7 +64,8 @@ Item {
         var list = [];
         for (var i = 0; i < allTracks.length; i++) {
             var t = allTracks[i];
-            if (groupMode === 1 && groupValue !== "" && (t.artist || "未知艺术家") !== groupValue) continue;
+            if (groupMode === 1 && groupValue !== ""
+                    && (t.artist || i18n.t("local.unknownArtist")) !== groupValue) continue;
             if (groupMode === 2 && groupValue !== "" && folderOf(t) !== groupValue) continue;
             list.push(t);
         }
@@ -94,12 +96,13 @@ Item {
             spacing: 6
 
             Text {
-                text: "排序"
+                text: i18n.t("local.sort")
                 color: Theme.color.onSurfaceVariantColor
                 fontSize: 12
             }
             Repeater {
-                model: ["默认", "标题", "艺术家", "时长"]
+                model: [i18n.t("local.sort.default"), i18n.t("local.sort.title"),
+                        i18n.t("local.sort.artist"), i18n.t("local.sort.duration")]
                 Rectangle {
                     property bool active: index === page.sortMode
                     implicitWidth: chipText.implicitWidth + 20
@@ -132,12 +135,13 @@ Item {
             spacing: 6
 
             Text {
-                text: "分组"
+                text: i18n.t("local.group")
                 color: Theme.color.onSurfaceVariantColor
                 fontSize: 12
             }
             Repeater {
-                model: ["全部", "按艺术家", "按文件夹"]
+                model: [i18n.t("local.group.all"), i18n.t("local.group.artist"),
+                        i18n.t("local.group.folder")]
                 Rectangle {
                     property bool active: index === page.groupMode
                     implicitWidth: gChipText.implicitWidth + 20
@@ -170,7 +174,7 @@ Item {
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
-                    text: page.groupValue !== "" ? page.groupValue : "全部"
+                    text: page.groupValue !== "" ? page.groupValue : i18n.t("local.group.all")
                     fontSize: 12
                     color: Theme.color.onSurfaceColor
                 }
@@ -185,7 +189,7 @@ Item {
             // Guard with page.visible (see QueuePage): every page is instantiated at
             // startup and only toggled by visibility, but a bare `list: ...` still
             // builds live delegates the moment the startup scan populates tracks —
-            // even while the 本地 tab is hidden behind 首页. A large device library
+            // even while the Local tab is hidden behind Home. A large device library
             // (thousands of files) then OOMs ~10s after launch. Null while hidden
             // builds nothing.
             list: page.visible ? page.displayTracks : null
@@ -210,7 +214,7 @@ Item {
             Layout.topMargin: 40
             Layout.fillHeight: page.displayTracks.length === 0
             visible: page.displayTracks.length === 0
-            text: "当前筛选条件下没有匹配的歌曲"
+            text: i18n.t("local.noMatches")
             color: Theme.color.onSurfaceVariantColor
             fontSize: 15
         }
@@ -219,15 +223,14 @@ Item {
     Text {
         anchors.centerIn: parent
         visible: player.libraryCount === 0
-        text: settings.has("musicFolder")
-            ? "未找到本地音乐\n可在设置 → 本地中修改音乐目录"
-            : "未找到本地音乐\n把歌曲放进 Music 文件夹"
+        text: i18n.t(settings.has("musicFolder") ? "local.empty.desktop"
+                     : "local.empty.android")
         horizontalAlignment: Text.AlignHCenter
         color: Theme.color.onSurfaceVariantColor
         fontSize: 15
     }
 
-    // Value picker for the "按艺术家/按文件夹" group modes above — a search box +
+    // Value picker for the by-artist/by-folder group modes above — a search box +
     // explicit-y-positioned list (Repeater has no built-in positioner in this
     // engine), same shape as FontPickerDialog.qml. Distinct artist/folder counts
     // are typically small (tens, not hundreds), so this stays un-windowed.
@@ -269,7 +272,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: page.groupMode === 1 ? "选择艺术家" : "选择文件夹"
+                    text: i18n.t(page.groupMode === 1 ? "local.pick.artist" : "local.pick.folder")
                     color: Theme.color.onSurfaceColor
                     fontSize: 18
                 }
@@ -278,7 +281,7 @@ Item {
                     id: valueSearchField
                     Layout.fillWidth: true
                     type: "outlined"
-                    label: "搜索"
+                    label: i18n.t("nav.search")
                 }
 
                 Rectangle {
@@ -290,7 +293,7 @@ Item {
                         anchors.left: parent.left
                         anchors.leftMargin: 12
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "全部"
+                        text: i18n.t("local.group.all")
                         color: Theme.color.onSurfaceVariantColor
                         fontSize: 14
                     }
@@ -343,7 +346,7 @@ Item {
 
                 Button {
                     Layout.alignment: Qt.AlignHCenter
-                    type: "text"; text: "取消"
+                    type: "text"; text: i18n.t("common.cancel")
                     onClicked: page.valuePickerOpen = false
                 }
             }

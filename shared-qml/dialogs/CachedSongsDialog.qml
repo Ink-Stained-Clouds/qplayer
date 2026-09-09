@@ -38,7 +38,8 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: "已缓存歌曲 (" + (player.cachedSongs ? player.cachedSongs.length : 0) + ")"
+                text: i18n.t("cache.dialog.title",
+                             player.cachedSongs ? player.cachedSongs.length : 0)
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.titleLarge.family
                 font.pixelSize: Theme.typography.titleLarge.size

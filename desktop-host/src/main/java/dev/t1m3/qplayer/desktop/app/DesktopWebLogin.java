@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.desktop.app;
 
 import ca.weblite.webview.swing.WebViewComponent;
+import dev.t1m3.qplayer.i18n.I18n;
 import com.sun.jna.Native;
 import com.sun.jna.platform.win32.Kernel32;
 
@@ -49,7 +50,7 @@ final class DesktopWebLogin {
         if (!validHttpsUrl(loginUrl) || !validHttpsUrl(cookieUrl)
                 || credentialCookieName == null
                 || !credentialCookieName.matches("[A-Za-z0-9_.-]{1,64}")) {
-            onFailure.accept("音源插件提供了无效的网页登录配置");
+            onFailure.accept(I18n.tr("login.error.badWebConfig"));
             return;
         }
         SwingUtilities.invokeLater(() -> {
@@ -110,7 +111,7 @@ final class DesktopWebLogin {
             throw error;
         }
 
-        JFrame frame = new JFrame("登录" + providerName);
+        JFrame frame = new JFrame(I18n.tr("login.title", providerName));
         activeFrame = frame;
         frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         frame.setLayout(new BorderLayout());
@@ -217,7 +218,7 @@ final class DesktopWebLogin {
             } catch (Throwable error) {
                 if (directory != null) scheduleDelete(directory, 0);
                 throw new IllegalStateException(
-                        "无法创建临时 WebView2 登录数据目录", error);
+                        "failed to create the temporary WebView2 login data directory", error);
             }
         }
 
@@ -293,11 +294,11 @@ final class DesktopWebLogin {
         }
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("linux")) {
-            return "无法启动系统 WebView，请确认已安装 WebKitGTK 4.1";
+            return I18n.tr("login.error.webkitgtk");
         }
         if (os.contains("win")) {
-            return "无法启动系统 WebView，请确认已安装 WebView2 Runtime";
+            return I18n.tr("login.error.webview2");
         }
-        return "无法启动系统 WebView，请使用粘贴 Cookie 登录";
+        return I18n.tr("login.error.noSystemWebView");
     }
 }

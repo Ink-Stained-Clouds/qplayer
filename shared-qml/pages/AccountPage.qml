@@ -37,7 +37,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: "账户"
+                text: i18n.t("account.title")
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.titleLarge.family
                 font.pixelSize: Theme.typography.titleLarge.size
@@ -113,7 +113,7 @@ Rectangle {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: player.userName.length > 0 ? player.userName : "音源用户"
+                                text: player.userName.length > 0 ? player.userName : i18n.t("account.anonymous")
                                 color: Theme.color.onSurfaceColor
                                 font.family: Theme.typography.titleMedium.family
                                 font.pixelSize: Theme.typography.titleMedium.size
@@ -134,7 +134,7 @@ Rectangle {
                                     Text {
                                         id: vipText
                                         anchors.centerIn: parent
-                                        text: "黑胶 VIP"
+                                        text: i18n.t("account.vip")
                                         color: Theme.color.onTertiaryContainerColor
                                         font.family: Theme.typography.labelMedium.family
                                         font.pixelSize: Theme.typography.labelMedium.size
@@ -200,7 +200,7 @@ Rectangle {
                             }
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
-                                text: "歌单"
+                                text: i18n.t("account.playlists")
                                 color: Theme.color.onSurfaceVariantColor
                                 font.family: Theme.typography.bodySmall.family
                                 font.pixelSize: Theme.typography.bodySmall.size
@@ -223,7 +223,7 @@ Rectangle {
                             }
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
-                                text: "红心"
+                                text: i18n.t("account.liked")
                                 color: Theme.color.onSurfaceVariantColor
                                 font.family: Theme.typography.bodySmall.family
                                 font.pixelSize: Theme.typography.bodySmall.size
@@ -241,7 +241,7 @@ Rectangle {
                     Layout.rightMargin: 12
                     type: "outlined"
                     icon: "logout"
-                    text: "退出登录"
+                    text: i18n.t("account.logout")
                     onClicked: logoutDialog.open()
                 }
             }
@@ -250,11 +250,11 @@ Rectangle {
 
     Dialog {
         id: logoutDialog
-        title: "退出登录"
-        text: "确定要退出当前账户吗?"
+        title: i18n.t("account.logout")
+        text: i18n.t("account.logout.confirm")
         icon: "logout"
-        acceptText: "退出"
-        rejectText: "取消"
+        acceptText: i18n.t("account.logout.accept")
+        rejectText: i18n.t("common.cancel")
         onAccepted: { player.logout(); page.back(); }
     }
 }
