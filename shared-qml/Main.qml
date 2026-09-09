@@ -713,7 +713,11 @@ Rectangle {
             // In without the route inheriting its underlay's transform.
             Item {
                 id: rootPages
-                anchors.fill: parent
+                // Sized, not anchored: anchors.fill pins x/y at 0 and silently
+                // beats the motion bindings, which left every sliding preset
+                // looking like a plain cross-fade here.
+                width: parent.width
+                height: parent.height
                 x: rootPageMotion.contentX
                 y: rootPageMotion.contentY
                 scale: rootPageMotion.contentScale
