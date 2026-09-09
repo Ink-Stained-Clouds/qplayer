@@ -366,6 +366,17 @@ public final class PluginProviderService {
         return page;
     }
 
+    /**
+     * A source's small artwork variant, when it has one. List rows draw at ~48dp
+     * but the full-size cover is routinely a megapixel JPEG, and every visible row
+     * fetches and decodes one while scrolling. Falls back to the full URL, and is
+     * held to the same network grant.
+     */
+    private String artworkThumb(String provider, Map<String, Object> object, String full) {
+        String thumb = allowedUrl(provider, optionalString(object.get("artworkThumbUrl")));
+        return thumb.isEmpty() ? full : thumb;
+    }
+
     private Song parseSong(String provider, Map<String, Object> object) {
         Song song = new Song();
         song.id = qualify(provider, MediaKind.SONG, object.get("id"));
@@ -375,7 +386,7 @@ public final class PluginProviderService {
                 31L * 24L * 60L * 60L * 1000L, "song.durationMs");
         song.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         song.coverUrl = song.artworkUrl;
-        song.coverThumbPath = song.artworkUrl;
+        song.coverThumbPath = artworkThumb(provider, object, song.artworkUrl);
         song.isrc = optionalString(object.get("isrc"));
         song.playable = !Boolean.FALSE.equals(object.get("playable"));
         song.trial = Boolean.TRUE.equals(object.get("trial"));
@@ -421,7 +432,7 @@ public final class PluginProviderService {
                 MAX_DESCRIPTION_CHARS, "playlist.description", false);
         playlist.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         playlist.coverUrl = playlist.artworkUrl;
-        playlist.coverThumbPath = playlist.artworkUrl;
+        playlist.coverThumbPath = artworkThumb(provider, object, playlist.artworkUrl);
         playlist.trackCount = boundedLong(object.get("trackCount"), 0L,
                 Long.MAX_VALUE, "playlist.trackCount");
         playlist.playCount = boundedLong(object.get("playCount"), 0L,
@@ -455,7 +466,7 @@ public final class PluginProviderService {
                 "album.name", true);
         album.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         album.coverUrl = album.artworkUrl;
-        album.coverThumbPath = album.artworkUrl;
+        album.coverThumbPath = artworkThumb(provider, object, album.artworkUrl);
         album.publishTimeMs = longValue(object.get("publishTimeMs"), 0L);
         album.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "album.description", false);
@@ -490,7 +501,7 @@ public final class PluginProviderService {
                 "artist.name", true);
         artist.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         artist.coverUrl = artist.artworkUrl;
-        artist.coverThumbPath = artist.artworkUrl;
+        artist.coverThumbPath = artworkThumb(provider, object, artist.artworkUrl);
         artist.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "artist.description", false);
         artist.albumCount = (int) boundedLong(object.get("albumCount"), 0L,

@@ -116,6 +116,12 @@ treats as their own shelf — NetEase's radar playlists, for instance — instea
 burying them in the generic recommendations. The `limit` argument bounds only the
 plain `playlists` list and follows the user's home-page setting.
 
+Songs, playlists, albums and artists may carry `artworkThumbUrl` next to
+`artworkUrl`: the same artwork at list-row size. List rows are ~48dp while a
+cover is routinely a megapixel JPEG, and without it every row fetched and decoded
+the full one while scrolling. It is held to the same network grant and falls back
+to `artworkUrl`.
+
 The host validates response sizes, entity kinds, canonical ownership, URL grants,
 pagination bounds, lyric size, headers, and enum values. See the source-neutral
 DTOs in `player-core/src/main/java/dev/t1m3/qplayer/media` for the complete field

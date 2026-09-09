@@ -59,4 +59,22 @@ public final class PluginProviderServiceTest {
         assertEquals("netease:artist:2", only.artists.get(0).id);
         assertNull("an unnamed album reference stays unset", only.album);
     }
+
+    /** List rows draw at ~48dp; without a small variant every visible row pulled
+     *  and decoded the full-size cover while scrolling. */
+    @Test public void aRowThumbFallsBackToTheFullArtwork() throws Exception {
+        Map<String, Object> song = new LinkedHashMap<>();
+        song.put("id", "42");
+        song.put("title", "歌曲");
+        Map<String, Object> playlist = new LinkedHashMap<>();
+        playlist.put("id", "9");
+        playlist.put("name", "歌单");
+        List<Object> songs = new ArrayList<>();
+        songs.add(song);
+        playlist.put("songs", songs);
+
+        Song parsed = parsePlaylist(playlist).songs.get(0);
+
+        assertEquals(parsed.artworkUrl, parsed.coverThumbPath);
+    }
 }
