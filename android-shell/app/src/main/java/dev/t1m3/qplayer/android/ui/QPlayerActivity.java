@@ -121,6 +121,14 @@ public final class QPlayerActivity extends Activity {
         AudioBackend backend = new AndroidAudioBackend(this);
         reader = new AndroidMetadataReader(this);
 
+        // Before the controller: it starts the enabled plugins while it is being
+        // built, and each one is version-checked against this.
+        try {
+            dev.t1m3.qplayer.plugin.PluginCompatibility.setHostVersion(
+                    getPackageManager().getPackageInfo(getPackageName(), 0).versionName);
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
+
         // Reuse the existing controller across Activity recreations (PiP, config
         // changes). Without this, each recreation builds a fresh controller with
         // empty state — disconnected from the PlaybackService's static reference
