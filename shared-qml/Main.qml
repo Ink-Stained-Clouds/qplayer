@@ -398,6 +398,7 @@ Rectangle {
         if (idx === 3) app.localLoaded = true
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
+        rootPageMotion.direction = idx > app.page ? 1 : -1;
         rootPageMotion.transition();
     }
 

@@ -16,6 +16,15 @@ Item {
     property real hiddenX: preset === 2 ? 44 : 0
     property real hiddenY: preset === 3 ? 40 : 0
 
+    // Which way a swap travels: +1 moves to a destination on the right, -1 back
+    // to one on the left. A lateral swap that left and re-entered on the same
+    // side read as a plain cross-fade, because the page never crossed anything.
+    property int direction: 1
+    readonly property real exitX: -direction * hiddenX
+    readonly property real exitY: -direction * hiddenY
+    readonly property real entryX: direction * hiddenX
+    readonly property real entryY: direction * hiddenY
+
     property real contentOpacity: 1
     property real contentScale: 1
     property real contentX: 0
@@ -75,18 +84,23 @@ Item {
                 duration: motion.duration; easing.type: Easing.InCubic
             }
             NumberAnimation {
-                target: motion; property: "contentX"; to: motion.hiddenX
+                target: motion; property: "contentX"; to: motion.exitX
                 duration: motion.duration; easing.type: Easing.InCubic
             }
             NumberAnimation {
-                target: motion; property: "contentY"; to: motion.hiddenY
+                target: motion; property: "contentY"; to: motion.exitY
                 duration: motion.duration; easing.type: Easing.InCubic
             }
         }
         ScriptAction {
             onTrigger: {
                 motion.swapRequested()
-                motion.prepareHidden()
+                // The incoming page waits on the far side of where the outgoing
+                // one left, so the pair reads as one movement across the screen.
+                motion.contentOpacity = motion.hiddenOpacity
+                motion.contentScale = motion.hiddenScale
+                motion.contentX = motion.entryX
+                motion.contentY = motion.entryY
             }
         }
         ParallelAnimation {
