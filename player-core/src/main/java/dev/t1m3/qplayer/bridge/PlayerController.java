@@ -45,6 +45,7 @@ import dev.t1m3.qplayer.plugin.PluginRow;
 import dev.t1m3.qplayer.plugin.PluginManifest;
 import dev.t1m3.qplayer.plugin.PluginSetupState;
 import dev.t1m3.qplayer.plugin.ProviderCapability;
+import dev.t1m3.qplayer.plugin.SourceAccountRow;
 import dev.t1m3.qplayer.plugin.VerifiedPluginPackage;
 import dev.t1m3.qplayer.netease.NeteaseClient;
 import dev.t1m3.qplayer.netease.dto.NeteaseAlbum;
@@ -525,6 +526,11 @@ public final class PlayerController {
     public final Property<List<PluginRow>> sourcePlugins =
             new Property<>(Collections.<PluginRow>emptyList());
     public final Property<String> primarySourcePlugin = new Property<>("");
+    /** Every enabled source that can report an account, primary first. The header
+     *  properties above stay bound to the primary source alone; this is what the
+     *  account page lists so a second signed-in source is not invisible. */
+    public final Property<List<SourceAccountRow>> sourceAccounts =
+            new Property<>(Collections.<SourceAccountRow>emptyList());
     /** True when the selected provider owns the online discovery/detail surface. */
     public final Property<Boolean> sourceContentActive = new Property<>(false);
     public final Property<String> pendingPluginName = new Property<>("");
@@ -781,6 +787,9 @@ public final class PlayerController {
     /** Discard home/account results of a source that is no longer the primary one. */
     private final AtomicLong homeGeneration = new AtomicLong();
     private final AtomicLong accountGeneration = new AtomicLong();
+    private final AtomicLong sourceAccountsGeneration = new AtomicLong();
+    private final Map<String, SourceAccountRow> sourceAccountsBySource = new LinkedHashMap<>();
+    private List<String> sourceAccountOrder = Collections.emptyList();
     private final AtomicLong pluginLikedGeneration = new AtomicLong();
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
@@ -1015,7 +1024,74 @@ public final class PlayerController {
         // the same.
         loadMyPlaylists();
         refreshPluginLiked();
+        refreshSourceAccounts();
         if (!primary.isEmpty()) loadHome();
+    }
+
+    /**
+     * Ask every enabled source that can report an account, primary first, and
+     * publish the lot. The scalar account header still belongs to the primary
+     * source; without this list a second signed-in source has nowhere to appear.
+     */
+    private void refreshSourceAccounts() {
+        List<PluginManifest> providers = new ArrayList<>();
+        String primary = pluginRegistry.primaryProvider();
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (!manifest.capabilitySet().contains(ProviderCapability.ACCOUNT)) continue;
+            if (manifest.id.equals(primary)) providers.add(0, manifest);
+            else providers.add(manifest);
+        }
+        if (providers.isEmpty()) {
+            sourceAccounts.set(Collections.<SourceAccountRow>emptyList());
+            return;
+        }
+        final long generation = sourceAccountsGeneration.incrementAndGet();
+        // Seed the order straight away so the page can render the source names
+        // while the individual account calls are still in flight.
+        final List<String> order = new ArrayList<>();
+        for (PluginManifest manifest : providers) order.add(manifest.id);
+        post(() -> {
+            sourceAccountOrder = order;
+            sourceAccountsBySource.keySet().retainAll(order);
+            publishSourceAccounts();
+        });
+        for (PluginManifest manifest : providers) {
+            final String providerId = manifest.id;
+            final String providerName = manifest.name;
+            pluginAccounts.account(providerId).whenComplete((account, error) -> post(() -> {
+                if (generation != sourceAccountsGeneration.get()) return;
+                SourceAccountRow row = new SourceAccountRow();
+                row.providerId = providerId;
+                row.sourceName = providerName;
+                row.primary = providerId.equals(pluginRegistry.primaryProvider());
+                if (error == null && account != null) {
+                    row.loggedIn = account.loggedIn;
+                    row.displayName = orEmpty(account.displayName);
+                    row.avatarUrl = orEmpty(account.avatarUrl);
+                    if (account.loggedIn) {
+                        row.membershipTier = account.membershipTier;
+                        row.level = account.level;
+                        row.signature = orEmpty(account.signature);
+                    }
+                } else if (error != null) {
+                    // A signed-out source usually just fails the call; show it as
+                    // signed out rather than dropping the row, so the user can still
+                    // see that the source exists and sign in from here.
+                    Logger.warn("plugin {} account failed: {}", providerId, safeMessage(error));
+                }
+                sourceAccountsBySource.put(providerId, row);
+                publishSourceAccounts();
+            }));
+        }
+    }
+
+    private void publishSourceAccounts() {
+        List<SourceAccountRow> rows = new ArrayList<>();
+        for (String providerId : sourceAccountOrder) {
+            SourceAccountRow row = sourceAccountsBySource.get(providerId);
+            if (row != null) rows.add(row);
+        }
+        sourceAccounts.set(rows);
     }
 
     /** Reset everything published on behalf of the source that is no longer primary. */
@@ -7377,6 +7453,9 @@ public final class PlayerController {
                 webLoginError.set("");
                 webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
                 refreshPluginAccount(pendingPluginLoginProvider, challenge.account);
+                // The signed-in source may not be the primary one, and only this
+                // list can show it.
+                refreshSourceAccounts();
                 showToast(I18n.tr("toast.login.success"));
                 break;
             case "expired":

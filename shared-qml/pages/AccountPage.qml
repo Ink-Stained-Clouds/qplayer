@@ -170,6 +170,119 @@ Rectangle {
                     }
                 }
 
+                // --- every source's account ----------------------------
+                // The header above is the primary source alone; without this a
+                // second signed-in source is nowhere to be seen. Primary sorts
+                // first, which is the order the controller publishes.
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    visible: (player.sourceAccounts || []).length > 1
+                    text: i18n.t("account.sources")
+                    color: Theme.color.primary
+                    font.family: Theme.typography.bodySmall.family
+                    font.pixelSize: Theme.typography.bodySmall.size
+                    font.weight: Font.DemiBold
+                }
+
+                Repeater {
+                    model: (player.sourceAccounts || []).length > 1
+                           ? player.sourceAccounts : null
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: 12
+                        radius: 18
+                        color: Theme.color.surfaceContainerHighest
+                        implicitHeight: 76
+
+                        // Kept anchor-based and flat: nested Layouts here stopped
+                        // propagating fillWidth and the labels lost their wrapping.
+                        Item {
+                            id: sourceAvatar
+                            anchors.left: parent.left
+                            anchors.leftMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 44
+                            height: 44
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: width / 2
+                                color: Theme.color.surfaceContainerHigh
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "account_circle"
+                                    font.family: Theme.iconFont.name
+                                    font.pixelSize: 28
+                                    color: Theme.color.onSurfaceVariantColor
+                                }
+                            }
+                            Image {
+                                anchors.fill: parent
+                                source: modelData.avatarUrl
+                                radius: width / 2
+                                fillMode: "PreserveAspectCrop"
+                                visible: modelData.avatarUrl.length > 0
+                                // Same decode-time downscale as the header avatar
+                                // above, so it doesn't alias into moiré.
+                                sourceSize.width: Math.round(44 * player.pixelRatio)
+                                sourceSize.height: Math.round(44 * player.pixelRatio)
+                            }
+                        }
+
+                        Text {
+                            id: sourceWho
+                            anchors.left: sourceAvatar.right
+                            anchors.leftMargin: 14
+                            anchors.right: primaryBadge.left
+                            anchors.rightMargin: 8
+                            anchors.top: parent.top
+                            anchors.topMargin: 16
+                            elide: Text.ElideRight
+                            text: modelData.loggedIn
+                                  ? (modelData.displayName.length > 0
+                                     ? modelData.displayName : i18n.t("account.anonymous"))
+                                  : i18n.t("account.source.signedOut")
+                            color: modelData.loggedIn ? Theme.color.onSurfaceColor
+                                                      : Theme.color.onSurfaceVariantColor
+                            font.family: Theme.typography.titleSmall.family
+                            font.pixelSize: Theme.typography.titleSmall.size
+                        }
+
+                        Text {
+                            anchors.left: sourceWho.left
+                            anchors.right: sourceWho.right
+                            anchors.top: sourceWho.bottom
+                            anchors.topMargin: 2
+                            elide: Text.ElideRight
+                            text: modelData.sourceName
+                            color: Theme.color.onSurfaceVariantColor
+                            font.family: Theme.typography.bodySmall.family
+                            font.pixelSize: Theme.typography.bodySmall.size
+                        }
+
+                        Rectangle {
+                            id: primaryBadge
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: modelData.primary
+                            width: primaryLabel.implicitWidth + 16
+                            height: 24
+                            radius: 12
+                            color: Theme.color.primary
+                            Text {
+                                id: primaryLabel
+                                anchors.centerIn: parent
+                                text: i18n.t("account.source.primary")
+                                color: Theme.color.onPrimaryColor
+                                font.family: Theme.typography.bodySmall.family
+                                font.pixelSize: Theme.typography.bodySmall.size
+                            }
+                        }
+                    }
+                }
+
                 // --- stats ---------------------------------------------
                 Rectangle {
                     Layout.fillWidth: true
