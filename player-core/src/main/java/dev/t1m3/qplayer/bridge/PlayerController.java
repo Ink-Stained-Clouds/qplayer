@@ -5664,17 +5664,28 @@ public final class PlayerController {
                 rows.add(row);
             }
         }
-        for (Map.Entry<String, List<Song>> provider : pluginSearchByProvider.entrySet()) {
-            List<Song> songs = provider.getValue();
-            for (int i = 0; songs != null && i < songs.size(); i++) {
-                Song song = songs.get(i);
+        // Interleave the sources instead of appending one whole list after another:
+        // grouping them buried every source but the first under a full page of the
+        // one before it. Rank 0 of every source comes first, then rank 1, and so on,
+        // with pluginSearchByProvider's insertion order (primary first) breaking ties.
+        // row.index stays the index within its own source because playPluginSearchResult
+        // resolves the song through pluginSearchByProvider.get(providerId).get(index).
+        int deepest = 0;
+        for (List<Song> songs : pluginSearchByProvider.values()) {
+            if (songs != null) deepest = Math.max(deepest, songs.size());
+        }
+        for (int rank = 0; rank < deepest; rank++) {
+            for (Map.Entry<String, List<Song>> provider : pluginSearchByProvider.entrySet()) {
+                List<Song> songs = provider.getValue();
+                if (songs == null || rank >= songs.size()) continue;
+                Song song = songs.get(rank);
                 SearchRow row = new SearchRow();
                 row.kind = "plugin";
                 row.kindLabel = pluginProviderNames.getOrDefault(provider.getKey(), provider.getKey());
                 row.providerId = provider.getKey();
                 row.mediaId = song.id;
                 row.artistMediaId = song.artistMediaId;
-                row.index = i;
+                row.index = rank;
                 row.name = song.title;
                 row.artist = joinArtistNames(song);
                 row.coverThumbPath = song.artworkUrl;

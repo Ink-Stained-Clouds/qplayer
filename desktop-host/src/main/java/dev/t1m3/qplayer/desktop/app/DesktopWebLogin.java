@@ -3,13 +3,20 @@ package dev.t1m3.qplayer.desktop.app;
 import ca.weblite.webview.swing.WebViewComponent;
 import dev.t1m3.qplayer.i18n.I18n;
 import com.sun.jna.Native;
+import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -105,7 +112,7 @@ final class DesktopWebLogin {
         try {
             webView = WebViewComponent.create();
             webView.setUrl(loginUrl);
-            webView.setPreferredSize(new Dimension(900, 700));
+            webView.setPreferredSize(preferredLoginSize());
         } catch (Throwable error) {
             sessionData.close();
             throw error;
@@ -119,6 +126,16 @@ final class DesktopWebLogin {
         frame.setMinimumSize(new Dimension(640, 560));
         frame.pack();
         frame.setLocationRelativeTo(null);
+        // swingwebview sizes its native child from AWT logical pixels, so on a scaled
+        // display the page only covers 1/scale of the window. Keep it matched to the
+        // real client area instead. See syncNativeWebViewBounds.
+        Timer nativeFit = new Timer(300, event -> syncNativeWebViewBounds(frame));
+        nativeFit.start();
+        frame.addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent event) {
+                syncNativeWebViewBounds(frame);
+            }
+        });
 
         final boolean[] submitted = {false};
         final boolean[] queryInFlight = {false};
@@ -161,6 +178,7 @@ final class DesktopWebLogin {
 
             @Override public void windowClosed(WindowEvent event) {
                 cookiePoll.stop();
+                nativeFit.stop();
                 if (!disposed[0]) {
                     disposed[0] = true;
                     try {
@@ -174,6 +192,73 @@ final class DesktopWebLogin {
             }
         });
         DesktopSwingFocus.show(frame);
+    }
+
+    /** Class name swingwebview gives the HWND it parents the browser into. */
+    private static final String NATIVE_WEBVIEW_CLASS = "WebViewEmbedChild";
+    /** Class name of the AWT heavyweight peer that HWND is a child of. */
+    private static final String AWT_CANVAS_CLASS = "SunAwtCanvas";
+
+    /** Roughly four fifths of the work area, so the login page is not a small
+     *  box in the middle of a large screen, but still clearly a dialog. */
+    private static Dimension preferredLoginSize() {
+        try {
+            Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                    .getMaximumWindowBounds();
+            int width = Math.max(900, Math.min(1400, (int) (screen.width * 0.8)));
+            int height = Math.max(700, Math.min(1000, (int) (screen.height * 0.8)));
+            return new Dimension(width, height);
+        } catch (Throwable ignored) {
+            return new Dimension(900, 700);
+        }
+    }
+
+    /**
+     * swingwebview's sizeNative() hands {@code canvas.getSize()} — AWT logical
+     * pixels — to a native SetWindowPos call that works in physical pixels, and
+     * compensates for nothing. At 125% display scaling a 900x700 canvas occupies
+     * 1125x875 real pixels while the browser child stays 900x700, so the page
+     * covers the top-left 80% and leaves the rest blank.
+     *
+     * <p>Resize the child to the canvas's real client rect ourselves; WebView2's
+     * own windows follow their parent, so the page then fills the window. Both
+     * class names come from the library and the AWT peer, so if either ever
+     * changes this quietly does nothing and we are no worse off than before.
+     */
+    private static void syncNativeWebViewBounds(JFrame frame) {
+        if (!isWindows() || frame == null || !frame.isDisplayable()) return;
+        try {
+            Pointer handle = Native.getWindowPointer(frame);
+            if (handle == null) return;
+            WinDef.HWND top = new WinDef.HWND(handle);
+            WinDef.HWND canvas = findChildByClass(top, AWT_CANVAS_CLASS);
+            WinDef.HWND child = findChildByClass(top, NATIVE_WEBVIEW_CLASS);
+            if (canvas == null || child == null) return;
+            WinDef.RECT want = new WinDef.RECT();
+            User32.INSTANCE.GetClientRect(canvas, want);
+            int width = want.right - want.left;
+            int height = want.bottom - want.top;
+            if (width <= 0 || height <= 0) return;
+            WinDef.RECT have = new WinDef.RECT();
+            User32.INSTANCE.GetClientRect(child, have);
+            if (have.right - have.left == width && have.bottom - have.top == height) return;
+            User32.INSTANCE.SetWindowPos(child, null, 0, 0, width, height,
+                    0x0004 /* SWP_NOZORDER */ | 0x0010 /* SWP_NOACTIVATE */);
+        } catch (Throwable ignored) {
+            // A native-layout mismatch must never take the login window down.
+        }
+    }
+
+    private static WinDef.HWND findChildByClass(WinDef.HWND parent, String wanted) {
+        final WinDef.HWND[] found = {null};
+        User32.INSTANCE.EnumChildWindows(parent, (hwnd, data) -> {
+            if (found[0] != null) return false;
+            char[] name = new char[256];
+            User32.INSTANCE.GetClassName(hwnd, name, name.length);
+            if (wanted.equals(Native.toString(name))) found[0] = hwnd;
+            return found[0] == null;
+        }, Pointer.NULL);
+        return found[0];
     }
 
     /**
