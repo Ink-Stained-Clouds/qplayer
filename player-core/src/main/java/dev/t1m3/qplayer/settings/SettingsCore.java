@@ -4,6 +4,7 @@ import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.i18n.I18n;
 import dev.t1m3.qplayer.lyric.skia.Fonts;
 import dev.t1m3.qplayer.lyric.skia.LyricCompositor;
 import dev.t1m3.qplayer.lyric.skia.LyricConfig;
@@ -389,6 +390,9 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     /** Push every seeded value into whatever consumes it. Runs once at load, so
      *  a consumer sees the persisted state without the host replaying it. */
     private void applyAll() {
+        // Before anything reads a string: every other consumer resolves keys
+        // through whatever language is active at that moment.
+        applyLanguage();
         recomputeDark();
         applyLyricConfig();
         Fonts.setSelection(fontSelection());
@@ -400,7 +404,9 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     }
 
     private void apply(SettingSpec spec, Object v) {
-        if (spec.key.startsWith("lyric") && !SettingsCatalog.BG_MODE_KEY.equals(spec.key)) {
+        if (SettingsCatalog.LANGUAGE_KEY.equals(spec.key)) {
+            applyLanguage();
+        } else if (spec.key.startsWith("lyric") && !SettingsCatalog.BG_MODE_KEY.equals(spec.key)) {
             applyLyricConfig();
         } else if ("darkMode".equals(spec.key)) {
             recomputeDark();
@@ -411,6 +417,9 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
                 case "fade": controller.setFadeEnabled(bool("fade")); break;
                 case "highQuality": controller.setHighQualityEnabled(bool("highQuality")); break;
                 case "maxCacheSizeMB": controller.setCacheMaxSizeMB(intOf("maxCacheSizeMB")); break;
+                case SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY:
+                    controller.setHomePlaylistLimit(intOf(SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY));
+                    break;
                 default: break;
             }
         }
@@ -430,6 +439,15 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
         controller.setFadeEnabled(bool("fade"));
         controller.setHighQualityEnabled(bool("highQuality"));
         controller.setCacheMaxSizeMB(intOf("maxCacheSizeMB"));
+        controller.setHomePlaylistLimit(intOf(SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY));
+    }
+
+    private void applyLanguage() {
+        int choice = intOf(SettingsCatalog.LANGUAGE_KEY);
+        I18n.instance().setLanguage(
+                choice == SettingsCatalog.LANGUAGE_ZH_CN ? "zh_CN"
+                : choice == SettingsCatalog.LANGUAGE_EN_US ? "en_US"
+                : I18n.systemLanguage());
     }
 
     private void applyLyricConfig() {
@@ -487,9 +505,11 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     private void registerFontProviders() {
         infos.putIfAbsent("fontName", () -> {
             String sel = fontFamily();
-            if (sel.isEmpty()) return "当前：内置字体 PingFang SC";
-            if (Fonts.SYSTEM.equals(sel)) return "当前：系统默认字体";
-            return "当前：" + sel;
+            if (sel.isEmpty()) return I18n.tr("settings.font.current",
+                    I18n.tr("font.picker.bundled"));
+            if (Fonts.SYSTEM.equals(sel)) return I18n.tr("settings.font.current",
+                    I18n.tr("font.picker.system"));
+            return I18n.tr("settings.font.current", sel);
         });
         actions.putIfAbsent("pickFont", () -> fontPickerOpen.set(Boolean.TRUE));
     }

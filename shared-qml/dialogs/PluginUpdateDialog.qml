@@ -38,12 +38,13 @@ Item {
 
     Dialog {
         id: dialog
-        title: "插件有新版本"
+        title: i18n.t("update.plugin.title")
         icon: "extension"
-        text: player.pluginUpdateName + " " + player.pluginUpdateVersion
-              + " 可用（当前 " + player.pluginUpdateInstalledVersion + "）"
-        acceptText: "立即更新"
-        rejectText: "稍后"
+        text: i18n.t("update.plugin.body", player.pluginUpdateName,
+                     player.pluginUpdateVersion)
+              .replace("{2}", player.pluginUpdateInstalledVersion)
+        acceptText: i18n.t("update.now")
+        rejectText: i18n.t("update.later")
         // Routes into the normal catalog install path, so the permission sheet
         // still appears before the new version is activated.
         onAccepted: player.installCatalogPlugin(player.pluginUpdateId)

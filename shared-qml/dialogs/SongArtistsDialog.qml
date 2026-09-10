@@ -23,9 +23,9 @@ Item {
     Dialog {
         id: picker
         icon: "group"
-        title: "选择歌手"
+        title: i18n.t("song.artists.title")
         showAcceptButton: false
-        rejectText: "取消"
+        rejectText: i18n.t("common.cancel")
         onClosed: {
             if (player.songArtistPickerOpen)
                 player.closeSongArtistPicker()

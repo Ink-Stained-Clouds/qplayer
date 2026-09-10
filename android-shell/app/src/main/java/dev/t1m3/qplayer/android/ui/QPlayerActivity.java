@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.android.ui;
 
 import dev.t1m3.qplayer.android.graphics.AndroidColorExtractor;
+import dev.t1m3.qplayer.i18n.I18n;
 import dev.t1m3.qplayer.android.library.AndroidLibraryScanner;
 import dev.t1m3.qplayer.android.library.AndroidMetadataReader;
 import dev.t1m3.qplayer.android.playback.AndroidAudioBackend;
@@ -119,6 +120,14 @@ public final class QPlayerActivity extends Activity {
 
         AudioBackend backend = new AndroidAudioBackend(this);
         reader = new AndroidMetadataReader(this);
+
+        // Before the controller: it starts the enabled plugins while it is being
+        // built, and each one is version-checked against this.
+        try {
+            dev.t1m3.qplayer.plugin.PluginCompatibility.setHostVersion(
+                    getPackageManager().getPackageInfo(getPackageName(), 0).versionName);
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
 
         // Reuse the existing controller across Activity recreations (PiP, config
         // changes). Without this, each recreation builds a fresh controller with
@@ -252,7 +261,7 @@ public final class QPlayerActivity extends Activity {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT));
         glView.setSplashListener(new QmlGLSurfaceView.SplashListener() {
             @Override public void onProgress(String name, int count) {
-                runOnUiThread(() -> splashStatus.setText("正在编译界面组件… " + count));
+                runOnUiThread(() -> splashStatus.setText(I18n.tr("splash.compiling", count)));
             }
             @Override public void onReady() {
                 runOnUiThread(QPlayerActivity.this::onSceneReady);
@@ -526,7 +535,7 @@ public final class QPlayerActivity extends Activity {
         box.addView(bar);
 
         splashStatus = new android.widget.TextView(this);
-        splashStatus.setText("正在加载…");
+        splashStatus.setText(I18n.tr("common.loading"));
         splashStatus.setTextColor(0xFF9A9499);
         splashStatus.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
         splashStatus.setGravity(android.view.Gravity.CENTER);
@@ -609,7 +618,7 @@ public final class QPlayerActivity extends Activity {
                                 .putExtra(SourceWebLoginActivity.EXTRA_PROVIDER_NAME, providerName),
                         REQ_WEB_LOGIN);
             } catch (Throwable e) {
-                controller.failWebLogin("无法打开系统 WebView，请使用粘贴 Cookie 登录");
+                controller.failWebLogin(I18n.tr("login.error.noSystemWebView"));
             }
         });
     }

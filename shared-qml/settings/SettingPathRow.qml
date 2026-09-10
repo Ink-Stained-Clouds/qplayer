@@ -14,15 +14,15 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        SettingTitle { text: row.spec ? row.spec.title : "" }
+        SettingTitle { text: row.spec ? i18n.t(row.spec.title) : "" }
         Button {
             type: "filledTonal"
-            text: "选择目录"
+            text: i18n.t("settings.folder.choose")
             onClicked: settings.pickDirectory(row.spec.key)
         }
     }
 
-    SettingDesc { text: row.spec ? row.spec.desc : "" }
+    SettingDesc { text: row.spec ? i18n.t(row.spec.desc) : "" }
 
     Rectangle {
         Layout.fillWidth: true
@@ -41,7 +41,8 @@ ColumnLayout {
             anchors.rightMargin: 12
             text: row.selectedPath.length > 0
                   ? row.selectedPath
-                  : (row.spec && row.spec.hint.length > 0 ? row.spec.hint : "未选择目录")
+                  : (row.spec && row.spec.hint.length > 0 ? i18n.t(row.spec.hint)
+                                                    : i18n.t("settings.folder.empty"))
             color: row.selectedPath.length > 0
                    ? Theme.color.onSurfaceColor : Theme.color.onSurfaceVariantColor
             font.family: Theme.typography.bodyMedium.family

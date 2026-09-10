@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.android.ui;
 
 import android.app.Activity;
+import dev.t1m3.qplayer.i18n.I18n;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -66,7 +67,7 @@ public final class SourceWebLoginActivity extends Activity {
             return;
         }
         String providerName = getIntent().getStringExtra(EXTRA_PROVIDER_NAME);
-        if (providerName == null || providerName.trim().isEmpty()) providerName = "音源账户";
+        if (providerName == null || providerName.trim().isEmpty()) providerName = I18n.tr("login.defaultProvider");
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -78,7 +79,7 @@ public final class SourceWebLoginActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, barHeight));
 
         TextView title = new TextView(this);
-        title.setText("登录" + providerName);
+        title.setText(I18n.tr("login.title", providerName));
         title.setTextSize(18f);
         title.setTextColor(Color.rgb(32, 32, 32));
         title.setGravity(Gravity.CENTER);
@@ -86,7 +87,7 @@ public final class SourceWebLoginActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         ImageButton close = new ImageButton(this);
-        close.setContentDescription("关闭");
+        close.setContentDescription(I18n.tr("common.close"));
         close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
         close.setBackgroundColor(Color.TRANSPARENT);
         close.setOnClickListener(view -> finish());

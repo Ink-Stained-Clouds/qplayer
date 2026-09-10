@@ -2,8 +2,9 @@ import QtQuick
 import md3.Core
 import "."
 
-// Long-press context menu for a song row. "添加到歌单" fans the user's own playlists
-// out as a submenu; "从此歌单移除" appears only inside a playlist the user owns. Every
+// Long-press context menu for a song row. "add to playlist" fans the user's own
+// playlists out as a submenu; "remove from playlist" appears only inside a playlist
+// the user owns. Every
 // action routes through the global `player` bridge, so the row only feeds this the
 // song object + a little context — no cross-file signal plumbing. Built lazily (one
 // per row, via a Loader) so idle lists don't pay for a menu subtree per track.
@@ -12,7 +13,7 @@ Menu {
 
     property var song: null
     property bool inOwnedPlaylist: false
-    // Cached-songs list mode: the "缓存此歌曲" entry flips to "删除缓存" (right-click
+    // Cached-songs list mode: the cache entry flips to "remove cache" (right-click
     // on CachedSongsDialog rows), so you can drop a song's offline copy on disk.
     property bool inCacheList: false
 
@@ -27,9 +28,9 @@ Menu {
         // the custom-playlist toggle, keyed by path instead of a provider media ID.
         if (s.filePath) {
             if (player.isLocalInCustomPlaylist(s.filePath)) {
-                items.push({ text: "移出播放列表", icon: "playlist_remove", action: menu._removeLocalCustomAction(s.filePath) })
+                items.push({ text: i18n.t("menu.removeFromCustom"), icon: "playlist_remove", action: menu._removeLocalCustomAction(s.filePath) })
             } else {
-                items.push({ text: "加入播放列表", icon: "playlist_add", action: menu._addLocalCustomAction(s.filePath) })
+                items.push({ text: i18n.t("menu.addToCustom"), icon: "playlist_add", action: menu._addLocalCustomAction(s.filePath) })
             }
             menu.model = items
             return
@@ -42,30 +43,34 @@ Menu {
             var mediaArtistIds = s.artistIdsCsv || s.artistMediaId || ""
             var mediaArtistNames = s.artistNamesCsv || s.artist || ""
             if (mediaArtistIds)
-                items.push({ text: "查看歌手", icon: "person",
+                items.push({ text: i18n.t("menu.viewArtist"), icon: "person",
                              action: menu._openArtistPickerAction(mediaArtistIds, mediaArtistNames) })
-            if (player.loggedIn && player.sourcePlaylistMutationAvailable) {
-                var sourceLists = player.sourceMyPlaylists
-                var sourceSubs = []
-                var sourceCount = sourceLists ? sourceLists.length : 0
-                for (var spi = 0; spi < sourceCount; spi++) {
-                    if (!sourceLists[spi].mutable) continue
-                    sourceSubs.push(menu._addMediaItem(sourceLists[spi], "" + songId))
-                }
-                if (sourceSubs.length > 0)
-                    items.push({ text: "添加到歌单", icon: "playlist_add", subItems: sourceSubs })
-                if (menu.inOwnedPlaylist && player.openSourcePlaylistId !== "")
-                    items.push({ text: "从此歌单移除", icon: "playlist_remove", action: menu._removeMediaPlaylistAction("" + songId) })
+            // The library mixes every signed-in source, but a playlist only accepts songs
+            // from its own source: offering the others would just fail server-side.
+            // Media ids are "<source>:<kind>:<native>", so the prefix is the filter.
+            var sourcePrefix = ("" + songId).split(":")[0] + ":"
+            var sourceLists = player.sourceMyPlaylists
+            var sourceSubs = []
+            var sourceCount = sourceLists ? sourceLists.length : 0
+            for (var spi = 0; spi < sourceCount; spi++) {
+                if (!sourceLists[spi].mutable) continue
+                if (("" + sourceLists[spi].id).indexOf(sourcePrefix) !== 0) continue
+                sourceSubs.push(menu._addMediaItem(sourceLists[spi], "" + songId))
             }
+            if (sourceSubs.length > 0)
+                items.push({ text: i18n.t("menu.addToPlaylist"), icon: "playlist_add", subItems: sourceSubs })
+            if (menu.inOwnedPlaylist && player.openSourcePlaylistId !== ""
+                    && ("" + player.openSourcePlaylistId).indexOf(sourcePrefix) === 0)
+                items.push({ text: i18n.t("menu.removeFromPlaylist"), icon: "playlist_remove", action: menu._removeMediaPlaylistAction("" + songId) })
             if (player.isMediaInCustomPlaylist("" + songId))
-                items.push({ text: "移出播放列表", icon: "playlist_remove", action: menu._removeMediaCustomAction("" + songId) })
+                items.push({ text: i18n.t("menu.removeFromCustom"), icon: "playlist_remove", action: menu._removeMediaCustomAction("" + songId) })
             else
-                items.push({ text: "加入播放列表", icon: "playlist_add", action: menu._addMediaCustomAction("" + songId) })
+                items.push({ text: i18n.t("menu.addToCustom"), icon: "playlist_add", action: menu._addMediaCustomAction("" + songId) })
             if (menu.inCacheList)
-                items.push({ text: "删除缓存", icon: "delete", action: menu._removeMediaCacheAction("" + songId) })
+                items.push({ text: i18n.t("menu.removeCache"), icon: "delete", action: menu._removeMediaCacheAction("" + songId) })
             else
-                items.push({ text: "缓存此歌曲", icon: "download", action: menu._cacheMediaAction("" + songId) })
-            items.push({ text: "复制链接", icon: "link", action: menu._shareMediaAction("" + songId) })
+                items.push({ text: i18n.t("menu.cacheSong"), icon: "download", action: menu._cacheMediaAction("" + songId) })
+            items.push({ text: i18n.t("menu.copyLink"), icon: "link", action: menu._shareMediaAction("" + songId) })
             menu.model = items
             return
         }
@@ -75,7 +80,7 @@ Menu {
         var artistIds = s.artistIdsCsv || (s.artistId ? ("" + s.artistId) : "")
         var artistNames = s.artistNamesCsv || s.artist || ""
         if (artistIds) {
-            items.push({ text: "查看歌手", icon: "person", action: menu._openArtistPickerAction(artistIds, artistNames) })
+            items.push({ text: i18n.t("menu.viewArtist"), icon: "person", action: menu._openArtistPickerAction(artistIds, artistNames) })
         }
         if (player.loggedIn) {
             var pls = player.myPlaylists
@@ -88,28 +93,28 @@ Menu {
                 subs.push(menu._addItem(pls[i], songId))
             }
             if (subs.length > 0) {
-                items.push({ text: "添加到歌单", icon: "playlist_add", subItems: subs })
+                items.push({ text: i18n.t("menu.addToPlaylist"), icon: "playlist_add", subItems: subs })
             }
             if (menu.inOwnedPlaylist) {
-                items.push({ text: "从此歌单移除", icon: "playlist_remove", action: menu._removeAction(songId) })
+                items.push({ text: i18n.t("menu.removeFromPlaylist"), icon: "playlist_remove", action: menu._removeAction(songId) })
             }
         }
         // Custom "play later" list: local-only, works signed-out.
         if (player.isInCustomPlaylist(songId)) {
-            items.push({ text: "移出播放列表", icon: "playlist_remove", action: menu._removeCustomAction(songId) })
+            items.push({ text: i18n.t("menu.removeFromCustom"), icon: "playlist_remove", action: menu._removeCustomAction(songId) })
         } else {
-            items.push({ text: "加入播放列表", icon: "playlist_add", action: menu._addCustomAction(songId) })
+            items.push({ text: i18n.t("menu.addToCustom"), icon: "playlist_add", action: menu._addCustomAction(songId) })
         }
         // Cache the track's audio for offline replay when the provider permits it;
         // the bridge skips it with a toast if it is already cached.
-        // In the cached-songs list this flips to "删除缓存" instead.
+        // In the cached-songs list this flips to "remove cache" instead.
         if (menu.inCacheList) {
-            items.push({ text: "删除缓存", icon: "delete", action: menu._removeCacheAction(songId) })
+            items.push({ text: i18n.t("menu.removeCache"), icon: "delete", action: menu._removeCacheAction(songId) })
         } else {
-            items.push({ text: "缓存此歌曲", icon: "download", action: menu._cacheAction(songId) })
+            items.push({ text: i18n.t("menu.cacheSong"), icon: "download", action: menu._cacheAction(songId) })
         }
         // The source plugin owns share-link generation.
-        items.push({ text: "复制链接", icon: "link", action: menu._copyAction(songId) })
+        items.push({ text: i18n.t("menu.copyLink"), icon: "link", action: menu._copyAction(songId) })
         menu.model = items
     }
 

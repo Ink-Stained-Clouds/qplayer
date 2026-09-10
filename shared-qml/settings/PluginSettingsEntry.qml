@@ -29,22 +29,25 @@ SettingCard {
                 text: card.pluginData.name
             }
             SettingDesc {
-                text: card.pluginData.version
-                      + (card.pluginData.primary ? " · 主音源"
-                         : (card.pluginData.enabled ? " · 已启用" : " · 已停用"))
+                text: card.pluginData.version + " · "
+                      + i18n.t(card.pluginData.primary ? "plugin.entry.primary"
+                               : (card.pluginData.enabled ? "plugin.entry.enabled"
+                                  : "plugin.entry.disabled"))
             }
         }
 
         Button {
             type: "outlined"
             icon: "settings"
-            text: "设置"
+            text: i18n.t("plugin.entry.settings")
             onClicked: player.requestPluginSettings(card.pluginData.id)
         }
     }
 
     SettingDesc {
-        text: "权限：" + (card.pluginData.permissions.length > 0
-              ? card.pluginData.permissions : "无额外权限")
+        text: i18n.t("plugin.entry.permissions",
+                     card.pluginData.permissions.length > 0
+                     ? card.pluginData.permissions
+                     : i18n.t("plugin.entry.noPermissions"))
     }
 }

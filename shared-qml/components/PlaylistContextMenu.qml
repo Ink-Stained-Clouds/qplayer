@@ -2,7 +2,7 @@ import QtQuick
 import md3.Core
 import "."
 
-// Context actions that are valid for playlist cards from both 推荐 and 我的.
+// Context actions that are valid for playlist cards on both home and library.
 // The model is populated only while opening, keeping a grid of cards cheap while
 // idle and ensuring every closure captures the current playlist id.
 Menu {
@@ -19,10 +19,10 @@ Menu {
             return
         }
         menu.model = [
-            { text: "立即播放", icon: "play_arrow", action: menu._playAction(pid) },
-            { text: "打开歌单", icon: "queue_music", action: menu._openAction() },
+            { text: i18n.t("menu.playNow"), icon: "play_arrow", action: menu._playAction(pid) },
+            { text: i18n.t("menu.openPlaylist"), icon: "queue_music", action: menu._openAction() },
             { type: "separator" },
-            { text: "复制链接", icon: "link", action: menu._copyAction(pid) }
+            { text: i18n.t("menu.copyLink"), icon: "link", action: menu._copyAction(pid) }
         ]
     }
 

@@ -24,7 +24,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        SettingTitle { text: row.spec ? row.spec.title : "" }
+        SettingTitle { text: row.spec ? i18n.t(row.spec.title) : "" }
         Text {
             text: row.displayValue(valueSlider.value)
             color: Theme.color.onSurfaceColor
@@ -49,5 +49,5 @@ ColumnLayout {
         }
     }
 
-    SettingDesc { text: row.spec ? row.spec.desc : "" }
+    SettingDesc { text: row.spec ? i18n.t(row.spec.desc) : "" }
 }

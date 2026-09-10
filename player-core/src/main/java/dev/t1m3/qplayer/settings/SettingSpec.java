@@ -22,7 +22,7 @@ public final class SettingSpec {
     public static final String STEPPER = "stepper";      // int with -/+ buttons
     public static final String SLIDER = "slider";        // int selected on a slider
     public static final String SEGMENTED = "segmented";  // int index over `options`
-    public static final String TEXT = "text";            // string + 应用 button
+    public static final String TEXT = "text";            // string + apply button
     public static final String PATH = "path";            // string chosen by the host directory picker
     public static final String RADIO = "radio";          // int index as radio buttons
     public static final String DROPDOWN = "dropdown";    // int index in a combo box

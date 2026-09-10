@@ -11,6 +11,26 @@ Item {
     property string type: "primary" // "primary" or "secondary"
     onCurrentIndexChanged: tabBar.updateIndicator(false)
     
+    // Labels shrink (and, past that, elide) rather than spill out of their tab:
+    // an equal-width tab row has no room to spare, and a translated label is
+    // routinely much longer than the one it replaced.
+    readonly property string _longestLabel: {
+        var out = ""
+        for (var i = 0; i < model.length; i++) {
+            var label = model[i].text || ""
+            if (label.length > out.length) out = label
+        }
+        return out
+    }
+    readonly property real _labelScale: {
+        var count = model.length
+        if (count <= 0) return 1
+        var perTab = root.width / count - 8
+        var natural = labelProbe.implicitWidth
+        if (perTab <= 0 || natural <= 0 || natural <= perTab) return 1
+        return Math.max(0.72, perTab / natural)
+    }
+
     // Internal property to detect if any item has an icon (for Primary Tabs height)
     property bool _hasIcon: {
         for (var i = 0; i < model.length; i++) {
@@ -32,6 +52,16 @@ Item {
         height: (root.type === "primary" && root._hasIcon) ? 72 : 48
         color: Theme.color.surface
         
+        // Measured at the base size so the scale it feeds cannot feed back into it.
+        Text {
+            id: labelProbe
+            visible: false
+            text: root._longestLabel
+            font.family: Theme.typography.titleSmall.family
+            font.pixelSize: Theme.typography.titleSmall.size
+            font.weight: Theme.typography.titleSmall.weight
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
@@ -75,9 +105,13 @@ Item {
                         // Label
                         Text {
                             Layout.alignment: Qt.AlignHCenter
+                            Layout.maximumWidth: Math.max(0, tabItem.width - 8)
                             text: itemData.text || ""
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
                             font.family: Theme.typography.titleSmall.family
-                            font.pixelSize: Theme.typography.titleSmall.size
+                            font.pixelSize: Math.round(
+                                Theme.typography.titleSmall.size * root._labelScale)
                             font.weight: Theme.typography.titleSmall.weight
                             color: tabItem.selected ? Theme.color.primary : Theme.color.onSurfaceVariantColor
                         }

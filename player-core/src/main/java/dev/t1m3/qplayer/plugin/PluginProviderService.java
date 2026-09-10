@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.plugin;
 
 import dev.t1m3.qplayer.media.Album;
+import dev.t1m3.qplayer.media.HomeSection;
 import dev.t1m3.qplayer.media.LyricsPayload;
 import dev.t1m3.qplayer.media.MediaId;
 import dev.t1m3.qplayer.media.MediaKind;
@@ -325,6 +326,21 @@ public final class PluginProviderService {
                 home.playlists.add(parsePlaylist(provider, map(item, "playlist")));
             }
         }
+        Object sections = value.get("sections");
+        if (sections instanceof List) {
+            for (Object item : boundedList(sections, "home sections", 6)) {
+                Map<String, Object> object = map(item, "home section");
+                HomeSection section = new HomeSection();
+                section.title = boundedString(object.get("title"), MAX_LABEL_CHARS,
+                        "home section title", false);
+                for (Object entry : boundedList(object.get("playlists"),
+                        "home section playlists", 30)) {
+                    section.playlists.add(parsePlaylist(provider, map(entry, "playlist")));
+                }
+                // A titled group with nothing in it is only chrome.
+                if (!section.playlists.isEmpty()) home.sections.add(section);
+            }
+        }
         return home;
     }
 
@@ -350,6 +366,17 @@ public final class PluginProviderService {
         return page;
     }
 
+    /**
+     * A source's small artwork variant, when it has one. List rows draw at ~48dp
+     * but the full-size cover is routinely a megapixel JPEG, and every visible row
+     * fetches and decodes one while scrolling. Falls back to the full URL, and is
+     * held to the same network grant.
+     */
+    private String artworkThumb(String provider, Map<String, Object> object, String full) {
+        String thumb = allowedUrl(provider, optionalString(object.get("artworkThumbUrl")));
+        return thumb.isEmpty() ? full : thumb;
+    }
+
     private Song parseSong(String provider, Map<String, Object> object) {
         Song song = new Song();
         song.id = qualify(provider, MediaKind.SONG, object.get("id"));
@@ -359,7 +386,7 @@ public final class PluginProviderService {
                 31L * 24L * 60L * 60L * 1000L, "song.durationMs");
         song.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         song.coverUrl = song.artworkUrl;
-        song.coverThumbPath = song.artworkUrl;
+        song.coverThumbPath = artworkThumb(provider, object, song.artworkUrl);
         song.isrc = optionalString(object.get("isrc"));
         song.playable = !Boolean.FALSE.equals(object.get("playable"));
         song.trial = Boolean.TRUE.equals(object.get("trial"));
@@ -368,20 +395,30 @@ public final class PluginProviderService {
         if (artists instanceof List) {
             for (Object rawArtist : boundedList(artists, "song artists", 64)) {
                 Map<String, Object> artist = map(rawArtist, "song.artist");
+                // A credit carrying no display name is nothing the UI can show, and
+                // real catalogs do contain them (cloud-disk uploads, delisted or
+                // merged artists). Dropping that one credit keeps the rest of an
+                // otherwise valid playlist/album openable, which rejecting the whole
+                // response would not.
+                String name = boundedString(artist.get("name"), MAX_LABEL_CHARS,
+                        "artist.name", false);
+                if (name.isEmpty()) continue;
                 song.artists.add(new MediaRef(
-                        qualify(provider, MediaKind.ARTIST, artist.get("id")),
-                        boundedString(artist.get("name"), MAX_LABEL_CHARS,
-                                "artist.name", true)));
+                        qualify(provider, MediaKind.ARTIST, artist.get("id")), name));
             }
         }
         populateSongArtistAliases(song);
         Object rawAlbum = object.get("album");
         if (rawAlbum instanceof Map) {
             Map<String, Object> album = map(rawAlbum, "song.album");
-            song.album = new MediaRef(
-                    qualify(provider, MediaKind.ALBUM, album.get("id")),
-                    boundedString(album.get("name"), MAX_LABEL_CHARS,
-                            "album.name", true));
+            // Same rule as the credits above: an unnamed album reference is left
+            // unset (the field is optional anyway) instead of failing the song.
+            String albumName = boundedString(album.get("name"), MAX_LABEL_CHARS,
+                    "album.name", false);
+            if (!albumName.isEmpty()) {
+                song.album = new MediaRef(
+                        qualify(provider, MediaKind.ALBUM, album.get("id")), albumName);
+            }
         }
         return song;
     }
@@ -395,7 +432,7 @@ public final class PluginProviderService {
                 MAX_DESCRIPTION_CHARS, "playlist.description", false);
         playlist.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         playlist.coverUrl = playlist.artworkUrl;
-        playlist.coverThumbPath = playlist.artworkUrl;
+        playlist.coverThumbPath = artworkThumb(provider, object, playlist.artworkUrl);
         playlist.trackCount = boundedLong(object.get("trackCount"), 0L,
                 Long.MAX_VALUE, "playlist.trackCount");
         playlist.playCount = boundedLong(object.get("playCount"), 0L,
@@ -429,7 +466,7 @@ public final class PluginProviderService {
                 "album.name", true);
         album.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         album.coverUrl = album.artworkUrl;
-        album.coverThumbPath = album.artworkUrl;
+        album.coverThumbPath = artworkThumb(provider, object, album.artworkUrl);
         album.publishTimeMs = longValue(object.get("publishTimeMs"), 0L);
         album.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "album.description", false);
@@ -438,9 +475,11 @@ public final class PluginProviderService {
         if (object.get("artists") instanceof List) {
             for (Object item : boundedList(object.get("artists"), "album artists", 64)) {
                 Map<String, Object> artist = map(item, "album.artist");
-                album.artists.add(new MediaRef(qualify(provider, MediaKind.ARTIST, artist.get("id")),
-                        boundedString(artist.get("name"), MAX_LABEL_CHARS,
-                                "artist.name", true)));
+                String name = boundedString(artist.get("name"), MAX_LABEL_CHARS,
+                        "artist.name", false);
+                if (name.isEmpty()) continue;
+                album.artists.add(new MediaRef(
+                        qualify(provider, MediaKind.ARTIST, artist.get("id")), name));
             }
         }
         if (!album.artists.isEmpty()) {
@@ -462,7 +501,7 @@ public final class PluginProviderService {
                 "artist.name", true);
         artist.artworkUrl = allowedUrl(provider, optionalString(object.get("artworkUrl")));
         artist.coverUrl = artist.artworkUrl;
-        artist.coverThumbPath = artist.artworkUrl;
+        artist.coverThumbPath = artworkThumb(provider, object, artist.artworkUrl);
         artist.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "artist.description", false);
         artist.albumCount = (int) boundedLong(object.get("albumCount"), 0L,

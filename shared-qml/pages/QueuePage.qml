@@ -40,8 +40,10 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
                 text: page.showCustom
-                    ? ("播放列表 (" + (player.customPlaylistTracks ? player.customPlaylistTracks.length : 0) + ")")
-                    : ("播放队列 (" + (player.queueTracks ? player.queueTracks.length : 0) + ")")
+                    ? i18n.t("queue.custom.count",
+                             player.customPlaylistTracks ? player.customPlaylistTracks.length : 0)
+                    : i18n.t("queue.count",
+                             player.queueTracks ? player.queueTracks.length : 0)
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.titleLarge.family
                 font.pixelSize: Theme.typography.titleLarge.size
@@ -55,8 +57,8 @@ Rectangle {
             Layout.rightMargin: 16
             Layout.bottomMargin: 8
             buttons: [
-                { text: "播放队列", selected: !page.showCustom },
-                { text: "播放列表", selected: page.showCustom }
+                { text: i18n.t("queue.tab.queue"), selected: !page.showCustom },
+                { text: i18n.t("queue.tab.custom"), selected: page.showCustom }
             ]
             onClicked: page.showCustom = (index === 1)
         }

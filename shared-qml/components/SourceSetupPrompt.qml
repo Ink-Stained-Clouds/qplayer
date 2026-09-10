@@ -16,7 +16,7 @@ Rectangle {
 
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "需要先配置音源"
+            text: i18n.t("source.prompt.title")
             color: Theme.color.onSurfaceVariantColor
             fontSize: 15
         }
@@ -25,7 +25,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             type: "filledTonal"
             icon: "extension"
-            text: "配置音源"
+            text: i18n.t("source.prompt.button")
             onClicked: player.requestSourceSetup()
         }
     }

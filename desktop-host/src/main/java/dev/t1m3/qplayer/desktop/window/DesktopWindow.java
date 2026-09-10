@@ -269,6 +269,7 @@ public final class DesktopWindow {
             v.networkPolicy(controller::allowRemoteQmlResource);
         }
         if (settings != null) v.context("settings", settings);
+        v.context("i18n", dev.t1m3.qplayer.i18n.I18n.instance());
         // hostWindow must always be registered, even on mac/Linux where there's no
         // custom title bar -- qml4j's compiler rejects an undeclared top-level
         // identifier at compile time, so shared-qml can't just have it be absent

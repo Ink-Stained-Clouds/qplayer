@@ -79,15 +79,15 @@ Rectangle {
         return out
     }
     function footerActions() {
-        var out = [{ action: "download", icon: "download", text: "已下载" }]
+        var out = [{ action: "download", icon: "download", text: i18n.t("nav.downloaded") }]
         for (var i = 0; i < app.playerPluginActions.length; i++) {
             var item = app.playerPluginActions[i]
             out.push({ action: "plugin", icon: item.icon, text: item.label,
                        pluginId: item.pluginId, contributionId: item.id })
         }
         out.push({ action: "account", icon: player.loggedIn ? "account_circle" : "login",
-                   text: player.loggedIn ? "账户" : "登录" })
-        out.push({ action: "settings", icon: "settings", text: "设置" })
+                   text: i18n.t(player.loggedIn ? "account.title" : "nav.signIn") })
+        out.push({ action: "settings", icon: "settings", text: i18n.t("nav.settings") })
         return out
     }
     // openArtist/openAlbum are called from reusable child components that cannot
@@ -134,7 +134,8 @@ Rectangle {
     // owner repeated right-clicks can leave every row's overlay open at once.
     property var activeMenu: null
 
-    property var titles: ["推荐", "搜索", "我的", "本地"]
+    property var titles: [i18n.t("nav.home"), i18n.t("nav.search"),
+                          i18n.t("nav.library"), i18n.t("nav.local")]
     property bool showLocalTab: settings.value("showLocalTab")
     onShowLocalTabChanged: {
         if (!showLocalTab && app.page === 3) app.switchTo(0)
@@ -156,15 +157,15 @@ Rectangle {
     // Shared nav model for both the bottom bar and the rail.
     property var navItems: showLocalTab
         ? [
-            { icon: "recommend",     text: "推荐" },
-            { icon: "search",        text: "搜索" },
-            { icon: "library_music", text: "我的" },
-            { icon: "folder",        text: "本地" }
+            { icon: "recommend",     text: i18n.t("nav.home") },
+            { icon: "search",        text: i18n.t("nav.search") },
+            { icon: "library_music", text: i18n.t("nav.library") },
+            { icon: "folder",        text: i18n.t("nav.local") }
           ]
         : [
-            { icon: "recommend",     text: "推荐" },
-            { icon: "search",        text: "搜索" },
-            { icon: "library_music", text: "我的" }
+            { icon: "recommend",     text: i18n.t("nav.home") },
+            { icon: "search",        text: i18n.t("nav.search") },
+            { icon: "library_music", text: i18n.t("nav.library") }
           ]
 
     // Rebuild the debug log string only while it's actually shown (its set() forces a
@@ -188,10 +189,7 @@ Rectangle {
         // An unreadable credential envelope requires an explicit decision. Letting
         // outside click / Android back dismiss it would leave the app in an unclear
         // half-logged-in state with no path to retry or start over.
-        if ((credentialNoticeDialog.opened && player.credentialNoticeType === 3)
-                || credentialFallbackConfirmDialog.opened
-                || credentialReloginUnavailableDialog.opened
-                || pluginDialogs.handleBack()) return;
+        if (credentialDialogs.handleBack() || pluginDialogs.handleBack()) return;
         if (player.songArtistPickerOpen) { player.closeSongArtistPicker(); return; }
         if (app.showLog)            { app.showLog = false; return; }
         if (app.loginOpen)          { app.loginOpen = false; return; }
@@ -400,6 +398,7 @@ Rectangle {
         if (idx === 3) app.localLoaded = true
         app.nextPage = idx;
         if (idx === 2) player.loadMyPlaylists();
+        rootPageMotion.direction = idx > app.page ? 1 : -1;
         rootPageMotion.transition();
     }
 
@@ -447,7 +446,7 @@ Rectangle {
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         currentIndex: app.page
         model: app.navItems
-        sectionLabel: "导航"
+        sectionLabel: i18n.t("nav.section")
         onItemClicked: app.switchTo(index)
 
         // Rail header: the app mark in the top-left corner, which only the wide
@@ -465,9 +464,9 @@ Rectangle {
         property bool showRailBrand: !hostWindow.available
 
         header: Item {
-            // 桌面端：标题栏已遮挡 topInset 区域，header 只需 topInset 即可
-            // （0~topInset 被标题栏遮挡不可见，导航项从 topInset+12 开始）
-            // 移动端：需要额外 64px 给 Logo
+            // Desktop: the title bar already covers the topInset area, so the
+            // header only needs topInset (items start at topInset + 12).
+            // Mobile: 64px more for the logo.
             implicitHeight: rail.showRailBrand ? (64 + settings.topInset) : settings.topInset
 
             Image {
@@ -522,8 +521,8 @@ Rectangle {
                     width: 32
                     height: 32
                     anchors.verticalCenter: parent.verticalCenter
-                    // 与 rail header 的 logo 一致：扩展时左对齐，收起时居中，
-                    // 而不是固定在居中偏左的位置。
+                    // Same as the rail header logo: left-aligned when expanded,
+                    // centred when collapsed, rather than pinned off-centre.
                     x: app.expanded ? 24 : (parent.width - width) / 2
                     Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                     source: "app-icon.png"
@@ -714,7 +713,11 @@ Rectangle {
             // In without the route inheriting its underlay's transform.
             Item {
                 id: rootPages
-                anchors.fill: parent
+                // Sized, not anchored: anchors.fill pins x/y at 0 and silently
+                // beats the motion bindings, which left every sliding preset
+                // looking like a plain cross-fade here.
+                width: parent.width
+                height: parent.height
                 x: rootPageMotion.contentX
                 y: rootPageMotion.contentY
                 scale: rootPageMotion.contentScale
@@ -943,130 +946,14 @@ Rectangle {
     PluginUpdateDialog { id: pluginUpdateDialog }
     AppUpdateDialog { id: appUpdateDialog }
 
-    Dialog {
-        id: graphicsFallbackDialog
-        title: "图形后端回退"
-        icon: "warning"
-        text: "Vulkan 图形后端初始化失败，QPlayer 已自动使用 OpenGL 继续运行，并已更新设置。"
-        acceptText: "知道了"
-        showRejectButton: false
-        Component.onCompleted: {
-            if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
-        }
-    }
-
-    Dialog {
-        id: credentialNoticeDialog
-        title: player.credentialNoticeType === 1
-            ? "登录凭据保护已启用"
-            : (player.credentialNoticeType === 2
-                ? "系统密钥库不可用" : "无法读取登录凭据")
-        icon: player.credentialNoticeType === 1 ? "verified_user" : "warning"
-        text: player.credentialNoticeType === 1
-            ? "您的登录凭据已加密，并由系统密钥库保护。"
-            : (player.credentialNoticeType === 2
-                ? "无法使用系统密钥库，登录凭据已回退到仅当前用户可读的本地密钥保护。此模式的安全性低于系统密钥库，请确保本机账户和文件权限安全。"
-                : "系统密钥库未能及时返回解密密钥，可能尚未解锁。QPlayer 已中断凭据恢复以避免阻塞启动，现有密文和密钥均未被重置。请先解锁系统密钥库（Linux 上为 KWallet/Keyring）后重试；也可以清除旧凭据后重新登录并继续使用系统加密，或回退普通加密。")
-        rejectText: "回退普通加密"
-        rejectIcon: player.credentialNoticeType === 3 ? "warning" : ""
-        showRejectButton: player.credentialNoticeType === 3
-        neutralText: "重新登录并加密"
-        showNeutralButton: player.credentialNoticeType === 3
-        closeOnScrim: player.credentialNoticeType !== 3
-        acceptText: player.credentialNoticeType === 3 ? "重试" : "知道了"
-        onAccepted: {
-            if (player.credentialNoticeType === 3) player.retryCredentialUnlock()
-        }
-        onRejected: {
-            if (player.credentialNoticeType === 3) {
-                fallbackConfirmOpenTimer.restart()
-            }
-        }
-        onNeutral: {
-            if (player.credentialNoticeType === 3) player.prepareEncryptedRelogin()
-        }
-    }
-
-    Dialog {
-        id: credentialReloginUnavailableDialog
-        title: "系统密钥库仍不可用"
-        icon: "warning"
-        text: "QPlayer 无法在登录前访问系统密钥库，因此没有清除现有登录凭据，也没有进入登录界面。请先解锁系统密钥库（Linux 上为 KWallet/Keyring），返回后再重试。"
-        acceptText: "返回"
-        showRejectButton: false
-        closeOnScrim: false
-        onAccepted: credentialNoticeRestoreTimer.restart()
-    }
-
-    Dialog {
-        id: credentialFallbackConfirmDialog
-        title: "确认回退普通加密"
-        icon: "warning"
-        text: "系统密钥库当前无法解锁现有登录凭据。继续后，这份不可解密的登录凭据将被清除，QPlayer 会永久切换为仅当前用户可读的本地密钥保护；其安全性低于系统密钥库。"
-        acceptText: "继续回退"
-        rejectText: "取消"
-        closeOnScrim: false
-        onAccepted: {
-            if (player.fallbackCredentialsToOwnerOnly()) {
-                fallbackLoginOpenTimer.restart()
-            }
-        }
-        onRejected: credentialNoticeRestoreTimer.restart()
-    }
-
-    // Dialog emits accepted/rejected before its 100 ms exit animation finishes.
-    // Delay the next modal so two full-screen scrims never race for the same root.
-    Timer {
-        id: fallbackConfirmOpenTimer
-        interval: 130
-        repeat: false
-        onTriggered: credentialFallbackConfirmDialog.open()
-    }
-    Timer {
-        id: credentialNoticeRestoreTimer
-        interval: 130
-        repeat: false
-        onTriggered: credentialNoticeDialog.open()
-    }
-    Timer {
-        id: fallbackLoginOpenTimer
-        interval: 130
-        repeat: false
-        onTriggered: app.loginOpen = true
-    }
-    Timer {
-        id: encryptedReloginOpenTimer
-        interval: 130
-        repeat: false
-        onTriggered: app.loginOpen = true
-    }
-    Timer {
-        id: encryptedReloginUnavailableOpenTimer
-        interval: 130
-        repeat: false
-        onTriggered: credentialReloginUnavailableDialog.open()
-    }
-
-    property real credentialReloginWatch: player.credentialReloginRevision
-    onCredentialReloginWatchChanged: {
-        if (player.credentialReloginRevision <= 0) return
-        if (player.credentialReloginResult === 1) encryptedReloginOpenTimer.restart()
-        else encryptedReloginUnavailableOpenTimer.restart()
-    }
-
-    property real credentialNoticeWatch: player.credentialNoticeRevision
-    onCredentialNoticeWatchChanged: {
-        if (player.credentialNoticeRevision > 0) credentialNoticeDialog.open()
-    }
-
-    property bool graphicsFallbackWatch: settings.graphicsFallbackNotice
-    onGraphicsFallbackWatchChanged: {
-        if (settings.graphicsFallbackNotice) graphicsFallbackDialog.open()
+    CredentialDialogs {
+        id: credentialDialogs
+        onRequestLogin: app.loginOpen = true
     }
 
     // In-app update download progress, driven by the host (-1 idle, 0..100, -2 fail).
     property int updateProgWatch: player.updateProgress
-    onUpdateProgWatchChanged: if (player.updateProgress === -2) app.showToast("更新下载失败，请稍后重试")
+    onUpdateProgWatchChanged: if (player.updateProgress === -2) app.showToast(i18n.t("update.downloadFailed"))
 
     Rectangle {
         visible: player.updateProgress >= 0 && player.updateProgress < 100
@@ -1081,7 +968,7 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
             anchors.topMargin: 14
-            text: "正在下载更新… " + player.updateProgress + "%"
+            text: i18n.t("update.downloading", player.updateProgress)
             color: Theme.color.onSurfaceColor
             fontSize: 14
         }
@@ -1144,7 +1031,7 @@ Rectangle {
                 spacing: 4
                 Text {
                     Layout.fillWidth: true
-                    text: "日志"
+                    text: i18n.t("log.title")
                     color: Theme.color.onSurfaceColor
                     fontSize: 18
                 }

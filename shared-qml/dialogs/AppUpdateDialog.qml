@@ -19,11 +19,11 @@ Item {
 
     Dialog {
         id: dialog
-        title: "发现新版本"
+        title: i18n.t("update.app.title")
         icon: "system_update"
-        text: "新版本 " + player.updateVersion + " 现已发布"
-        acceptText: "立即更新"
-        rejectText: "稍后"
+        text: i18n.t("update.app.body", player.updateVersion)
+        acceptText: i18n.t("update.now")
+        rejectText: i18n.t("update.later")
         onAccepted: player.startUpdateDownload()
         // Releases the host's hold on the plugin-update prompt: only one update
         // dialog is ever on screen, and the app's own goes first.

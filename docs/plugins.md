@@ -95,7 +95,7 @@ Each advertised capability maps to a same-named handler:
 | `searchSongs` | `{query,cursor,limit}` → page of songs |
 | `searchAlbums`, `searchArtists` | query page |
 | `hotSearch` | array of strings |
-| `home` | `{limit}` → `{songs,playlists}` |
+| `home` | `{limit}` → `{songs,playlists,sections}` |
 | `songDetails` | `{ids}` → songs |
 | `playlistDetails` | `{id}` → playlist with songs |
 | `artistDetails`, `albumDetails` | `{id}` → detail with songs/albums |
@@ -105,10 +105,22 @@ Each advertised capability maps to a same-named handler:
 | `account` | account profile |
 | `login` | operation `methods`, `begin`, `poll`, `submit`, or `logout` |
 | `like` | operation `list` or `set` |
-| `playlistMutation` | `add`, `remove`, `subscribe`, `delete`, or `create` |
+| `playlistMutation` | `add`, `remove`, `subscribe`, `unsubscribe`, `delete`, or `create` |
 | `scrobble` | playback report |
 | `heartRecommendation` | seed song and optional playlist → songs |
 | `share` | canonical entity → share URL/text |
+
+`home` may also return `sections`: up to 6 `{title, playlists}` groups (30
+playlists each) drawn above the plain recommendation grid, for lists a source
+treats as their own shelf — NetEase's radar playlists, for instance — instead of
+burying them in the generic recommendations. The `limit` argument bounds only the
+plain `playlists` list and follows the user's home-page setting.
+
+Songs, playlists, albums and artists may carry `artworkThumbUrl` next to
+`artworkUrl`: the same artwork at list-row size. List rows are ~48dp while a
+cover is routinely a megapixel JPEG, and without it every row fetched and decoded
+the full one while scrolling. It is held to the same network grant and falls back
+to `artworkUrl`.
 
 The host validates response sizes, entity kinds, canonical ownership, URL grants,
 pagination bounds, lyric size, headers, and enum values. See the source-neutral
@@ -195,12 +207,16 @@ return {
 | `text` | `text`, `style` (`title`/`body`/`caption`), `center` |
 | `error` | `text` |
 | `input` | `id`, `placeholder`, `value`, `secret` |
+| `switch` | `id`, `label`, `desc`, `checked`, `enabled` |
 | `button` | `id`, `label`, `style` (`filled`/`outlined`/`text`), `enabled`, `destructive` |
 | `row` | `items`: 1-3 buttons, no nesting |
 | `spacer` | `height` 0-48 |
 
 At most 10 body nodes. Ids match `[a-z][a-z0-9._-]{0,63}` and must be unique per
-input. The whole description is validated before it reaches the UI, and an
+input. A `switch` is an input as well as an action: flipping it submits its own
+id, and its new state arrives in `payload.inputs[id]` as a boolean, alongside
+every other input and switch on the dialog. Use it for on/off state instead of a
+pair of buttons — the host draws it exactly like its own settings rows. The whole description is validated before it reaches the UI, and an
 off-schema field fails the entire reply rather than being dropped, so a plugin
 cannot probe for which malformed shapes survive. There are deliberately no
 colors, images, raw markup or geometry: a plugin describes a dialog, it does not

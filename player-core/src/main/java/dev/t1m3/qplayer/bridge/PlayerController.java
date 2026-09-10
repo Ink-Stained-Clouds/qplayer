@@ -21,6 +21,8 @@ import dev.t1m3.qplayer.media.LoginMethod;
 import dev.t1m3.qplayer.media.MediaId;
 import dev.t1m3.qplayer.media.Page;
 import dev.t1m3.qplayer.media.Playlist;
+import dev.t1m3.qplayer.i18n.I18n;
+import dev.t1m3.qplayer.media.HomeSection;
 import dev.t1m3.qplayer.media.ProviderHome;
 import dev.t1m3.qplayer.media.Song;
 import dev.t1m3.qplayer.media.StreamDescriptor;
@@ -238,7 +240,13 @@ public final class PlayerController {
             java.util.Collections.synchronizedMap(new HashMap<String, Integer>());
     private final Queue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> likedSet = new HashSet<>();
+    /** Union of every signed-in source's liked songs, keyed by canonical id. The ids
+     *  carry their provider, so a lookup is inherently scoped to the song's own
+     *  source even while another source is primary. */
     private final Set<String> pluginLikedSet = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Per-source slices behind {@link #pluginLikedSet}, so one source signing out or
+     *  failing to answer only drops its own ids. Main thread only. */
+    private final Map<String, Set<String>> pluginLikedBySource = new LinkedHashMap<>();
     private final Random rng = new Random();
 
     // Playback control runs on the host's main thread (always alive — unlike the GL
@@ -581,6 +589,13 @@ public final class PlayerController {
             new Property<>(Collections.<Song>emptyList());
     public final Property<List<Playlist>> sourceRecommendPlaylists =
             new Property<>(Collections.<Playlist>emptyList());
+    /** Titled playlist groups the source wants drawn above the plain grid, e.g.
+     *  NetEase's radar lists. Each carries the range it occupies in
+     *  {@link #sourceSectionPlaylists}: QML positions cards from one flat list. */
+    public final Property<List<HomeSection>> sourceHomeSections =
+            new Property<>(Collections.<HomeSection>emptyList());
+    public final Property<List<Playlist>> sourceSectionPlaylists =
+            new Property<>(Collections.<Playlist>emptyList());
     /** True while {@link #loadHome} is in flight — lets HomePage.qml tell "still
      *  loading" from "tried and failed" (both look like empty lists otherwise) so
      *  it can show a tap-to-retry affordance instead of a permanent spinner. */
@@ -593,7 +608,11 @@ public final class PlayerController {
             new Property<>(Collections.<Playlist>emptyList());
     public final Property<List<Song>> sourceRecentSongs =
             new Property<>(Collections.<Song>emptyList());
+    /** Whether the primary source can create playlists (drives 我的's new-playlist
+     *  action, which necessarily targets one source). */
     public final Property<Boolean> sourcePlaylistMutationAvailable = new Property<>(false);
+    /** Whether the source of the playlist currently open supports heart
+     *  recommendations — not the primary one, since 我的 lists several sources. */
     public final Property<Boolean> sourceHeartRecommendationAvailable = new Property<>(false);
     /** Currently opened playlist. */
     public final Property<List<NeteaseSong>> playlistTracks = new Property<>(Collections.<NeteaseSong>emptyList());
@@ -722,17 +741,19 @@ public final class PlayerController {
     public final Property<Integer> likedCount = new Property<>(0);
     public final Property<Integer> playlistCount = new Property<>(0);
     /** Standardized login metadata for the current primary source. */
-    public final Property<String> loginProviderName = new Property<>("音源账号");
+    public final Property<String> loginProviderName =
+            new Property<>(I18n.tr("login.defaultProvider"));
     public final Property<Boolean> pluginLoginActive = new Property<>(false);
     public final Property<List<LoginMethod>> loginMethods =
             new Property<>(Collections.<LoginMethod>emptyList());
     public final Property<Boolean> pluginQrLoginAvailable = new Property<>(false);
     public final Property<Boolean> pluginCredentialLoginAvailable = new Property<>(false);
-    public final Property<String> loginWebInstructions = new Property<>(
-            "将在系统 WebView 中打开官方网站。登录成功后，QPlayer 会自动读取登录凭据、验证账号并加密保存。");
-    public final Property<String> loginCredentialInstructions = new Property<>(
-            "在官方网站登录后，复制请求头中的 Cookie 值并粘贴到下方。凭据仅用于验证，成功后会加密保存。");
-    public final Property<String> loginCredentialLabel = new Property<>("Cookie 请求头");
+    public final Property<String> loginWebInstructions =
+            new Property<>(I18n.tr("login.web.instructions"));
+    public final Property<String> loginCredentialInstructions =
+            new Property<>(I18n.tr("login.credential.instructions"));
+    public final Property<String> loginCredentialLabel =
+            new Property<>(I18n.tr("login.credential.label"));
 
     /** Generic plugin playback coordination; no protocol or provider semantics. */
     private volatile String pluginAutoAdvanceBlocker = "";
@@ -760,6 +781,7 @@ public final class PlayerController {
     /** Discard home/account results of a source that is no longer the primary one. */
     private final AtomicLong homeGeneration = new AtomicLong();
     private final AtomicLong accountGeneration = new AtomicLong();
+    private final AtomicLong pluginLikedGeneration = new AtomicLong();
 
     /** Sets {@link #toast} to {@code msg}, forcing a Snackbar even if it's the
      *  exact same text as last time. qml4j's property-changed notification
@@ -885,7 +907,7 @@ public final class PlayerController {
                 else pluginManager.disable(pluginId);
                 post(this::publishPlugins);
             } catch (Throwable error) {
-                showToast("插件状态更新失败：" + error.getMessage());
+                showToast(I18n.tr("toast.plugin.stateFailed", error.getMessage()));
             }
         });
     }
@@ -896,7 +918,7 @@ public final class PlayerController {
                 pluginRegistry.setPrimaryProvider(pluginId);
                 post(this::publishPlugins);
             } catch (Throwable error) {
-                showToast("无法切换主音源：" + error.getMessage());
+                showToast(I18n.tr("toast.plugin.primaryFailed", error.getMessage()));
             }
         });
     }
@@ -909,12 +931,12 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 PluginRegistry.Entry entry = pluginRegistry.get(pluginId);
-                if (entry == null) throw new IllegalArgumentException("音源插件尚未安装");
+                if (entry == null) throw new IllegalArgumentException(I18n.tr("toast.plugin.notInstalled"));
                 if (!entry.enabled) pluginManager.enable(pluginId);
                 pluginRegistry.setPrimaryProvider(pluginId);
                 post(this::publishPlugins);
             } catch (Throwable error) {
-                showToast("无法启用音源插件：" + safeMessage(error));
+                showToast(I18n.tr("toast.plugin.enableFailed", safeMessage(error)));
             }
         });
     }
@@ -945,10 +967,10 @@ public final class PlayerController {
                     pluginInstallBusy.set(false);
                     publishPlugins();
                 });
-                showToast("音源插件已移除");
+                showToast(I18n.tr("toast.plugin.removed"));
             } catch (Throwable error) {
                 post(() -> pluginInstallBusy.set(false));
-                showToast("移除插件失败：" + safeMessage(error));
+                showToast(I18n.tr("toast.plugin.removeFailed", safeMessage(error)));
             }
         });
     }
@@ -986,18 +1008,19 @@ public final class PlayerController {
                 ProviderCapability.PLAYLIST_MUTATION) != null);
         sourceHeartRecommendationAvailable.set(primaryProviderWith(
                 ProviderCapability.HEART_RECOMMENDATION) != null);
-        pluginLikedSet.clear();
-        currentLiked.set(false);
         routeInstalledPluginTracks();
         refreshPrimaryPluginLoginMetadata();
-        // The enabled set may have changed (enable/disable/remove), so 我的 has to be
-        // re-aggregated even when the primary source stayed the same.
+        // The enabled set may have changed (enable/disable/remove), so 我的 and the
+        // liked sets have to be re-aggregated even when the primary source stayed
+        // the same.
         loadMyPlaylists();
+        refreshPluginLiked();
         if (!primary.isEmpty()) loadHome();
     }
 
     /** Reset everything published on behalf of the source that is no longer primary. */
     private void clearSourceScopedContent() {
+        clearHomeSections();
         sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
         sourceRecommendations.set(Collections.<Song>emptyList());
         sourceRecentSongs.set(Collections.<Song>emptyList());
@@ -1015,9 +1038,6 @@ public final class PlayerController {
         userVipType.set(0);
         userLevel.set(0);
         userSignature.set("");
-        pluginLikedSet.clear();
-        likedCount.set(0);
-        currentLiked.set(false);
     }
 
     /** Open the app-wide source setup flow from Home or any future empty state. */
@@ -1331,7 +1351,7 @@ public final class PlayerController {
             } catch (Throwable error) {
                 post(() -> pluginCatalogLoading.set(false));
                 Logger.warn("plugin release lookup failed: {}", error.getMessage());
-                showToast("获取插件列表失败");
+                showToast(I18n.tr("toast.plugin.catalogFailed"));
             }
         });
     }
@@ -1342,7 +1362,7 @@ public final class PlayerController {
         for (PluginCatalogEntry entry : pluginCatalogEntries.peek()) {
             if (pluginId.equals(entry.id)) { selected = entry; break; }
         }
-        if (selected == null) { showToast("插件列表中不存在该项目"); return; }
+        if (selected == null) { showToast(I18n.tr("toast.plugin.unknownEntry")); return; }
         final PluginCatalogEntry entry = selected;
         pluginInstallBusy.set(true);
         worker.submit(() -> {
@@ -1356,14 +1376,16 @@ public final class PlayerController {
                     pendingPluginId.set(verified.manifest().id);
                     pendingPluginVersion.set(verified.manifest().version);
                     pendingPluginPermissions.set(verified.manifest().permissions.isEmpty()
-                            ? "无额外权限" : String.join("、", verified.manifest().permissions));
+                            ? I18n.tr("plugin.entry.noPermissions")
+                            : String.join(I18n.tr("common.listSeparator"),
+                                    verified.manifest().permissions));
                     pendingPluginTrusted.set(true);
                     pluginInstallBusy.set(false);
                     pluginInstallPromptRevision.set(pluginInstallPromptRevision.peek() + 1L);
                 });
             } catch (Throwable error) {
                 post(() -> pluginInstallBusy.set(false));
-                showToast("下载插件失败：" + safeMessage(error));
+                showToast(I18n.tr("toast.plugin.downloadFailed", safeMessage(error)));
             }
         });
     }
@@ -1435,7 +1457,7 @@ public final class PlayerController {
             pluginQrMethodId = "";
             pluginWebMethodId = "";
             pluginCredentialMethodId = "";
-            loginProviderName.set("音源账号");
+            loginProviderName.set(I18n.tr("login.defaultProvider"));
             pluginLoginActive.set(false);
             loginMethods.set(Collections.<LoginMethod>emptyList());
             pluginQrLoginAvailable.set(false);
@@ -1526,7 +1548,7 @@ public final class PlayerController {
                     netease.logout();
                     publishPluginAccount(provider, challenge.account);
                     Logger.info("legacy source credential migrated and removed from core storage");
-                    showToast("登录凭据已迁移到音源插件");
+                    showToast(I18n.tr("toast.credential.migrated"));
                 }));
     }
 
@@ -1638,7 +1660,7 @@ public final class PlayerController {
     public void requestPluginImport() {
         PluginPicker picker = pluginPicker;
         if (picker == null) {
-            showToast("当前平台暂不支持选择插件包");
+            showToast(I18n.tr("toast.plugin.pickUnsupported"));
             return;
         }
         picker.pick();
@@ -1664,8 +1686,9 @@ public final class PlayerController {
                 pendingPluginPackage = verified;
                 pendingPluginPackageTemporary = deleteAfterInspection;
                 String permissions = verified.manifest().permissions.isEmpty()
-                        ? "无额外权限"
-                        : String.join("、", verified.manifest().permissions);
+                        ? I18n.tr("plugin.entry.noPermissions")
+                        : String.join(I18n.tr("common.listSeparator"),
+                                verified.manifest().permissions);
                 post(() -> {
                     pendingPluginName.set(verified.manifest().name);
                     pendingPluginId.set(verified.manifest().id);
@@ -1678,7 +1701,7 @@ public final class PlayerController {
             } catch (Throwable error) {
                 pendingPluginPackage = null;
                 post(() -> pluginInstallBusy.set(false));
-                showToast("插件包无效：" + error.getMessage());
+                showToast(I18n.tr("toast.plugin.invalidPackage", error.getMessage()));
             } finally {
                 if (deleteAfterInspection && pendingPluginPackage == null) {
                     try { java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(path)); }
@@ -1702,11 +1725,11 @@ public final class PlayerController {
                     pluginInstallBusy.set(false);
                     publishPlugins();
                 });
-                showToast("插件已安装：" + verified.manifest().name);
+                showToast(I18n.tr("toast.plugin.installed", verified.manifest().name));
             } catch (Throwable error) {
                 pendingPluginPackage = null;
                 post(() -> pluginInstallBusy.set(false));
-                showToast("插件安装失败：" + error.getMessage());
+                showToast(I18n.tr("toast.plugin.installFailed", error.getMessage()));
             } finally {
                 if (pendingPluginPackageTemporary) {
                     try { java.nio.file.Files.deleteIfExists(verified.file()); }
@@ -1778,7 +1801,7 @@ public final class PlayerController {
 
     /** Retry a potentially interactive key-store unlock without blocking rendering. */
     public void retryCredentialUnlock() {
-        showToast("正在等待系统密钥库解锁…");
+        showToast(I18n.tr("toast.keystore.waitingUnlock"));
         worker.submit(() -> {
             if (pluginHostApi.retryCredentialUnlock()) {
                 String provider = pluginRegistry.primaryProvider();
@@ -1799,7 +1822,7 @@ public final class PlayerController {
     public void prepareEncryptedRelogin() {
         if (credentialReloginBusy) return;
         credentialReloginBusy = true;
-        showToast("正在检查系统密钥库…");
+        showToast(I18n.tr("toast.keystore.checking"));
         worker.submit(() -> {
             boolean ready = pluginHostApi.resetUnreadableCredentialsForPlatformLogin();
             post(() -> {
@@ -1834,14 +1857,14 @@ public final class PlayerController {
     public void reenableSystemCredentialProtection() {
         if (Boolean.TRUE.equals(credentialProtectionBusy.peek())) return;
         credentialProtectionBusy.set(true);
-        showToast("正在等待系统密钥库…");
+        showToast(I18n.tr("toast.keystore.waiting"));
         worker.submit(() -> {
             boolean enabled = pluginHostApi.enableSystemCredentialProtection();
             post(() -> {
                 credentialOwnerOnlyFallback.set(
                         pluginHostApi.usesOwnerOnlyCredentialProtection());
                 credentialProtectionBusy.set(false);
-                if (!enabled) showToast("未能启用系统加密，已保留普通加密");
+                if (!enabled) showToast(I18n.tr("toast.keystore.enableFailed"));
             });
         });
     }
@@ -1893,7 +1916,7 @@ public final class PlayerController {
         java.util.function.Consumer<String> c = clipboard;
         if (c != null) {
             c.accept(url);
-            showToast("已复制链接");
+            showToast(I18n.tr("toast.linkCopied"));
         } else {
             showToast(url);
         }
@@ -1906,7 +1929,7 @@ public final class PlayerController {
         java.util.function.Consumer<String> c = clipboard;
         if (c != null) {
             c.accept(url);
-            showToast("已复制链接");
+            showToast(I18n.tr("toast.linkCopied"));
         } else {
             showToast(url);
         }
@@ -2532,7 +2555,7 @@ public final class PlayerController {
      *  (offline, rate-limited, parse error): just logs, unless {@code manual}.
      *
      * @param manual true for a user-initiated "检查更新" tap (Settings > 关于) —
-     *  toasts "已是最新版本"/an error message instead of failing silently, since a
+     *  toasts I18n.tr("toast.update.upToDate")/an error message instead of failing silently, since a
      *  button the user just pressed needs to visibly do *something*. */
     public void checkForUpdate(boolean manual) {
         worker.submit(() -> {
@@ -2545,7 +2568,7 @@ public final class PlayerController {
                 String tag = optString(obj, "tag_name");
                 String latest = tag.startsWith("v") ? tag.substring(1) : tag;
                 if (!isNewer(latest, currentVersion)) {
-                    if (manual) showToast("已是最新版本");
+                    if (manual) showToast(I18n.tr("toast.update.upToDate"));
                     return;
                 }
 
@@ -2578,7 +2601,7 @@ public final class PlayerController {
                 Logger.info("update available: {} (running {})", latest, currentVersion);
             } catch (Throwable e) {
                 Logger.warn("update check failed: {}", e.toString());
-                if (manual) showToast("检查更新失败，请稍后重试");
+                if (manual) showToast(I18n.tr("toast.update.checkFailed"));
             }
         });
     }
@@ -2720,12 +2743,12 @@ public final class PlayerController {
         if (songId == 0 || isInCustomPlaylist(songId)) return;
         Track t = findLiveTrack(songId);
         if (t == null) {
-            showToast("添加失败");
+            showToast(I18n.tr("toast.playlist.addFailed"));
             return;
         }
         customPlaylist.add(t);
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        showToast("已加入播放列表");
+        showToast(I18n.tr("toast.custom.added"));
         worker.submit(this::saveCustomPlaylist);
     }
 
@@ -2735,7 +2758,7 @@ public final class PlayerController {
 
     /** Compatibility entry for a pre-plugin numeric menu row. */
     public void cacheSong(long songId) {
-        showToast("旧音源条目无法联网缓存，请通过音源插件重新打开歌曲");
+        showToast(I18n.tr("toast.cache.legacyEntry"));
     }
 
     /** Rebuild {@link #cachedSongs} from the audio cache dir + the metadata index.
@@ -2791,9 +2814,9 @@ public final class PlayerController {
                 }
             }
             cachedSongs.set(new ArrayList<>(cachedSongTracks));
-            showToast("已删除缓存");
+            showToast(I18n.tr("toast.cache.removed"));
         } else {
-            showToast("删除失败");
+            showToast(I18n.tr("toast.cache.removeFailed"));
         }
     }
 
@@ -2803,7 +2826,7 @@ public final class PlayerController {
             if (t.neteaseId == songId) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                showToast("已移出播放列表");
+                showToast(I18n.tr("toast.custom.removed"));
                 worker.submit(this::saveCustomPlaylist);
                 return;
             }
@@ -2822,12 +2845,12 @@ public final class PlayerController {
         if (mediaId == null || mediaId.isEmpty() || isMediaInCustomPlaylist(mediaId)) return;
         Song song = findPluginSong(mediaId);
         if (song == null) {
-            showToast("添加失败：歌曲信息已失效");
+            showToast(I18n.tr("toast.custom.staleSong"));
             return;
         }
         customPlaylist.add(toTrackPlugin(song));
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        showToast("已加入播放列表");
+        showToast(I18n.tr("toast.custom.added"));
         worker.submit(this::saveCustomPlaylist);
     }
 
@@ -2837,7 +2860,7 @@ public final class PlayerController {
             if (mediaId.equals(track.canonicalId())) {
                 customPlaylist.remove(track);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                showToast("已移出播放列表");
+                showToast(I18n.tr("toast.custom.removed"));
                 worker.submit(this::saveCustomPlaylist);
                 return;
             }
@@ -2878,12 +2901,12 @@ public final class PlayerController {
         Track found = null;
         for (Track t : library) if (filePath.equals(t.filePath)) { found = t; break; }
         if (found == null) {
-            showToast("添加失败");
+            showToast(I18n.tr("toast.playlist.addFailed"));
             return;
         }
         customPlaylist.add(found);
         customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-        showToast("已加入播放列表");
+        showToast(I18n.tr("toast.custom.added"));
         worker.submit(this::saveCustomPlaylist);
     }
 
@@ -2894,7 +2917,7 @@ public final class PlayerController {
             if (t.source == Track.Source.LOCAL && filePath.equals(t.filePath)) {
                 customPlaylist.remove(t);
                 customPlaylistTracks.set(new ArrayList<>(customPlaylist));
-                showToast("已移出播放列表");
+                showToast(I18n.tr("toast.custom.removed"));
                 worker.submit(this::saveCustomPlaylist);
                 return;
             }
@@ -3068,7 +3091,7 @@ public final class PlayerController {
                 post(() -> applyLibrary(found));
             } catch (Throwable e) {
                 Logger.exception(e);
-                post(() -> toast.set("扫描失败：" + e.getMessage()));
+                post(() -> toast.set(I18n.tr("toast.local.scanFailed", e.getMessage())));
             }
         });
     }
@@ -3157,7 +3180,7 @@ public final class PlayerController {
      *  first track as the seed. */
     public void startIntelligenceMode(long playlistId) {
         if (!loggedIn.peek()) {
-            showToast("请先登录后使用心动推荐");
+            showToast(I18n.tr("toast.heart.signIn"));
             return;
         }
         if (playlistId == 0L || Boolean.TRUE.equals(intelligenceLoading.peek())) return;
@@ -3170,7 +3193,7 @@ public final class PlayerController {
         }
         if (seedId == 0L && visible != null && !visible.isEmpty()) seedId = visible.get(0).id;
         if (seedId == 0L) {
-            showToast("歌单中暂无可推荐歌曲");
+            showToast(I18n.tr("toast.heart.empty"));
             return;
         }
         final long seed = seedId;
@@ -3191,7 +3214,7 @@ public final class PlayerController {
                         favoritePid = intelligencePid;
                     }
                 }
-                if (intelligencePid == 0L) throw new java.io.IOException("无法获取我喜欢的音乐歌单");
+                if (intelligencePid == 0L) throw new java.io.IOException(I18n.tr("toast.heart.noLikedPlaylist"));
                 List<NeteaseSong> songs =
                         netease.intelligenceSongs(seed, intelligencePid, seed);
                 fillMissingCovers(songs);
@@ -3199,20 +3222,20 @@ public final class PlayerController {
                 if (songs.isEmpty()) {
                     post(() -> {
                         intelligenceLoading.set(false);
-                        showToast("暂时没有心动推荐");
+                        showToast(I18n.tr("toast.heart.none"));
                     });
                     return;
                 }
                 post(() -> {
                     intelligenceLoading.set(false);
                     playSongList(songs, 0, playlistId);
-                    showToast("已开启心动推荐");
+                    showToast(I18n.tr("toast.heart.started"));
                 });
             } catch (Throwable e) {
                 Logger.warn("heart-mode recommendation failed: {}", e.getMessage());
                 post(() -> {
                     intelligenceLoading.set(false);
-                    showToast("获取心动推荐失败：" + safeMessage(e));
+                    showToast(I18n.tr("toast.heart.failed", safeMessage(e)));
                 });
             }
         });
@@ -3220,7 +3243,7 @@ public final class PlayerController {
 
     public void startMediaIntelligenceMode(String playlistMediaId) {
         if (!loggedIn.peek()) {
-            showToast("请先登录后使用心动推荐");
+            showToast(I18n.tr("toast.heart.signIn"));
             return;
         }
         if (playlistMediaId == null || playlistMediaId.isEmpty()
@@ -3230,11 +3253,11 @@ public final class PlayerController {
             playlistId = MediaId.parse(playlistMediaId).requireKind(
                     dev.t1m3.qplayer.media.MediaKind.PLAYLIST);
         } catch (IllegalArgumentException error) {
-            showToast("无效的歌单标识");
+            showToast(I18n.tr("toast.id.playlist"));
             return;
         }
         if (!pluginHasCapability(playlistId.provider(), ProviderCapability.HEART_RECOMMENDATION)) {
-            showToast("当前音源不支持心动推荐");
+            showToast(I18n.tr("toast.heart.unsupported"));
             return;
         }
         MediaId seed = null;
@@ -3252,7 +3275,7 @@ public final class PlayerController {
             catch (IllegalArgumentException ignored) { }
         }
         if (seed == null) {
-            showToast("歌单中暂无可推荐歌曲");
+            showToast(I18n.tr("toast.heart.empty"));
             return;
         }
         intelligenceLoading.set(true);
@@ -3261,12 +3284,12 @@ public final class PlayerController {
                 .whenComplete((songs, error) -> post(() -> {
                     intelligenceLoading.set(false);
                     if (error != null) {
-                        showToast("获取心动推荐失败：" + safeMessage(error));
+                        showToast(I18n.tr("toast.heart.failed", safeMessage(error)));
                     } else if (songs == null || songs.isEmpty()) {
-                        showToast("暂时没有心动推荐");
+                        showToast(I18n.tr("toast.heart.none"));
                     } else {
                         playPluginSongList(songs, 0, playlistMediaId);
-                        showToast("已开启心动推荐");
+                        showToast(I18n.tr("toast.heart.started"));
                     }
                 }));
     }
@@ -3285,14 +3308,14 @@ public final class PlayerController {
                 Logger.warn("play playlist {} failed: {}", playlistId, e.getMessage());
                 PlaylistCacheIndex.Cached cached = playlistCacheIndex.get(playlistId);
                 if (cached == null || cached.songs.isEmpty()) {
-                    showToast("播放歌单失败");
+                    showToast(I18n.tr("toast.playlist.playFailed"));
                     return;
                 }
                 songs = new ArrayList<>(cached.songs.size());
                 for (NeteaseSong song : cached.songs) songs.add(withLocalThumb(song));
             }
             if (songs.isEmpty()) {
-                showToast("歌单中暂无歌曲");
+                showToast(I18n.tr("toast.playlist.empty"));
                 return;
             }
             List<NeteaseSong> ready = songs;
@@ -3309,18 +3332,18 @@ public final class PlayerController {
         }
         final MediaId id;
         try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
-        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.playlist")); return; }
         pluginProviders.playlist(id).whenComplete((playlist, error) -> post(() -> {
             Playlist resolved = playlist;
             if (error != null || resolved == null) {
                 resolved = mediaPlaylistCacheIndex.get(id.toString());
                 if (resolved == null) {
-                    showToast("播放歌单失败：" + safeMessage(error));
+                    showToast(I18n.tr("toast.playlist.playFailedReason", safeMessage(error)));
                     return;
                 }
             }
             if (resolved.songs.isEmpty()) {
-                showToast("歌单中暂无歌曲");
+                showToast(I18n.tr("toast.playlist.empty"));
                 return;
             }
             mediaPlaylistCacheIndex.upsert(resolved);
@@ -3338,7 +3361,7 @@ public final class PlayerController {
         java.util.function.Consumer<String> sink = clipboard;
         if (sink != null) {
             sink.accept(mediaId);
-            showToast("已复制媒体标识");
+            showToast(I18n.tr("toast.mediaIdCopied"));
         } else {
             showToast(mediaId);
         }
@@ -3347,20 +3370,20 @@ public final class PlayerController {
     public void shareMedia(String mediaId) {
         final MediaId id;
         try { id = MediaId.parse(mediaId); }
-        catch (IllegalArgumentException error) { showToast("无效的媒体标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.media")); return; }
         if (!pluginHasCapability(id.provider(), ProviderCapability.SHARE)) {
             copyMediaReference(mediaId);
             return;
         }
         pluginProviders.share(id).whenComplete((url, error) -> post(() -> {
             if (error != null || url == null || url.isEmpty()) {
-                showToast("获取分享链接失败：" + safeMessage(error));
+                showToast(I18n.tr("toast.share.failed", safeMessage(error)));
                 return;
             }
             java.util.function.Consumer<String> sink = clipboard;
             if (sink != null) {
                 sink.accept(url);
-                showToast("已复制链接");
+                showToast(I18n.tr("toast.linkCopied"));
             } else showToast(url);
         }));
     }
@@ -3410,6 +3433,11 @@ public final class PlayerController {
     }
 
     private void playQueue(List<Track> q, int start, long sourcePlaylistId) {
+        // Checked before the queue is replaced: a rejected selection must leave the
+        // queue exactly as the plugin driving playback last set it.
+        if (q != null && start >= 0 && start < q.size() && blockedByPluginSession(q.get(start))) {
+            return;
+        }
         currentQueuePlaylistId = sourcePlaylistId;
         if (sourcePlaylistId != 0L) currentQueueMediaPlaylistId = "";
         queue.clear();
@@ -3460,6 +3488,7 @@ public final class PlayerController {
 
     private void playAt(int i) {
         if (i < 0 || i >= queue.size()) return;
+        if (blockedByPluginSession(queue.get(i))) return;
         String requestedMediaId = queue.get(i).canonicalId();
         if (pendingPluginDesiredPlaying != null
                 && !pendingPluginTargetMediaId.equals(requestedMediaId)) {
@@ -3546,7 +3575,7 @@ public final class PlayerController {
                 post(() -> {
                     playing.set(false);
                     loading.set(false);
-                    showToast("请安装并启用与该歌曲匹配的音源插件");
+                    showToast(I18n.tr("toast.play.missingPlugin"));
                 });
                 notifyPlayback();
                 return;
@@ -3582,7 +3611,7 @@ public final class PlayerController {
                 resolveAndPlayNetease(t, i, resumeMs, currentCoverRevision);
             }
         } else if (t.source == Track.Source.CUSTOM_API) {
-            skipUnplayable(i, "旧自定义音源已移除，请安装对应音源插件");
+            skipUnplayable(i, I18n.tr("toast.play.legacySourceGone"));
         } else if (t.source == Track.Source.PLUGIN) {
             String cached = diskCache.getAudio(t.canonicalId());
             if (cached != null) {
@@ -4465,13 +4494,13 @@ public final class PlayerController {
                     if (playUrl == null) {
                         Logger.warn("netease song {} has no url (blocked/VIP/login required)", songId);
                         skipUnplayable(expectedIndex, netease.isLoggedIn()
-                                ? "VIP/灰色歌曲" : "请先登录");
+                                ? I18n.tr("toast.play.vipOrBlocked") : I18n.tr("toast.signInRequired"));
                         return;
                     }
                     t.streamUrl = playUrl;
                     t.trial = isTrialOnly;
                     post(() -> {
-                        if (isTrialOnly) showToast("当前歌曲仅可试听");
+                        if (isTrialOnly) showToast(I18n.tr("toast.play.trialOnly"));
                         title.set(orEmpty(t.title));
                         artist.set(orEmpty(t.artist));
                         publishPlayingArtist(t);
@@ -4491,7 +4520,7 @@ public final class PlayerController {
                 });
             } catch (Throwable e) {
                 Logger.warn("netease resolve failed for {}: {}", songId, e.getMessage());
-                onMain(() -> skipUnplayable(expectedIndex, "解析失败"));
+                onMain(() -> skipUnplayable(expectedIndex, I18n.tr("toast.play.resolveFailed")));
             }
         });
     }
@@ -4502,11 +4531,11 @@ public final class PlayerController {
         try {
             id = MediaId.parse(track.canonicalId());
         } catch (IllegalArgumentException error) {
-            skipUnplayable(expectedIndex, "插件歌曲标识无效");
+            skipUnplayable(expectedIndex, I18n.tr("toast.play.badPluginId"));
             return;
         }
         if (!pluginHasCapability(id.provider(), ProviderCapability.RESOLVE_STREAM)) {
-            skipUnplayable(expectedIndex, "插件不支持音频解析");
+            skipUnplayable(expectedIndex, I18n.tr("toast.play.pluginNoStream"));
             return;
         }
         pluginProviders.resolveStream(id, playLevel).whenComplete((stream, error) -> onMain(() -> {
@@ -4514,7 +4543,7 @@ public final class PlayerController {
             if (error != null || stream == null || stream.url == null || stream.url.isEmpty()) {
                 Logger.warn("plugin {} stream resolve failed: {}", id.provider(),
                         error != null ? safeMessage(error) : "empty URL");
-                skipUnplayable(expectedIndex, "插件音频解析失败");
+                skipUnplayable(expectedIndex, I18n.tr("toast.play.pluginStreamFailed"));
                 return;
             }
             track.streamUrl = stream.url;
@@ -4530,7 +4559,7 @@ public final class PlayerController {
                 album.set(orEmpty(track.album));
                 coverUrl.set(orEmpty(track.coverUrl));
                 durationMs.set(track.durationMs);
-                if (stream.trial) showToast("当前歌曲仅可试听");
+                if (stream.trial) showToast(I18n.tr("toast.play.trialOnly"));
             });
             updateCover(track, expectedIndex, expectedCoverRevision);
             loadPluginLyrics(track, expectedIndex);
@@ -4572,17 +4601,17 @@ public final class PlayerController {
 
     public void cacheMediaSong(String mediaId) {
         if (mediaId == null || mediaId.isEmpty()) return;
-        if (diskCache.hasAudio(mediaId)) { showToast("这首歌已缓存"); return; }
+        if (diskCache.hasAudio(mediaId)) { showToast(I18n.tr("toast.cache.already")); return; }
         Song song = findPluginSong(mediaId);
-        if (song == null) { showToast("无法缓存：歌曲信息已失效"); return; }
+        if (song == null) { showToast(I18n.tr("toast.cache.staleSong")); return; }
         Track track = toTrackPlugin(song);
         final MediaId id;
         try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.SONG); }
-        catch (IllegalArgumentException error) { showToast("无效的歌曲标识"); return; }
-        showToast("已开始缓存");
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.song")); return; }
+        showToast(I18n.tr("toast.cache.started"));
         pluginProviders.resolveStream(id, playLevel).whenComplete((stream, error) -> {
             if (error != null || stream == null || stream.trial || !stream.cacheable) {
-                post(() -> showToast("无法缓存：" + safeMessage(error)));
+                post(() -> showToast(I18n.tr("toast.cache.failedReason", safeMessage(error))));
                 return;
             }
             track.streamUrl = stream.url;
@@ -4590,14 +4619,14 @@ public final class PlayerController {
             track.streamExpiresAtMs = stream.expiresAtMs;
             track.streamCacheable = stream.cacheable;
             cachePluginAudioAsync(track, true, () -> showToast(
-                    diskCache.hasAudio(mediaId) ? "缓存完成" : "缓存失败"));
+                    diskCache.hasAudio(mediaId) ? I18n.tr("toast.cache.done") : I18n.tr("toast.cache.failed")));
         });
     }
 
     public void removeMediaCache(String mediaId) {
         boolean removed = diskCache.deleteAudio(mediaId);
         if (removed) refreshCachedSongs();
-        showToast(removed ? "已删除缓存" : "删除失败");
+        showToast(removed ? I18n.tr("toast.cache.removed") : I18n.tr("toast.cache.removeFailed"));
     }
 
     private boolean pluginHasCapability(String provider, ProviderCapability capability) {
@@ -4616,6 +4645,25 @@ public final class PlayerController {
     private static String providerOf(Track track) {
         try { return MediaId.parse(track.canonicalId()).provider(); }
         catch (IllegalArgumentException ignored) { return ""; }
+    }
+
+    /** True when a plugin is currently driving playback (it holds the auto-advance
+     *  block) and {@code track} is not one of that provider's songs. Whatever the
+     *  plugin is coordinating, it can only address its own ids, so starting a local
+     *  file or another source's song would break that coordination rather than play
+     *  anything meaningful. The host stays out of what the feature actually is. */
+    private boolean blockedByPluginSession(Track track) {
+        String owner = pluginAutoAdvanceBlocker;
+        if (owner.isEmpty() || track == null || owner.equals(providerOf(track))) return false;
+        showToast(I18n.tr("toast.play.sessionLocked", pluginDisplayName(owner)));
+        return true;
+    }
+
+    private String pluginDisplayName(String pluginId) {
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.id.equals(pluginId) && !manifest.name.isEmpty()) return manifest.name;
+        }
+        return pluginId;
     }
 
     private static boolean hasFreshPluginStream(Track track) {
@@ -5166,8 +5214,8 @@ public final class PlayerController {
                     // not "no matches"); this covers both "no network + found
                     // some cached matches" and "no network + nothing matched".
                     showToast(offline.isEmpty()
-                        ? "当前无网络，且没有找到本地缓存结果"
-                        : "当前无网络，显示本地缓存结果");
+                        ? I18n.tr("toast.offline.searchEmpty")
+                        : I18n.tr("toast.offline.searchCached"));
                 });
             }
         });
@@ -5194,7 +5242,7 @@ public final class PlayerController {
                         if (error != null) {
                             Logger.warn("plugin {} album search failed: {}", provider.id,
                                     safeMessage(error));
-                            showToast("专辑搜索失败，请检查网络或插件状态");
+                            showToast(I18n.tr("toast.search.albumFailedPlugin"));
                             return;
                         }
                         List<Album> results = page != null ? page.items
@@ -5227,7 +5275,7 @@ public final class PlayerController {
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
                     searchLoading.set(false);
-                    showToast("专辑搜索失败，请检查网络");
+                    showToast(I18n.tr("toast.search.albumFailed"));
                 });
             }
         });
@@ -5252,7 +5300,7 @@ public final class PlayerController {
                         if (error != null) {
                             Logger.warn("plugin {} artist search failed: {}", provider.id,
                                     safeMessage(error));
-                            showToast("歌手搜索失败，请检查网络或插件状态");
+                            showToast(I18n.tr("toast.search.artistFailedPlugin"));
                             return;
                         }
                         List<Artist> results = page != null ? page.items
@@ -5284,7 +5332,7 @@ public final class PlayerController {
                 post(() -> {
                     if (!key.equals(currentSearchKey)) return;
                     searchLoading.set(false);
-                    showToast("歌手搜索失败，请检查网络");
+                    showToast(I18n.tr("toast.search.artistFailed"));
                 });
             }
         });
@@ -5603,7 +5651,7 @@ public final class PlayerController {
                 NeteaseSong s = ns.get(i);
                 SearchRow row = new SearchRow();
                 row.kind = "netease";
-                row.kindLabel = "网易云";
+                row.kindLabel = I18n.tr("source.netease");
                 row.index = i;
                 row.name = s.name;
                 row.artist = s.artist;
@@ -5642,7 +5690,7 @@ public final class PlayerController {
                 Track t = ls.get(i);
                 SearchRow row = new SearchRow();
                 row.kind = "local";
-                row.kindLabel = "本地";
+                row.kindLabel = I18n.tr("source.local");
                 row.index = i;
                 row.name = t.title;
                 row.artist = t.artist;
@@ -5773,7 +5821,7 @@ public final class PlayerController {
             resolveAndPlayPlugin(t, idx, resumeMs, coverRevision.get());
             return;
         }
-        skipUnplayable(playIndex, "音频加载失败");
+        skipUnplayable(playIndex, I18n.tr("toast.play.audioFailed"));
     }
 
     /** Stop waiting on an unplayable queue entry and advance once. The failure
@@ -5791,15 +5839,46 @@ public final class PlayerController {
             post(() -> {
                 loading.set(false);
                 playing.set(false);
-                showToast("无法播放：" + reason);
+                showToast(I18n.tr("toast.play.failed", reason));
             });
             notifyPlayback();
             return;
         }
-        post(() -> showToast("已跳过无法播放的歌曲：" + reason));
+        post(() -> showToast(I18n.tr("toast.play.skipped", reason)));
         // Failed tracks must never obey repeat-one, and a deterministic walk avoids
         // shuffle selecting the same broken entry again before trying the others.
         playAt((playIndex + 1) % queue.size());
+    }
+
+    /** How many plain recommended playlists to ask the source for; the titled
+     *  sections it also returns are extra and are not counted against this. */
+    private volatile int homePlaylistLimit = 12;
+    private boolean homeRequested;
+
+    public void setHomePlaylistLimit(int value) {
+        int next = Math.max(1, Math.min(100, value));
+        if (next == homePlaylistLimit) return;
+        homePlaylistLimit = next;
+        // Startup seeds this before the first load; only a real change reloads.
+        if (homeRequested) loadHome();
+    }
+
+    private void publishHomeSections(List<HomeSection> sections) {
+        List<HomeSection> published = new ArrayList<>();
+        List<Playlist> cards = new ArrayList<>();
+        for (HomeSection section : sections) {
+            section.start = cards.size();
+            section.count = section.playlists.size();
+            cards.addAll(section.playlists);
+            published.add(section);
+        }
+        sourceSectionPlaylists.set(Collections.unmodifiableList(cards));
+        sourceHomeSections.set(Collections.unmodifiableList(published));
+    }
+
+    private void clearHomeSections() {
+        sourceHomeSections.set(Collections.<HomeSection>emptyList());
+        sourceSectionPlaylists.set(Collections.<Playlist>emptyList());
     }
 
     /** Load the home content: recommended songs (login) + recommended playlists. */
@@ -5808,19 +5887,23 @@ public final class PlayerController {
         // Switching away and back fast would otherwise let the first source's
         // in-flight result land on top of the second one's.
         final long generation = homeGeneration.incrementAndGet();
+        homeRequested = true;
         PluginManifest provider = primaryProviderWith(ProviderCapability.HOME);
         if (provider != null) {
-            pluginProviders.home(provider.id, 50).whenComplete((home, error) -> post(() -> {
+            pluginProviders.home(provider.id, homePlaylistLimit)
+                    .whenComplete((home, error) -> post(() -> {
                 if (generation != homeGeneration.get()) return;
                 if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
                 homeLoading.set(false);
                 if (error != null) {
                     Logger.warn("plugin {} home failed: {}", provider.id, safeMessage(error));
+                    clearHomeSections();
                     sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
                     sourceRecommendations.set(Collections.<Song>emptyList());
                     return;
                 }
                 ProviderHome value = home != null ? home : new ProviderHome();
+                publishHomeSections(value.sections);
                 sourceRecommendPlaylists.set(Collections.unmodifiableList(
                         new ArrayList<>(value.playlists)));
                 sourceRecommendations.set(Collections.unmodifiableList(
@@ -5828,6 +5911,7 @@ public final class PlayerController {
             }));
             return;
         }
+        clearHomeSections();
         // No source can serve home right now: publish the empty state instead of
         // leaving the previous source's recommendations up forever.
         sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
@@ -5999,7 +6083,7 @@ public final class PlayerController {
         }
         final MediaId id;
         try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.ARTIST); }
-        catch (IllegalArgumentException error) { showToast("无效的歌手标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.artist")); return; }
         openSourceArtistId.set(id.toString());
         openArtistId.set(0L);
         artistPageOpen.set(true);
@@ -6017,7 +6101,7 @@ public final class PlayerController {
             artistLoading.set(false);
             if (error != null || artist == null) {
                 Logger.warn("plugin artist {} failed: {}", id, safeMessage(error));
-                showToast("加载歌手信息失败，请检查网络或插件状态");
+                showToast(I18n.tr("toast.artist.loadFailedPlugin"));
                 return;
             }
             artistName.set(artist.name);
@@ -6029,7 +6113,7 @@ public final class PlayerController {
     }
 
     public void openArtist(long artistId) {
-        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开歌手"); return; }
+        if (onlineSourcesArePluginOnly()) { showToast(I18n.tr("toast.openWithPlugin.artist")); return; }
         if (artistId == 0L) return;
         openSourceArtistId.set("");
         pageNavigationEntityId.set(Long.toString(artistId));
@@ -6068,7 +6152,7 @@ public final class PlayerController {
                 post(() -> {
                     if (currentArtistId != artistId) return;
                     artistLoading.set(false);
-                    showToast("加载歌手信息失败，请检查网络");
+                    showToast(I18n.tr("toast.artist.loadFailed"));
                 });
             }
         });
@@ -6092,7 +6176,7 @@ public final class PlayerController {
         }
         final MediaId id;
         try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.ALBUM); }
-        catch (IllegalArgumentException error) { showToast("无效的专辑标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.album")); return; }
         openSourceAlbumId.set(id.toString());
         openAlbumId.set(0L);
         albumPageOpen.set(true);
@@ -6112,7 +6196,7 @@ public final class PlayerController {
             albumLoading.set(false);
             if (error != null || album == null) {
                 Logger.warn("plugin album {} failed: {}", id, safeMessage(error));
-                showToast("加载专辑信息失败，请检查网络或插件状态");
+                showToast(I18n.tr("toast.album.loadFailedPlugin"));
                 return;
             }
             albumName.set(album.name);
@@ -6120,14 +6204,14 @@ public final class PlayerController {
             albumArtistName.set(album.artistName);
             albumArtistMediaId.set(album.artistMediaId);
             albumPublishYear.set(album.publishTimeMs > 0
-                    ? new java.text.SimpleDateFormat("yyyy年", java.util.Locale.CHINA)
+                    ? new java.text.SimpleDateFormat(I18n.tr("album.yearFormat"), java.util.Locale.getDefault())
                             .format(new java.util.Date(album.publishTimeMs)) : "");
             sourceAlbumTracks.set(Collections.unmodifiableList(new ArrayList<>(album.songs)));
         }));
     }
 
     public void openAlbum(long albumId) {
-        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开专辑"); return; }
+        if (onlineSourcesArePluginOnly()) { showToast(I18n.tr("toast.openWithPlugin.album")); return; }
         if (albumId == 0L) return;
         openSourceAlbumId.set("");
         albumArtistMediaId.set("");
@@ -6159,7 +6243,7 @@ public final class PlayerController {
                     albumArtistName.set(album != null && album.artistName != null ? album.artistName : "");
                     albumArtistId.set(album != null ? album.artistId : 0L);
                     albumPublishYear.set(album != null && album.publishTime > 0
-                            ? new java.text.SimpleDateFormat("yyyy年", java.util.Locale.CHINA)
+                            ? new java.text.SimpleDateFormat(I18n.tr("album.yearFormat"), java.util.Locale.getDefault())
                                     .format(new java.util.Date(album.publishTime))
                             : "");
                     albumTracks.set(songs);
@@ -6170,7 +6254,7 @@ public final class PlayerController {
                 post(() -> {
                     if (currentAlbumId != albumId) return;
                     albumLoading.set(false);
-                    showToast("加载专辑信息失败，请检查网络");
+                    showToast(I18n.tr("toast.album.loadFailed"));
                 });
             }
         });
@@ -6193,10 +6277,15 @@ public final class PlayerController {
         }
         final MediaId id;
         try { id = MediaId.parse(mediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
-        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.playlist")); return; }
         currentPlaylistId = 0L;
         openPlaylistId.set(0L);
         openSourcePlaylistId.set(id.toString());
+        // Capabilities belong to the playlist's own source, not to whichever source
+        // happens to be primary: an open QQ playlist must not offer NetEase's
+        // heart-recommendation button (and vice versa).
+        sourceHeartRecommendationAvailable.set(
+                pluginHasCapability(id.provider(), ProviderCapability.HEART_RECOMMENDATION));
         playlistLoading.set(true);
         playlistOffline.set(false);
         playlistTracks.set(Collections.<NeteaseSong>emptyList());
@@ -6214,7 +6303,7 @@ public final class PlayerController {
                 Logger.warn("plugin playlist {} failed: {}", id, safeMessage(error));
                 resolved = mediaPlaylistCacheIndex.get(id.toString());
                 if (resolved == null) {
-                    showToast("加载歌单失败，请检查网络或插件状态");
+                    showToast(I18n.tr("toast.playlist.loadFailedPlugin"));
                     return;
                 }
                 playlistOffline.set(true);
@@ -6232,7 +6321,7 @@ public final class PlayerController {
     }
 
     public void openPlaylist(long playlistId) {
-        if (onlineSourcesArePluginOnly()) { showToast("请通过音源插件打开歌单"); return; }
+        if (onlineSourcesArePluginOnly()) { showToast(I18n.tr("toast.openWithPlugin.playlist")); return; }
         // Called on the render thread from QML: clear the previous playlist and show
         // the spinner immediately, before the off-thread fetch starts.
         currentPlaylistId = playlistId;
@@ -6357,7 +6446,7 @@ public final class PlayerController {
             post(() -> {
                 if (currentPlaylistId != playlistId) return;
                 playlistLoading.set(false);
-                showToast("当前无网络，且未缓存过该歌单");
+                showToast(I18n.tr("toast.offline.playlistNone"));
             });
             return;
         }
@@ -6372,7 +6461,7 @@ public final class PlayerController {
             playlistTracks.set(offline);
             playlistLoading.set(false);
             playlistOffline.set(true);
-            showToast("当前无网络，显示已缓存的歌单内容");
+            showToast(I18n.tr("toast.offline.playlistCached"));
         });
         scheduleOfflineRetry(playlistId);
     }
@@ -6397,7 +6486,7 @@ public final class PlayerController {
             if (!Boolean.TRUE.equals(playlistOffline.peek())) return; // already back online
             try {
                 fetchAndPublishPlaylist(playlistId);
-                post(() -> { if (currentPlaylistId == playlistId) showToast("网络已恢复，歌单已更新"); });
+                post(() -> { if (currentPlaylistId == playlistId) showToast(I18n.tr("toast.offline.playlistRefreshed")); });
             } catch (Throwable e) {
                 scheduleOfflineRetry(playlistId); // still offline -- try again in another 20s
             }
@@ -6451,7 +6540,7 @@ public final class PlayerController {
                 subscribeBusy = false;
                 if (currentPlaylistId != id) return;
                 if (done) {
-                    showToast(target ? "已收藏歌单" : "已取消收藏");
+                    showToast(I18n.tr(target ? "toast.playlist.subscribed" : "toast.playlist.unsubscribed"));
                     loadMyPlaylists();   // reflect the change in 我的
                 } else {
                     playlistSubscribed.set(!target);   // revert the optimistic flip; no auto-retry
@@ -6475,11 +6564,11 @@ public final class PlayerController {
                     subscribeBusy = false;
                     if (!id.toString().equals(openSourcePlaylistId.peek())) return;
                     if (error == null && Boolean.TRUE.equals(success)) {
-                        showToast(target ? "已收藏歌单" : "已取消收藏");
+                        showToast(I18n.tr(target ? "toast.playlist.subscribed" : "toast.playlist.unsubscribed"));
                         loadMyPlaylists();
                     } else {
                         playlistSubscribed.set(!target);
-                        showToast("操作失败：" + safeMessage(error));
+                        showToast(I18n.tr("toast.actionFailed", safeMessage(error)));
                     }
                 }));
     }
@@ -6537,7 +6626,7 @@ public final class PlayerController {
                             // complain once every source failed while signed in.
                             if (myPlaylistsPending == 0 && myPlaylistsBySource.isEmpty()
                                     && Boolean.TRUE.equals(loggedIn.peek())) {
-                                showToast("加载歌单失败，请检查网络或插件状态");
+                                showToast(I18n.tr("toast.playlist.loadFailedPlugin"));
                             }
                         }));
             }
@@ -6636,7 +6725,7 @@ public final class PlayerController {
         post(() -> {
             myPlaylists.set(offline);
             playlistCount.set(offline.size());
-            showToast("当前无网络，显示已缓存的歌单列表");
+            showToast(I18n.tr("toast.offline.playlistsCached"));
         });
     }
 
@@ -6649,9 +6738,9 @@ public final class PlayerController {
             pluginProviders.createPlaylist(provider.id, normalized, false)
                     .whenComplete((id, error) -> post(() -> {
                         if (error == null && id != null && !id.isEmpty()) {
-                            showToast("歌单已创建");
+                            showToast(I18n.tr("toast.playlist.created"));
                             loadMyPlaylists();
-                        } else showToast("创建歌单失败：" + safeMessage(error));
+                        } else showToast(I18n.tr("toast.playlist.createFailedReason", safeMessage(error)));
                     }));
             return;
         }
@@ -6663,15 +6752,15 @@ public final class PlayerController {
                 long id = netease.createPlaylist(nm, false);
                 if (id != 0) {
                     post(() -> {
-                        showToast("歌单已创建");
+                        showToast(I18n.tr("toast.playlist.created"));
                         loadMyPlaylists();
                     });
                 } else {
-                    showToast("创建歌单失败");
+                    showToast(I18n.tr("toast.playlist.createFailed"));
                 }
             } catch (Throwable e) {
                 Logger.warn("create playlist failed: {}", e.getMessage());
-                showToast("创建歌单失败");
+                showToast(I18n.tr("toast.playlist.createFailed"));
             }
         });
     }
@@ -6690,7 +6779,7 @@ public final class PlayerController {
                 data = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path));
             } catch (Throwable e) {
                 Logger.warn("read cover file {} failed: {}", path, e.getMessage());
-                showToast("读取图片文件失败");
+                showToast(I18n.tr("toast.cover.readFailed"));
                 return;
             }
             uploadPlaylistCover(playlistId, data, new java.io.File(path).getName());
@@ -6707,7 +6796,7 @@ public final class PlayerController {
 
     private void uploadPlaylistCover(long playlistId, byte[] data, String filename) {
         if (data.length == 0) {
-            showToast("图片文件为空");
+            showToast(I18n.tr("toast.cover.empty"));
             return;
         }
         try {
@@ -6715,16 +6804,16 @@ public final class PlayerController {
             boolean ok = imgId != 0 && netease.updatePlaylistCover(playlistId, imgId);
             post(() -> {
                 if (ok) {
-                    showToast("封面已更新");
+                    showToast(I18n.tr("toast.cover.updated"));
                     if (currentPlaylistId == playlistId) openPlaylist(playlistId);
                     loadMyPlaylists();
                 } else {
-                    showToast("封面更新失败");
+                    showToast(I18n.tr("toast.cover.updateFailed"));
                 }
             });
         } catch (Throwable e) {
             Logger.warn("set playlist cover {} failed: {}", playlistId, e.getMessage());
-            showToast("封面更新失败");
+            showToast(I18n.tr("toast.cover.updateFailed"));
         }
     }
 
@@ -6754,15 +6843,15 @@ public final class PlayerController {
             try {
                 if (netease.deletePlaylist(playlistId)) {
                     post(() -> {
-                        showToast("歌单已删除");
+                        showToast(I18n.tr("toast.playlist.deleted"));
                         loadMyPlaylists();
                     });
                 } else {
-                    showToast("删除歌单失败");
+                    showToast(I18n.tr("toast.playlist.deleteFailed"));
                 }
             } catch (Throwable e) {
                 Logger.warn("delete playlist {} failed: {}", playlistId, e.getMessage());
-                showToast("删除歌单失败");
+                showToast(I18n.tr("toast.playlist.deleteFailed"));
             }
         });
     }
@@ -6770,13 +6859,13 @@ public final class PlayerController {
     public void deleteMediaPlaylist(String playlistMediaId) {
         final MediaId id;
         try { id = MediaId.parse(playlistMediaId).requireKind(dev.t1m3.qplayer.media.MediaKind.PLAYLIST); }
-        catch (IllegalArgumentException error) { showToast("无效的歌单标识"); return; }
+        catch (IllegalArgumentException error) { showToast(I18n.tr("toast.id.playlist")); return; }
         pluginProviders.mutatePlaylist(id, "delete", Collections.<MediaId>emptyList(), null)
                 .whenComplete((success, error) -> post(() -> {
                     if (error == null && Boolean.TRUE.equals(success)) {
-                        showToast("歌单已删除");
+                        showToast(I18n.tr("toast.playlist.deleted"));
                         loadMyPlaylists();
-                    } else showToast("删除歌单失败：" + safeMessage(error));
+                    } else showToast(I18n.tr("toast.playlist.deleteFailedReason", safeMessage(error)));
                 }));
     }
 
@@ -6786,10 +6875,10 @@ public final class PlayerController {
         worker.submit(() -> {
             try {
                 boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, true);
-                showToast(ok ? "已添加到歌单" : "添加失败");
+                showToast(I18n.tr(ok ? "toast.playlist.songAdded" : "toast.playlist.addFailed"));
             } catch (Throwable e) {
                 Logger.warn("add track {} -> playlist {} failed: {}", songId, playlistId, e.getMessage());
-                showToast("添加失败");
+                showToast(I18n.tr("toast.playlist.addFailed"));
             }
         });
     }
@@ -6812,18 +6901,18 @@ public final class PlayerController {
             songId = MediaId.parse(songMediaId).requireKind(
                     dev.t1m3.qplayer.media.MediaKind.SONG);
         } catch (IllegalArgumentException error) {
-            showToast("无效的媒体标识");
+            showToast(I18n.tr("toast.id.media"));
             return;
         }
         pluginProviders.mutatePlaylist(playlistId, add ? "add" : "remove",
                         Collections.singletonList(songId), null)
                 .whenComplete((success, error) -> post(() -> {
                     if (error == null && Boolean.TRUE.equals(success)) {
-                        showToast(add ? "已添加到歌单" : "已从歌单移除");
+                        showToast(I18n.tr(add ? "toast.playlist.songAdded" : "toast.playlist.songRemoved"));
                         if (refreshDetail && playlistId.toString().equals(openSourcePlaylistId.peek())) {
                             openMediaPlaylist(playlistId.toString());
                         }
-                    } else showToast((add ? "添加失败：" : "移除失败：") + safeMessage(error));
+                    } else showToast(I18n.tr(add ? "toast.playlist.addFailedReason" : "toast.playlist.removeFailedReason", safeMessage(error)));
                 }));
     }
 
@@ -6838,12 +6927,12 @@ public final class PlayerController {
             try {
                 boolean ok = netease.manipulatePlaylistTracks(playlistId, songId, false);
                 post(() -> {
-                    showToast(ok ? "已从歌单移除" : "移除失败");
+                    showToast(I18n.tr(ok ? "toast.playlist.songRemoved" : "toast.playlist.removeFailed"));
                     if (ok && currentPlaylistId == playlistId) openPlaylist(playlistId);
                 });
             } catch (Throwable e) {
                 Logger.warn("remove track {} <- playlist {} failed: {}", songId, playlistId, e.getMessage());
-                showToast("移除失败");
+                showToast(I18n.tr("toast.playlist.removeFailed"));
             }
         });
     }
@@ -6895,25 +6984,42 @@ public final class PlayerController {
         });
     }
 
-    private void refreshPluginLiked(String provider) {
-        if (!pluginHasCapability(provider, ProviderCapability.LIKE)) {
-            pluginLikedSet.clear();
-            likedCount.set(0);
-            currentLiked.set(false);
-            return;
+    /** Load the liked set of every signed-in source, not just the primary one: the
+     *  heart on a QQ song has to reflect QQ's own favourites even while NetEase is
+     *  the primary source. */
+    private void refreshPluginLiked() {
+        List<PluginManifest> providers = new ArrayList<>();
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (manifest.capabilitySet().contains(ProviderCapability.LIKE)) providers.add(manifest);
         }
-        pluginProviders.likedSongs(provider).whenComplete((ids, error) -> post(() -> {
-            if (!provider.equals(pluginRegistry.primaryProvider())) return;
-            if (error != null) {
-                Logger.warn("plugin {} liked list failed: {}", provider, safeMessage(error));
-                return;
-            }
-            pluginLikedSet.clear();
-            pluginLikedSet.addAll(ids);
-            likedCount.set(ids.size());
-            Track current = currentTrack();
-            currentLiked.set(current != null && ids.contains(current.canonicalId()));
-        }));
+        final long generation = pluginLikedGeneration.incrementAndGet();
+        final List<String> order = new ArrayList<>();
+        for (PluginManifest manifest : providers) order.add(manifest.id);
+        post(() -> {
+            pluginLikedBySource.keySet().retainAll(order);
+            publishPluginLiked();
+        });
+        for (PluginManifest manifest : providers) {
+            final String providerId = manifest.id;
+            pluginProviders.likedSongs(providerId).whenComplete((ids, error) -> post(() -> {
+                if (generation != pluginLikedGeneration.get()) return;
+                if (error != null) {
+                    Logger.warn("plugin {} liked list failed: {}", providerId, safeMessage(error));
+                    pluginLikedBySource.remove(providerId);
+                } else {
+                    pluginLikedBySource.put(providerId, new java.util.LinkedHashSet<>(ids));
+                }
+                publishPluginLiked();
+            }));
+        }
+    }
+
+    private void publishPluginLiked() {
+        pluginLikedSet.clear();
+        for (Set<String> slice : pluginLikedBySource.values()) pluginLikedSet.addAll(slice);
+        likedCount.set(pluginLikedSet.size());
+        Track current = currentTrack();
+        currentLiked.set(current != null && pluginLikedSet.contains(current.canonicalId()));
     }
 
     /** Like / unlike the current netease track. */
@@ -6935,7 +7041,7 @@ public final class PlayerController {
                     if (current != null && id.toString().equals(current.canonicalId())) {
                         currentLiked.set(target);
                     }
-                } else showToast(target ? "收藏失败" : "取消收藏失败");
+                } else showToast(I18n.tr(target ? "toast.like.failed" : "toast.unlike.failed"));
             }));
             return;
         }
@@ -6960,11 +7066,11 @@ public final class PlayerController {
                     });
                 } else {
                     showToast(netease.isLoggedIn()
-                            ? (target ? "收藏失败" : "取消收藏失败") : "请先登录");
+                            ? (I18n.tr(target ? "toast.like.failed" : "toast.unlike.failed")) : I18n.tr("toast.signInRequired"));
                 }
             } catch (Throwable e) {
                 Logger.warn("like toggle failed: {}", e.getMessage());
-                post(() -> toast.set("收藏失败：" + e.getMessage()));
+                post(() -> toast.set(I18n.tr("toast.like.failedReason", e.getMessage())));
             }
         });
     }
@@ -7048,7 +7154,7 @@ public final class PlayerController {
 
     private static String safeMessage(Throwable error) {
         String message = error == null ? null : error.getMessage();
-        return message == null || message.trim().isEmpty() ? "未知错误" : message;
+        return message == null || message.trim().isEmpty() ? I18n.tr("error.unknown") : message;
     }
 
     // --- Login (fully async: qrLoginKey/qrLoginCheck are blocking HTTP, must
@@ -7079,7 +7185,7 @@ public final class PlayerController {
     public void startWebLogin() {
         WebLoginLauncher launcher = webLoginLauncher;
         if (launcher == null) {
-            webLoginError.set("当前平台不支持内嵌网页登录，请粘贴 Cookie 登录");
+            webLoginError.set(I18n.tr("login.error.noWebView"));
             return;
         }
         if (Boolean.TRUE.equals(webLoginBusy.peek())) return;
@@ -7092,12 +7198,12 @@ public final class PlayerController {
                         method.credentialCookieName, loginProviderName.peek());
             } else {
                 webLoginBusy.set(false);
-                webLoginError.set("请先安装并启用支持登录的音源插件");
+                webLoginError.set(I18n.tr("login.error.noPlugin"));
             }
         } catch (Throwable e) {
             Logger.warn("web login launcher failed: {}", safeMessage(e));
             webLoginBusy.set(false);
-            webLoginError.set("无法打开登录页面");
+            webLoginError.set(I18n.tr("login.error.openFailed"));
         }
     }
 
@@ -7122,7 +7228,7 @@ public final class PlayerController {
     /** Shell callback for browser creation/native-engine failures. */
     public void failWebLogin(String message) {
         final String safe = message == null || message.trim().isEmpty()
-                ? "无法打开音源登录页面" : message.trim();
+                ? I18n.tr("login.error.openSourceFailed") : message.trim();
         post(() -> {
             webLoginBusy.set(false);
             webLoginError.set(safe);
@@ -7151,7 +7257,7 @@ public final class PlayerController {
         if (onlineSourcesArePluginOnly()) {
             post(() -> {
                 webLoginBusy.set(false);
-                webLoginError.set("当前没有可用的登录插件");
+                webLoginError.set(I18n.tr("login.error.noLoginPlugin"));
             });
             return;
         }
@@ -7163,7 +7269,7 @@ public final class PlayerController {
                     webLoginBusy.set(false);
                     webLoginError.set("");
                     webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
-                    showToast("登录成功");
+                    showToast(I18n.tr("toast.login.success"));
                 });
                 refreshLogin();
             } catch (Throwable e) {
@@ -7174,7 +7280,7 @@ public final class PlayerController {
                 post(() -> {
                     webLoginBusy.set(false);
                     webLoginError.set(reason == null || reason.trim().isEmpty()
-                            ? "Cookie 登录失败" : reason);
+                            ? I18n.tr("login.error.cookieFailed") : reason);
                 });
             }
         });
@@ -7260,7 +7366,7 @@ public final class PlayerController {
                 webLoginError.set("");
                 webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
                 refreshPluginAccount(pendingPluginLoginProvider, challenge.account);
-                showToast("登录成功");
+                showToast(I18n.tr("toast.login.success"));
                 break;
             case "expired":
                 qrStatus.set(800);
@@ -7271,7 +7377,7 @@ public final class PlayerController {
                 qrStatus.set(800);
                 webLoginBusy.set(false);
                 webLoginError.set(challenge.message == null || challenge.message.isEmpty()
-                        ? "登录失败" : challenge.message);
+                        ? I18n.tr("login.error.failed") : challenge.message);
                 break;
             default: qrStatus.set(801); break;
         }
@@ -7313,16 +7419,15 @@ public final class PlayerController {
         if (account.loggedIn) {
             publishPendingCredentialEncryptedNotice();
             if (pluginHostApi.consumeCredentialUnlock()) {
-                showToast("已从系统密钥库安全恢复登录凭据");
+                showToast(I18n.tr("toast.keystore.restored"));
             }
-            refreshPluginLiked(provider);
+            refreshPluginLiked();
             loadMyPlaylists();
             loadRecent();
         } else {
             pendingCredentialEncryptedNotice = false;
-            pluginLikedSet.clear();
-            likedCount.set(0);
-            currentLiked.set(false);
+            pluginLikedBySource.remove(provider);
+            publishPluginLiked();
         }
     }
 
@@ -7369,7 +7474,7 @@ public final class PlayerController {
                 });
                 if (in) {
                     if (id > 0 && netease.consumeCredentialUnlock()) {
-                        showToast("已从系统密钥库安全恢复登录凭据");
+                        showToast(I18n.tr("toast.keystore.restored"));
                     }
                     loadHome();
                     loadMyPlaylists();
@@ -7399,14 +7504,14 @@ public final class PlayerController {
             legacyCredentialMigrationGeneration.incrementAndGet();
             pluginAccounts.logout(provider).whenComplete((ignored, error) -> post(() -> {
                 if (error != null) {
-                    showToast("退出登录失败：" + safeMessage(error));
+                    showToast(I18n.tr("toast.logout.failed", safeMessage(error)));
                     return;
                 }
                 legacyCredentialMigrationAttempted = true;
                 netease.logout();
                 clearPublishedAccount();
-                dropMyPlaylistsForSource(provider);
-                showToast("已退出登录");
+                dropSourceUserData(provider);
+                showToast(I18n.tr("toast.logout.done"));
             }));
             return;
         }
@@ -7419,7 +7524,7 @@ public final class PlayerController {
         }
         netease.logout();
         clearPublishedAccount();
-        showToast("已退出登录");
+        showToast(I18n.tr("toast.logout.done"));
     }
 
     private void clearPublishedAccount() {
@@ -7431,12 +7536,16 @@ public final class PlayerController {
         sourceRecentSongs.set(Collections.<Song>emptyList());
         clearPublishedPluginAccount();
         publishMyPlaylists();
+        publishPluginLiked();
     }
 
-    /** 我的 keeps the other sources' playlists after one source signs out. */
-    private void dropMyPlaylistsForSource(String providerId) {
+    /** 我的 and the liked hearts keep the other sources' data after one source
+     *  signs out; only the leaving source's own slice goes away. */
+    private void dropSourceUserData(String providerId) {
         myPlaylistsBySource.remove(providerId);
         publishMyPlaylists();
+        pluginLikedBySource.remove(providerId);
+        publishPluginLiked();
     }
 
     /** Persist the queue + live playback position + play mode right now. The only
@@ -7495,6 +7604,6 @@ public final class PlayerController {
     public void clearDiskCache() {
         diskCache.clearAll();
         refreshCacheSize();
-        showToast("缓存已清除");
+        showToast(I18n.tr("toast.cache.cleared"));
     }
 }

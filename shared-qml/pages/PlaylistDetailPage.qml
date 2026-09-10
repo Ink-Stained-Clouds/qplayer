@@ -116,7 +116,7 @@ Rectangle {
                 icon: "image"
                 onClicked: player.pickPlaylistCover(player.openPlaylistId)
             }
-            // Delete — only your own playlists, and never the "我喜欢的音乐" default
+            // Delete — only your own playlists, and never the default liked-songs
             // (the first playlist, which can't be removed). Confirms first.
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
@@ -161,7 +161,7 @@ Rectangle {
                     id: pfFloatLabel
                     x: 0
                     y: pfInputArea.isFloating ? -7 : (pfInputArea.height - height) / 2
-                    text: "搜索歌单内歌曲"
+                    text: i18n.t("playlist.searchInside")
                     color: Theme.color.onSurfaceVariantColor
                     opacity: pfInputArea.isFloating ? 0.8 : 0.7
                     font.family: Theme.typography.bodyLarge.family
@@ -229,7 +229,7 @@ Rectangle {
                 // playlist's SongRows alive after you return home.
                 list: page.visible ? page.filteredTracks : null
                 // Long-press a track → add to another playlist, and (in your own
-                // playlist) remove it from this one. Not login-gated: "加入播放列表"
+                // playlist) remove it from this one. Not login-gated: adding to the queue
                 // (local list) works signed-out too.
                 songMenu: true
                 ownedPlaylist: player.playlistOwned
@@ -260,22 +260,22 @@ Rectangle {
                 anchors.centerIn: parent
                 visible: !player.playlistLoading && page.filterText !== ""
                          && page.filteredTracks && page.filteredTracks.length === 0
-                text: "没有匹配的歌曲"
+                text: i18n.t("playlist.noMatches")
                 fontSize: 16
                 color: Theme.color.onSurfaceVariantColor
             }
         }
     }
 
-    // Delete confirmation. On accept the controller removes it and refreshes 我的;
+    // Delete confirmation. On accept the controller removes it and refreshes the library;
     // we drill back out since this playlist no longer exists.
     Dialog {
         id: deleteDialog
         icon: "delete"
-        title: "删除歌单"
-        text: "确定删除歌单「" + player.playlistTitle + "」吗？此操作无法撤销。"
-        acceptText: "删除"
-        rejectText: "取消"
+        title: i18n.t("playlist.delete.title")
+        text: i18n.t("playlist.delete.body", player.playlistTitle)
+        acceptText: i18n.t("common.delete")
+        rejectText: i18n.t("common.cancel")
         onAccepted: {
             if (player.openSourcePlaylistId !== "")
                 player.deleteMediaPlaylist(player.openSourcePlaylistId)

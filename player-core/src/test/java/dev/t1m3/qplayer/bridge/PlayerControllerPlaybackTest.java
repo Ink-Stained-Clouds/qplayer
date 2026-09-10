@@ -632,7 +632,7 @@ public class PlayerControllerPlaybackTest {
             assertEquals(2, controller.playlistCount.peek().intValue());
 
             java.lang.reflect.Method drop = PlayerController.class.getDeclaredMethod(
-                    "dropMyPlaylistsForSource", String.class);
+                    "dropSourceUserData", String.class);
             drop.setAccessible(true);
             drop.invoke(controller, "primary");
 
@@ -689,6 +689,95 @@ public class PlayerControllerPlaybackTest {
             publish.setAccessible(true);
             publish.invoke(controller);
             assertEquals(1, controller.sourceMyPlaylists.peek().size());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void likedSongsStayScopedToTheirOwnSource() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("liked-per-source").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            java.lang.reflect.Field slicesField =
+                    PlayerController.class.getDeclaredField("pluginLikedBySource");
+            slicesField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, java.util.Set<String>> slices =
+                    (java.util.Map<String, java.util.Set<String>>) slicesField.get(controller);
+            slices.put("netease", new java.util.LinkedHashSet<>(
+                    Arrays.asList("netease:song:1", "netease:song:2")));
+            slices.put("qq", new java.util.LinkedHashSet<>(
+                    Arrays.asList("qq:song:004X")));
+
+            java.lang.reflect.Method publish =
+                    PlayerController.class.getDeclaredMethod("publishPluginLiked");
+            publish.setAccessible(true);
+            publish.invoke(controller);
+            assertEquals(3, controller.likedCount.peek().intValue());
+
+            java.lang.reflect.Method drop = PlayerController.class.getDeclaredMethod(
+                    "dropSourceUserData", String.class);
+            drop.setAccessible(true);
+            drop.invoke(controller, "netease");
+
+            // Signing out of one source must not forget the other's hearts.
+            assertEquals(1, controller.likedCount.peek().intValue());
+        } finally {
+            if (controller != null) controller.shutdown();
+            AppDirs.setBase(oldBase);
+            AppDirs.setCacheBase(oldCacheBase);
+        }
+    }
+
+    @Test
+    public void aPluginDrivingPlaybackOnlyAllowsItsOwnSongs() throws Exception {
+        String oldBase = AppDirs.base();
+        String oldCacheBase = AppDirs.cacheBase();
+        PlayerController controller = null;
+        try {
+            Path base = temporaryFolder.newFolder("plugin-playback-guard").toPath();
+            AppDirs.setBase(base.toString());
+            AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller = new PlayerController(
+                    new FakeAudioBackend(), track -> { }, NeteaseClient.INSTANCE);
+
+            java.lang.reflect.Method blocked = PlayerController.class.getDeclaredMethod(
+                    "blockedByPluginSession", Track.class);
+            blocked.setAccessible(true);
+            Track local = new Track();
+            local.source = Track.Source.LOCAL;
+            local.filePath = "/music/song.flac";
+            Track netease = new Track();
+            netease.source = Track.Source.PLUGIN;
+            netease.mediaId = "netease:song:42";
+            Track other = new Track();
+            other.source = Track.Source.PLUGIN;
+            other.mediaId = "qq:song:004X";
+
+            // No plugin driving playback: everything plays.
+            assertFalse((Boolean) blocked.invoke(controller, local));
+
+            java.lang.reflect.Field owner =
+                    PlayerController.class.getDeclaredField("pluginAutoAdvanceBlocker");
+            owner.setAccessible(true);
+            owner.set(controller, "netease");
+
+            assertFalse("the hosting source's own songs still play",
+                    (Boolean) blocked.invoke(controller, netease));
+            assertTrue("a local file is not addressable by the driving plugin",
+                    (Boolean) blocked.invoke(controller, local));
+            assertTrue("another source's songs are not addressable either",
+                    (Boolean) blocked.invoke(controller, other));
         } finally {
             if (controller != null) controller.shutdown();
             AppDirs.setBase(oldBase);

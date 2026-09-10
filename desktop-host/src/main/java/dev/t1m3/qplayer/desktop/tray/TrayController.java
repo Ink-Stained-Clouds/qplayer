@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.desktop.tray;
 
 import dev.t1m3.qplayer.desktop.window.DesktopWindow;
+import dev.t1m3.qplayer.i18n.I18n;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
 import dev.t1m3.qplayer.util.Logger;
@@ -104,13 +105,13 @@ public final class TrayController implements PlayerController.PlaybackListener {
             winTray = new WinTray();
             if (iconIco != null) winTray.setIconIco(iconIco);
             winTray.setIconPng(iconPng != null ? iconPng : placeholderPng());
-            winTray.addItem("上一首", () -> win.postMainTask(controller::prev));
-            winPlayPause = winTray.addItem("播放 / 暂停", () -> win.postMainTask(controller::toggle));
-            winTray.addItem("下一首", () -> win.postMainTask(controller::next));
+            winTray.addItem(I18n.tr("tray.previous"), () -> win.postMainTask(controller::prev));
+            winPlayPause = winTray.addItem(I18n.tr("tray.playPause"), () -> win.postMainTask(controller::toggle));
+            winTray.addItem(I18n.tr("tray.next"), () -> win.postMainTask(controller::next));
             winTray.addSeparator();
             winLyricToggle = winTray.addItem(lyricToggleLabel(), () -> win.postMainTask(this::toggleLyricWindow));
-            winTray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
-            winTray.addItem("退出", () -> win.postMainTask(() -> {
+            winTray.addItem(I18n.tr("tray.show"), () -> win.postMainTask(win::restoreFromTray));
+            winTray.addItem(I18n.tr("tray.quit"), () -> win.postMainTask(() -> {
                 shutdown();
                 win.requestQuit();
             }));
@@ -153,15 +154,15 @@ public final class TrayController implements PlayerController.PlaybackListener {
     private void configureLinuxTray(LinuxTrayBackend tray) {
         tray.setIconPng(iconPng != null ? iconPng : placeholderPng());
         tray.setLeftClickAction(() -> win.postMainTask(win::restoreFromTray));
-        tray.addItem("上一首", () -> win.postMainTask(controller::prev));
-        linuxPlayPause = tray.addItem("播放 / 暂停",
+        tray.addItem(I18n.tr("tray.previous"), () -> win.postMainTask(controller::prev));
+        linuxPlayPause = tray.addItem(I18n.tr("tray.playPause"),
                 () -> win.postMainTask(controller::toggle));
-        tray.addItem("下一首", () -> win.postMainTask(controller::next));
+        tray.addItem(I18n.tr("tray.next"), () -> win.postMainTask(controller::next));
         tray.addSeparator();
         linuxLyricToggle = tray.addItem(lyricToggleLabel(),
                 () -> win.postMainTask(this::toggleLyricWindow));
-        tray.addItem("显示窗口", () -> win.postMainTask(win::restoreFromTray));
-        tray.addItem("退出", () -> win.postMainTask(() -> {
+        tray.addItem(I18n.tr("tray.show"), () -> win.postMainTask(win::restoreFromTray));
+        tray.addItem(I18n.tr("tray.quit"), () -> win.postMainTask(() -> {
             shutdown();
             win.requestQuit();
         }));
@@ -179,15 +180,15 @@ public final class TrayController implements PlayerController.PlaybackListener {
             menuFont = pickCjkFont();
 
             popup = new javax.swing.JPopupMenu();
-            popup.add(swingItem("上一首", controller::prev));
-            playPause = swingItem("播放 / 暂停", controller::toggle);
+            popup.add(swingItem(I18n.tr("tray.previous"), controller::prev));
+            playPause = swingItem(I18n.tr("tray.playPause"), controller::toggle);
             popup.add(playPause);
-            popup.add(swingItem("下一首", controller::next));
+            popup.add(swingItem(I18n.tr("tray.next"), controller::next));
             popup.addSeparator();
             lyricToggle = swingItem(lyricToggleLabel(), this::toggleLyricWindow);
             popup.add(lyricToggle);
-            popup.add(swingItem("显示窗口", win::restoreFromTray));
-            popup.add(swingItem("退出", () -> {
+            popup.add(swingItem(I18n.tr("tray.show"), win::restoreFromTray));
+            popup.add(swingItem(I18n.tr("tray.quit"), () -> {
                 shutdown();
                 win.requestQuit();
             }));
@@ -278,7 +279,7 @@ public final class TrayController implements PlayerController.PlaybackListener {
     private String lyricToggleLabel() {
         dev.t1m3.qplayer.desktop.window.DesktopLyricWindow lw = win.lyricWindow();
         boolean on = lw != null && lw.isEnabled();
-        return on ? "关闭桌面歌词" : "开启桌面歌词";
+        return I18n.tr(on ? "tray.lyric.off" : "tray.lyric.on");
     }
 
     @Override
@@ -289,7 +290,7 @@ public final class TrayController implements PlayerController.PlaybackListener {
 
     private void refresh() {
         try {
-            String pp = controller.isPlaying() ? "暂停" : "播放";
+            String pp = I18n.tr(controller.isPlaying() ? "tray.pause" : "tray.play");
             Object title = controller.title.peek();
             Object artist = controller.artist.peek();
             String tip = title == null ? "QPlayer"

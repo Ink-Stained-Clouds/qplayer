@@ -4,8 +4,8 @@ import md3.Core
 import "."
 
 // SettingSpec.ACTION — a control with no stored value: an IconButton when the
-// spec names an icon (关于's link / system_update), a labelled Button otherwise
-// (选择… / 清除缓存). The handler is registered by the host or by SettingsCore
+// spec names an icon (About's link / system_update), a labelled Button otherwise
+// (choose a font / clear the cache). The handler is registered by the host or by SettingsCore
 // and reached by id, so this row never grows a per-action branch.
 //
 // A `provider` supplies live text — inline beside the title (app version, cache
@@ -20,7 +20,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        SettingTitle { text: row.spec ? row.spec.title : "" }
+        SettingTitle { text: row.spec ? i18n.t(row.spec.title) : "" }
         Text {
             visible: row.spec && row.spec.inlineProvider
             Layout.alignment: Qt.AlignVCenter
@@ -39,7 +39,7 @@ ColumnLayout {
         Button {
             visible: row.spec && row.spec.icon.length === 0
             type: row.spec ? row.spec.buttonType : "filledTonal"
-            text: row.spec ? row.spec.button : ""
+            text: row.spec ? i18n.t(row.spec.button) : ""
             onClicked: settings.invoke(row.spec.action)
         }
     }
@@ -47,5 +47,5 @@ ColumnLayout {
         visible: text.length > 0 && row.spec && !row.spec.inlineProvider
         text: row.providerText
     }
-    SettingDesc { text: row.spec ? row.spec.desc : "" }
+    SettingDesc { text: row.spec ? i18n.t(row.spec.desc) : "" }
 }

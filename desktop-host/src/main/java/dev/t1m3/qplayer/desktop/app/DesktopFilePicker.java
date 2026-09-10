@@ -1,6 +1,7 @@
 package dev.t1m3.qplayer.desktop.app;
 
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
+import dev.t1m3.qplayer.i18n.I18n;
 import com.formdev.flatlaf.themes.FlatMacLightLaf;
 import dev.t1m3.qplayer.util.Logger;
 
@@ -38,20 +39,20 @@ final class DesktopFilePicker {
     }
 
     static void pickDirectory(String initialPath, Consumer<String> onPicked) {
-        show("选择目录", initialDirectory(initialPath), true, null, null, onPicked);
+        show(I18n.tr("settings.folder.choose"), initialDirectory(initialPath), true, null, null, onPicked);
     }
 
     static void pickImage(Consumer<String> onPicked) {
         File pictures = new File(System.getProperty("user.home", "."), "Pictures");
-        show("选择歌单封面", initialDirectory(pictures.getAbsolutePath()), false,
-                "图片文件 (*.png, *.jpg, *.webp, *.gif, *.bmp)",
+        show(I18n.tr("picker.playlistCover"), initialDirectory(pictures.getAbsolutePath()), false,
+                I18n.tr("picker.imageFiles"),
                 new String[]{"png", "jpg", "jpeg", "webp", "gif", "bmp"}, onPicked);
     }
 
     static void pickPlugin(Consumer<String> onPicked) {
         File downloads = new File(System.getProperty("user.home", "."), "Downloads");
-        show("导入音源插件", initialDirectory(downloads.getAbsolutePath()), false,
-                "QPlayer 插件 (*.qplug)", new String[]{"qplug"}, onPicked);
+        show(I18n.tr("picker.importPlugin"), initialDirectory(downloads.getAbsolutePath()), false,
+                I18n.tr("picker.pluginFiles"), new String[]{"qplug"}, onPicked);
     }
 
     private static void show(String title, File initialDirectory, boolean directoryOnly,

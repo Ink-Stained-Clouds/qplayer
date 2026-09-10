@@ -535,6 +535,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                         view.networkPolicy(controller::allowRemoteQmlResource);
                     }
                     if (settings != null) view.context("settings", settings);
+                    view.context("i18n", dev.t1m3.qplayer.i18n.I18n.instance());
                     // hostWindow (the desktop-only custom title bar bridge) must still
                     // resolve to something here: qml4j's compiler rejects an undeclared
                     // top-level identifier at compile time, even one only referenced

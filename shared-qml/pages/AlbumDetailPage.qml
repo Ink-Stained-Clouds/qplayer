@@ -97,11 +97,12 @@ Rectangle {
                 anchors.right: artistLine.right
                 anchors.top: artistLine.bottom
                 anchors.topMargin: 8
-                text: player.albumPublishYear !== ""
-                      ? (player.albumPublishYear + ((tracks.list && tracks.list.length > 0)
-                             ? (" · " + tracks.list.length + " 首歌曲") : ""))
-                      : ((tracks.list && tracks.list.length > 0)
-                             ? (tracks.list.length + " 首歌曲") : "")
+                text: {
+                    var songs = tracks.list && tracks.list.length > 0
+                                ? i18n.t("common.songCount", tracks.list.length) : ""
+                    if (player.albumPublishYear === "") return songs
+                    return player.albumPublishYear + (songs !== "" ? " · " + songs : "")
+                }
                 color: Theme.color.onSurfaceVariantColor
                 fontSize: 12
             }

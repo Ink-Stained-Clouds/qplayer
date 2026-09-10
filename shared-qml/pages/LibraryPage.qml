@@ -4,7 +4,7 @@ import md3.Core
 import "."
 import "../components"
 
-// 我的: the signed-in user's playlists. Tapping one opens its detail. Prompts to
+// Library: the signed-in user's playlists. Tapping one opens its detail. Prompts to
 // log in when signed out.
 Item {
     id: page
@@ -41,9 +41,9 @@ Item {
     Dialog {
         id: createDialog
         icon: "playlist_add"
-        title: "新建歌单"
-        acceptText: "创建"
-        rejectText: "取消"
+        title: i18n.t("library.create.title")
+        acceptText: i18n.t("library.create.accept")
+        rejectText: i18n.t("common.cancel")
         onAccepted: player.createPlaylist(nameField.text)
 
         TextField {
@@ -51,7 +51,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             type: "outlined"
-            label: "歌单名称"
+            label: i18n.t("library.create.hint")
             onAccepted: { createDialog.accepted(); createDialog.close() }
         }
     }
@@ -62,13 +62,13 @@ Item {
         visible: !player.loggedIn && !page.hasPlaylists
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "登录后查看你的歌单"
+            text: i18n.t("library.signInPrompt")
             color: Theme.color.onSurfaceVariantColor
             fontSize: 15
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
-            type: "filled"; text: "登录音源账号"
+            type: "filled"; text: i18n.t("library.signInButton")
             onClicked: page.requestLogin()
         }
     }

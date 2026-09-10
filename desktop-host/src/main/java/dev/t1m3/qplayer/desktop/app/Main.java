@@ -114,6 +114,10 @@ public final class Main {
                 AppDirs.cacheDir().resolve("qml"),
                 classpathResources.qmlFingerprint(currentVersion));
 
+        // Before the controller: it starts the enabled plugins while it is being
+        // built, and each one is version-checked against this.
+        dev.t1m3.qplayer.plugin.PluginCompatibility.setHostVersion(currentVersion);
+
         // Platform backends (the desktop impls already exist).
         AudioBackend audio = new DesktopAudioBackend();
         MetadataReader reader = new DesktopMetadataReader();

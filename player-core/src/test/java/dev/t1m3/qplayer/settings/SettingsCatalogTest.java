@@ -1,5 +1,6 @@
 package dev.t1m3.qplayer.settings;
 
+import dev.t1m3.qplayer.i18n.I18n;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -47,8 +48,10 @@ public class SettingsCatalogTest {
 
         assertEquals(SettingSpec.DROPDOWN, transition.type);
         assertEquals(SettingsCatalog.PAGE_TRANSITION_ZOOM, transition.def);
-        assertEquals("Zoom In / Out", transition.options.get(0));
-        assertTrue(transition.options.contains("无动画"));
+        // Options are language keys; the catalog resolves them at render time.
+        assertEquals("settings.pageTransition.zoom", transition.options.get(0));
+        assertTrue(transition.options.contains("settings.pageTransition.none"));
+        assertEquals("Zoom In / Out", I18n.tr(transition.options.get(0)));
         assertTrue(transition.appliesTo(SettingsCatalog.DESKTOP));
         assertTrue(transition.appliesTo(SettingsCatalog.ANDROID));
     }

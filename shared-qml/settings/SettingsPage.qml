@@ -24,7 +24,8 @@ Rectangle {
     property var categories: settings.categories()
     property var categoryTabModel: {
         var out = []
-        for (var i = 0; i < page.categories.length; i++) out.push({ text: page.categories[i] })
+        for (var i = 0; i < page.categories.length; i++)
+            out.push({ text: i18n.t("settings.category." + page.categories[i]) })
         return out
     }
 
@@ -38,7 +39,7 @@ Rectangle {
     // A desktop-width window fits two card columns; one card per row there left
     // most of the page empty sideways and very long vertically. Same 600px break
     // Main.qml uses to swap the bottom bar for the rail.
-    property bool twoColumn: page.width >= 600 && page.currentCategory !== "插件"
+    property bool twoColumn: page.width >= 600 && page.currentCategory !== "plugins"
     property var installedPlugins: player.sourcePlugins || []
     property var availablePlugins: {
         var out = []
@@ -128,7 +129,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: "设置"
+                text: i18n.t("settings.title")
                 color: Theme.color.onSurfaceColor
                 font.family: Theme.typography.titleLarge.family
                 font.pixelSize: Theme.typography.titleLarge.size
@@ -177,39 +178,40 @@ Rectangle {
 
                     SettingCard {
                         Layout.fillWidth: true
-                        visible: page.currentCategory === "关于"
+                        visible: page.currentCategory === "about"
                                  && player.credentialOwnerOnlyFallback
 
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
-                            SettingTitle { text: "登录凭据保护" }
+                            SettingTitle { text: i18n.t("settings.credential.title") }
                             Button {
                                 type: "filledTonal"
                                 icon: "enhanced_encryption"
                                 enabled: !player.credentialProtectionBusy
-                                text: player.credentialProtectionBusy
-                                      ? "正在启用…" : "重新开启系统加密"
+                                text: i18n.t(player.credentialProtectionBusy
+                                             ? "settings.credential.busy"
+                                             : "settings.credential.button")
                                 onClicked: player.reenableSystemCredentialProtection()
                             }
                         }
                         SettingDesc {
-                            text: "当前使用仅本机用户可读的普通加密。重新开启后，登录凭据密钥将由系统密钥库保护。"
+                            text: i18n.t("settings.credential.desc")
                         }
                     }
 
                     Text {
                         Layout.fillWidth: true
                         Layout.leftMargin: 4
-                        visible: page.currentCategory === "插件"
-                        text: "已安装"
+                        visible: page.currentCategory === "plugins"
+                        text: i18n.t("plugin.installed")
                         color: Theme.color.primary
                         fontSize: 14
                         font.weight: Font.DemiBold
                     }
 
                     Repeater {
-                        model: page.currentCategory === "插件" ? page.installedPlugins : null
+                        model: page.currentCategory === "plugins" ? page.installedPlugins : null
                         delegate: PluginSettingsEntry {
                             Layout.fillWidth: true
                             pluginData: modelData
@@ -218,28 +220,26 @@ Rectangle {
 
                     SettingCard {
                         Layout.fillWidth: true
-                        visible: page.currentCategory === "插件"
+                        visible: page.currentCategory === "plugins"
                                  && page.installedPlugins.length === 0
 
-                        SettingTitle { text: "尚未安装插件" }
-                        SettingDesc {
-                            text: "可以从下方官方列表安装，或从本地文件导入插件。"
-                        }
+                        SettingTitle { text: i18n.t("plugin.none.title") }
+                        SettingDesc { text: i18n.t("plugin.none.desc") }
                     }
 
                     Text {
                         Layout.fillWidth: true
                         Layout.leftMargin: 4
-                        visible: page.currentCategory === "插件"
+                        visible: page.currentCategory === "plugins"
                                  && page.availablePlugins.length > 0
-                        text: "可安装"
+                        text: i18n.t("plugin.available")
                         color: Theme.color.primary
                         fontSize: 14
                         font.weight: Font.DemiBold
                     }
 
                     Repeater {
-                        model: page.currentCategory === "插件" ? page.availablePlugins : null
+                        model: page.currentCategory === "plugins" ? page.availablePlugins : null
                         delegate: PluginCatalogEntry {
                             Layout.fillWidth: true
                             pluginData: modelData
@@ -248,7 +248,7 @@ Rectangle {
 
                     SettingCard {
                         Layout.fillWidth: true
-                        visible: page.currentCategory === "插件"
+                        visible: page.currentCategory === "plugins"
                                  && player.pluginCatalogLoading
 
                         RowLayout {
@@ -258,13 +258,13 @@ Rectangle {
                                 running: player.pluginCatalogLoading
                                 size: 24
                             }
-                            SettingDesc { text: "正在获取插件列表…" }
+                            SettingDesc { text: i18n.t("plugin.catalog.loading") }
                         }
                     }
 
                     SettingCard {
                         Layout.fillWidth: true
-                        visible: page.currentCategory === "插件"
+                        visible: page.currentCategory === "plugins"
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -272,7 +272,7 @@ Rectangle {
                             Button {
                                 type: "text"
                                 icon: "refresh"
-                                text: "刷新列表"
+                                text: i18n.t("plugin.catalog.refresh")
                                 enabled: !player.pluginCatalogLoading && !player.pluginInstallBusy
                                 onClicked: player.refreshPluginCatalog()
                             }
@@ -280,13 +280,13 @@ Rectangle {
                             Button {
                                 type: "outlined"
                                 icon: "upload_file"
-                                text: "从文件导入"
+                                text: i18n.t("plugin.catalog.import")
                                 enabled: !player.pluginInstallBusy
                                 onClicked: player.requestPluginImport()
                             }
                         }
                         SettingDesc {
-                            text: "官方插件列表随 QPlayer 维护；也可以导入本地 .qplug 文件。"
+                            text: i18n.t("plugin.catalog.desc")
                         }
                     }
 

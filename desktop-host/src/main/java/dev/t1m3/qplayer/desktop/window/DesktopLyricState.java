@@ -1,13 +1,14 @@
 package dev.t1m3.qplayer.desktop.window;
 
 import dev.t1m3.qplayer.lyric.LyricTimeline;
+import dev.t1m3.qplayer.i18n.I18n;
 import io.github.timer_err.qml4j.engine.QObject;
 import io.github.timer_err.qml4j.engine.binding.Property;
 
 /** qml4j context object owned and mutated only by the desktop-lyric thread. */
 public final class DesktopLyricState extends QObject {
 
-    static final String IDLE_PLACEHOLDER = "暂无播放";
+    static final String IDLE_PLACEHOLDER = I18n.tr("player.idle");
 
     public final Property<Boolean> playing = new Property<>(Boolean.FALSE);
     public final Property<Boolean> pointerInside = new Property<>(Boolean.FALSE);

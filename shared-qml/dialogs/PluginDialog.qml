@@ -60,6 +60,9 @@ Item {
             if (slot && slot.node && slot.node.type === "input")
                 inputs[slot.node.id] = slot.inputValue;
 
+            if (slot && slot.node && slot.node.type === "switch")
+                inputs[slot.node.id] = slot.switchValue;
+
         }
         player.pluginDialogAction(actionId, JSON.stringify(inputs));
     }
@@ -88,9 +91,9 @@ Item {
 
         icon: control.described("icon", "extension")
         title: control.described("title", player.pluginDialogTitle)
-        text: player.pluginDialogError && player.pluginDialogError.length > 0 ? player.pluginDialogError : (control.body.length === 0 ? "正在载入…" : "")
+        text: player.pluginDialogError && player.pluginDialogError.length > 0 ? player.pluginDialogError : (control.body.length === 0 ? i18n.t("common.loading") : "")
         showAcceptButton: false
-        rejectText: "关闭"
+        rejectText: i18n.t("common.close")
         onClosed: player.closePluginDialog()
         onRejected: player.closePluginDialog()
 
