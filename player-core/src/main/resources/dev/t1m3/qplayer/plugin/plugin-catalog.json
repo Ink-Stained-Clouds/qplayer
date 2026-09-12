@@ -12,5 +12,33 @@
     "description": "由独立项目维护的 QQ 音乐音源插件，提供搜索、播放、歌词与 Cookie 登录。",
     "repo": "TIMER-err/qplayer-qqmusic-plugin",
     "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAED7z1yYQ9a5UVpOPUict1ShkKH26NnbEMMAHsxy5zJEPeDd3J2etP1PRKXylO2KWWZgib2KB5/yZ0Xgmj+36TBg=="
+  },
+  {
+    "id": "kuwo",
+    "name": "酷我音乐",
+    "description": "由独立项目维护的酷我音乐音源插件，提供搜索、播放、歌词与 Cookie 登录。",
+    "repo": "MiaM1ku/qplayer-kuwo-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb20opVRUPIiFEeYdDli4uVbL1ry/+VVg5zHVC9/tN0rGcmcssS/Ko3mHjzairTmZZtIuWngooAvqOtOguaK/mg=="
+  },
+  {
+    "id": "migu",
+    "name": "咪咕音乐",
+    "description": "由独立项目维护的咪咕音乐音源插件，提供搜索、播放、歌词与 Cookie 登录。",
+    "repo": "MiaM1ku/qplayer-migu-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb20opVRUPIiFEeYdDli4uVbL1ry/+VVg5zHVC9/tN0rGcmcssS/Ko3mHjzairTmZZtIuWngooAvqOtOguaK/mg=="
+  },
+  {
+    "id": "kugou",
+    "name": "酷狗音乐",
+    "description": "由独立项目维护的酷狗音乐音源插件，提供搜索、播放、歌词、扫码登录与用户歌单。",
+    "repo": "MiaM1ku/qplayer-kugou-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb20opVRUPIiFEeYdDli4uVbL1ry/+VVg5zHVC9/tN0rGcmcssS/Ko3mHjzairTmZZtIuWngooAvqOtOguaK/mg=="
+  },
+  {
+    "id": "soda",
+    "name": "汽水音乐",
+    "description": "由独立项目维护的汽水音乐音源插件，提供搜索、播放、歌词、扫码登录与用户歌单。",
+    "repo": "MiaM1ku/qplayer-soda-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb20opVRUPIiFEeYdDli4uVbL1ry/+VVg5zHVC9/tN0rGcmcssS/Ko3mHjzairTmZZtIuWngooAvqOtOguaK/mg=="
   }
 ]
