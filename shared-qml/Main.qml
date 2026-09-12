@@ -841,6 +841,7 @@ Rectangle {
                     AccountPage {
                         onHome: app.goHome()
                         onBack: app.popPage()
+                        onRequestLogin: app.loginOpen = true
                     }
                 }
             }

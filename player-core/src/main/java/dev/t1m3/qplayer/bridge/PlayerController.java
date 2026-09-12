@@ -788,6 +788,7 @@ public final class PlayerController {
     private final AtomicLong homeGeneration = new AtomicLong();
     private final AtomicLong accountGeneration = new AtomicLong();
     private final AtomicLong sourceAccountsGeneration = new AtomicLong();
+    private final AtomicLong loginMetadataGeneration = new AtomicLong();
     private final Map<String, SourceAccountRow> sourceAccountsBySource = new LinkedHashMap<>();
     private List<String> sourceAccountOrder = Collections.emptyList();
     private final AtomicLong pluginLikedGeneration = new AtomicLong();
@@ -1083,6 +1084,47 @@ public final class PlayerController {
                 publishSourceAccounts();
             }));
         }
+    }
+
+    /**
+     * Aim the login surface at one listed source, so the account page can sign in
+     * to a source that is not the primary one. Returns false when that source
+     * cannot be signed into, and the caller should not open the login dialog.
+     */
+    public boolean beginSourceLogin(String providerId) {
+        if (providerId == null || providerId.isEmpty()) return false;
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if (!manifest.id.equals(providerId)) continue;
+            if (!manifest.capabilitySet().contains(ProviderCapability.LOGIN)) return false;
+            publishLoginMetadata(manifest);
+            return true;
+        }
+        return false;
+    }
+
+    /** Sign out of one listed source, leaving every other source signed in. */
+    public void logoutSource(String providerId) {
+        if (providerId == null || providerId.isEmpty()) return;
+        final String provider = providerId;
+        if (provider.equals(pendingPluginLoginProvider)) {
+            legacyCredentialMigrationGeneration.incrementAndGet();
+            legacyCredentialMigrationAttempted = true;
+        }
+        pluginAccounts.logout(provider).whenComplete((ignored, error) -> post(() -> {
+            if (error != null) {
+                showToast(I18n.tr("toast.logout.failed", safeMessage(error)));
+                return;
+            }
+            // Only the primary source owns the account header; signing out of any
+            // other source must not blank it.
+            if (provider.equals(pluginRegistry.primaryProvider())) {
+                if ("netease".equals(provider)) netease.logout();
+                clearPublishedAccount();
+            }
+            dropSourceUserData(provider);
+            refreshSourceAccounts();
+            showToast(I18n.tr("toast.logout.done"));
+        }));
     }
 
     private void publishSourceAccounts() {
@@ -1546,17 +1588,29 @@ public final class PlayerController {
             return;
         }
         final PluginManifest provider = selected;
+        // A persisted session is what the account header should show; ask for it
+        // independently so a failed/slow methods() can't leave the user "logged out"
+        // until the next restart.
+        refreshPluginAccount(provider.id, null);
+        publishLoginMetadata(provider);
+    }
+
+    /**
+     * Point the login surface (the scalars LoginDialog reads, and the provider
+     * startQrLogin/submit act on) at one source. Normally that is the primary
+     * source; the account page also aims it at a specific source so each listed
+     * account can be signed in on its own.
+     */
+    private void publishLoginMetadata(PluginManifest provider) {
+        final long generation = loginMetadataGeneration.incrementAndGet();
         loginProviderName.set(provider.name);
         pluginLoginActive.set(true);
         // Claim the login provider before the metadata round trip: restoring a stored
         // session (and logging out of it) must not depend on that call succeeding.
         pendingPluginLoginProvider = provider.id;
-        // A persisted session is what the account header should show; ask for it
-        // independently so a failed/slow methods() can't leave the user "logged out"
-        // until the next restart.
-        refreshPluginAccount(provider.id, null);
         pluginAccounts.methods(provider.id).whenComplete((methods, error) -> post(() -> {
-            if (!provider.id.equals(pluginRegistry.primaryProvider())) return;
+            // Another source claimed the login surface while this was in flight.
+            if (generation != loginMetadataGeneration.get()) return;
             if (error != null) {
                 Logger.warn("plugin {} login metadata failed: {}", provider.id, safeMessage(error));
                 return;

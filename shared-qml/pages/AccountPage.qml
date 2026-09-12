@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import md3.Core
 import "."
 import "../components"
+import "../dialogs"
 
 // Account overlay: signed-in user's profile (avatar / nickname / VIP + level
 // badges / signature), header stats (playlist + liked counts) and a logout
@@ -13,7 +14,12 @@ Rectangle {
     id: page
     signal back()
     signal home()
+    signal requestLogin()
     color: Theme.color.surface
+
+    // The source whose gear was tapped. Sign-in and sign-out act on this one
+    // alone, so the two sources never share a setting.
+    property var menuRow: null
 
     // Swallow taps on empty areas so they don't fall through to the page beneath.
     MouseArea { anchors.fill: parent }
@@ -234,7 +240,7 @@ Rectangle {
                             id: sourceWho
                             anchors.left: sourceAvatar.right
                             anchors.leftMargin: 14
-                            anchors.right: primaryBadge.left
+                            anchors.right: primaryBadge.visible ? primaryBadge.left : sourceGear.left
                             anchors.rightMargin: 8
                             anchors.top: parent.top
                             anchors.topMargin: 16
@@ -261,10 +267,22 @@ Rectangle {
                             font.pixelSize: Theme.typography.bodySmall.size
                         }
 
+                        IconButton {
+                            id: sourceGear
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: "settings"
+                            onClicked: {
+                                page.menuRow = modelData;
+                                sourceMenu.open();
+                            }
+                        }
+
                         Rectangle {
                             id: primaryBadge
-                            anchors.right: parent.right
-                            anchors.rightMargin: 16
+                            anchors.right: sourceGear.left
+                            anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
                             visible: modelData.primary
                             width: primaryLabel.implicitWidth + 16
@@ -348,10 +366,14 @@ Rectangle {
                 // --- actions -------------------------------------------
                 Item { Layout.preferredHeight: 8 }
 
+                // With several sources listed, signing in and out belongs to each
+                // source's own gear -- a single button here could only ever mean
+                // one of them. It stays for the single-source case.
                 Button {
                     Layout.fillWidth: true
                     Layout.leftMargin: 12
                     Layout.rightMargin: 12
+                    visible: (player.sourceAccounts || []).length <= 1
                     type: "outlined"
                     icon: "logout"
                     text: i18n.t("account.logout")
@@ -359,6 +381,30 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // Per-source settings. Sign-in aims the shared login surface at this source
+    // first, so the existing login dialog can serve a source that is not primary.
+    SourceAccountDialog {
+        id: sourceMenu
+        row: page.menuRow
+        onRequestLogin: {
+            if (page.menuRow && player.beginSourceLogin(page.menuRow.providerId)) {
+                page.requestLogin();
+            }
+        }
+        onRequestLogout: if (page.menuRow) sourceLogoutDialog.open()
+    }
+
+    Dialog {
+        id: sourceLogoutDialog
+        title: i18n.t("account.logout")
+        text: page.menuRow
+              ? i18n.t("account.source.logout.confirm", page.menuRow.sourceName) : ""
+        icon: "logout"
+        acceptText: i18n.t("account.logout.accept")
+        rejectText: i18n.t("common.cancel")
+        onAccepted: if (page.menuRow) player.logoutSource(page.menuRow.providerId)
     }
 
     Dialog {
