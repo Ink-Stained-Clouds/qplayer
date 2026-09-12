@@ -29,19 +29,15 @@ Item {
         // dialog is ever on screen, and the app's own goes first.
         onClosed: player.appUpdatePromptClosed()
 
-        Flickable {
+        // No Flickable of its own: Dialog scrolls its body once the notes push
+        // it past the screen, and a nested scroller would just fight that one
+        // for the drag.
+        Text {
             width: parent.width
-            height: Math.min(notesText.height, 260)
-            contentHeight: notesText.height
-            clip: true
-            Text {
-                id: notesText
-                width: parent.width
-                text: player.updateNotes
-                color: Theme.color.onSurfaceVariantColor
-                fontSize: 13
-                wrapMode: Text.Wrap
-            }
+            text: player.updateNotes
+            color: Theme.color.onSurfaceVariantColor
+            fontSize: 13
+            wrapMode: Text.Wrap
         }
     }
 }

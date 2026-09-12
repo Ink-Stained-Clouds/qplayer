@@ -205,10 +205,20 @@ Item {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: mainColumn.implicitHeight + 48 // Padding
+                // Grows with its content, but never past the screen: a dialog
+                // whose content outgrows the viewport is centred, so it would
+                // otherwise spill off BOTH ends with no way to reach either.
+                // Past the cap the body scrolls instead (see bodyScroll).
+                // 48 of breathing room top and bottom also keeps a maxed-out
+                // dialog clear of the system bars the scene draws under.
+                height: {
+                    var natural = mainColumn.implicitHeight + 48 // Padding
+                    var cap = overlayLayer.height - 96
+                    return cap > 0 && natural > cap ? cap : natural
+                }
                 radius: 28 // MD3 Extra Large
                 color: _colors.surfaceContainerHigh
-                
+
                 // Block clicks from passing through to scrim
                 MouseArea {
                     anchors.fill: parent
@@ -222,8 +232,14 @@ Item {
                     anchors.topMargin: 24
                     anchors.leftMargin: 24
                     anchors.rightMargin: 24
+                    // Explicit height (not just the anchors) so that once the
+                    // container is capped the column knows it is over budget and
+                    // shrinks its one fillHeight child -- bodyScroll -- by exactly
+                    // the overflow. Uncapped this equals implicitHeight, so nothing
+                    // shrinks and every existing dialog lays out as before.
+                    height: dialogContainer.height - 48
                     spacing: 16
-                    
+
                     // Icon
                     Text {
                         visible: control.icon !== ""
@@ -249,26 +265,56 @@ Item {
                         wrapMode: Text.Wrap
                     }
                     
-                    // Supporting Text
-                    Text {
-                        visible: control.text !== ""
-                        text: control.text
-                        font.family: _typography.bodyMedium.family
-                        font.pixelSize: _typography.bodyMedium.size
-                        font.weight: _typography.bodyMedium.weight
-                        color: _colors.onSurfaceVariantColor
+                    // Supporting text and custom content scroll together; the
+                    // icon, the headline and the action row stay pinned (MD3).
+                    // bodyColumn carries an explicit width because qml4j does not
+                    // propagate fillWidth reliably into a nested layout whose own
+                    // width is merely implied -- without it Text.Wrap stops working.
+                    Flickable {
+                        id: bodyScroll
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
+                        // The natural height. The enclosing ColumnLayout overrides
+                        // it downwards (and only it, being the sole fillHeight
+                        // child) when the capped container leaves less than this.
+                        Layout.preferredHeight: bodyColumn.implicitHeight
+                        Layout.fillHeight: true
+                        visible: control.text !== "" || contentPlaceholder.children.length > 0
+                        contentWidth: width
+                        contentHeight: bodyColumn.implicitHeight
+                        // Only clip once there is something to scroll. Content
+                        // is allowed to paint slightly outside its own box -- an
+                        // outlined TextField floats its label to y: -8 -- and a
+                        // permanent clip would shave that off every dialog that
+                        // fits on screen perfectly well.
+                        clip: bodyColumn.implicitHeight > bodyScroll.height
+
+                        ColumnLayout {
+                            id: bodyColumn
+                            width: bodyScroll.width
+                            spacing: 16
+
+                            // Supporting Text
+                            Text {
+                                visible: control.text !== ""
+                                text: control.text
+                                font.family: _typography.bodyMedium.family
+                                font.pixelSize: _typography.bodyMedium.size
+                                font.weight: _typography.bodyMedium.weight
+                                color: _colors.onSurfaceVariantColor
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                            }
+
+                            // Custom Content
+                            Item {
+                                id: contentPlaceholder
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: childrenRect.height
+                                visible: children.length > 0
+                            }
+                        }
                     }
-                    
-                    // Custom Content
-                    Item {
-                        id: contentPlaceholder
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: childrenRect.height
-                        visible: children.length > 0
-                    }
-                    
+
                     // Actions
                     ColumnLayout {
                         Layout.fillWidth: true

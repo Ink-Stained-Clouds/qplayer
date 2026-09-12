@@ -31,35 +31,31 @@ Item {
                 player.closeSongArtistPicker()
         }
 
-        Flickable {
+        // No Flickable of its own: Dialog scrolls its body once the list pushes
+        // it past the screen, and a nested scroller would just fight that one
+        // for the drag. Repeater rows still need explicit y -- qml4j does not
+        // position dynamically created children the way a Qt positioner does.
+        Item {
             id: list
             width: parent.width
-            height: Math.min(control.rowsHeight, 320)
-            contentWidth: width
-            contentHeight: control.rowsHeight
-            clip: true
+            height: control.rowsHeight
 
-            Item {
-                width: list.width
-                height: list.contentHeight
-
-                Repeater {
-                    model: control.artists
-                    ArtistRow {
-                        width: list.width
-                        height: control.rowH
-                        y: index * control.rowH
-                        artistId: modelData.id
-                        name: modelData.name
-                        coverUrl: modelData.coverUrl || ""
-                        coverThumbPath: modelData.coverThumbPath || ""
-                        onActivated: {
-                            player.closeSongArtistPicker()
-                            if (modelData.mediaId)
-                                player.openMediaArtist(modelData.mediaId)
-                            else
-                                player.openArtist(modelData.id)
-                        }
+            Repeater {
+                model: control.artists
+                ArtistRow {
+                    width: list.width
+                    height: control.rowH
+                    y: index * control.rowH
+                    artistId: modelData.id
+                    name: modelData.name
+                    coverUrl: modelData.coverUrl || ""
+                    coverThumbPath: modelData.coverThumbPath || ""
+                    onActivated: {
+                        player.closeSongArtistPicker()
+                        if (modelData.mediaId)
+                            player.openMediaArtist(modelData.mediaId)
+                        else
+                            player.openArtist(modelData.id)
                     }
                 }
             }
