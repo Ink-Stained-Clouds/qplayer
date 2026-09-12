@@ -38,32 +38,69 @@ Item {
     // Internal
     visible: false
     
+    // The overlay hosts itself on the topmost ancestor that actually has a size.
+    // Walking blindly to the end of the parent chain is not enough: a dialog
+    // opened from a property binding's construction-time firing runs before its
+    // own .qml file's root Item has been parented into the scene, so the walk
+    // stops at that still-detached (and permanently 0x0) Item. The overlay then
+    // fills nothing -- no scrim, and the dialog itself lands at negative x/y,
+    // rendering as a clipped fragment in the scene's top-left corner forever.
+    function _hostRoot() {
+        var node = control
+        var best = null
+        while (node) {
+            if (node.width > 0 && node.height > 0) best = node
+            node = node.parent
+        }
+        return best
+    }
+
+    property int _openRetries: 0
+
+    Timer {
+        id: openRetryTimer
+        interval: 16
+        repeat: false
+        onTriggered: control.open()
+    }
+
     function open() {
-        var root = control
-        while (root.parent) {
-            root = root.parent
+        var root = _hostRoot()
+
+        // Not attached to a laid-out scene yet (opened mid-construction, or on
+        // the very first frame). Retry for ~half a second rather than painting
+        // the broken fragment described above.
+        if (!root) {
+            if (control._openRetries < 30) {
+                control._openRetries = control._openRetries + 1
+                openRetryTimer.restart()
+            }
+            return
         }
-        
-        if (root) {
-            overlayLayer.parent = root
-            overlayLayer.z = 99999
-            overlayLayer.anchors.fill = root
-            
-            // Stop any running animations
-            exitAnimation.stop()
-            enterAnimation.stop()
-            
-            // Reset properties for entry
-            animationWrapper.scale = 0.9
-            animationWrapper.opacity = 0.0
-            scrim.opacity = 0.0
-            
-            overlayLayer.visible = true
-            enterAnimation.start()
-        }
+        control._openRetries = 0
+
+        overlayLayer.parent = root
+        overlayLayer.z = 99999
+        overlayLayer.anchors.fill = root
+
+        // Stop any running animations
+        exitAnimation.stop()
+        enterAnimation.stop()
+
+        // Reset properties for entry
+        animationWrapper.scale = 0.9
+        animationWrapper.opacity = 0.0
+        scrim.opacity = 0.0
+
+        overlayLayer.visible = true
+        enterAnimation.start()
     }
     
     function close() {
+        // A close that lands while open() is still waiting for a laid-out scene
+        // must cancel that wait, or the dialog pops up after being dismissed.
+        openRetryTimer.stop()
+        control._openRetries = 0
         // Stop any running animations
         enterAnimation.stop()
         exitAnimation.stop()

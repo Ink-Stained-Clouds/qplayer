@@ -138,6 +138,13 @@ public final class QPlayerActivity extends Activity {
             controller = new PlayerController(backend, reader);
             sharedController = controller;
         }
+        // A reused controller still carries the one-shot event counters the
+        // previous Activity's scene already consumed. The scene built below
+        // mirrors each into a QML watch property, so a non-zero count reads as a
+        // fresh event and replays the last prompt -- mid-construction, before
+        // the scene is parented, which strands the dialog in the top-left corner
+        // with no scrim. Hand the new scene a clean slate.
+        controller.resetSceneEventRevisions();
         controller.setColorExtractor(new AndroidColorExtractor());
         // Copy-to-clipboard sink for the song menu's "复制链接". The QML action fires on
         // the render thread; ClipboardManager wants the main thread, so hop there.

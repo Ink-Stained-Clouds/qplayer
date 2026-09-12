@@ -2274,6 +2274,40 @@ public final class PlayerController {
         return logVisible;
     }
 
+    /**
+     * Zero the one-shot event counters QML watches, for a host that is about to
+     * build a fresh scene over a controller that outlived the previous one
+     * (Android keeps this instance in a static across Activity recreations so
+     * backgrounded playback stays connected).
+     *
+     * <p>Each of these properties is an event channel, not state: QML mirrors it
+     * into a {@code property real ...Watch} and acts in the Changed handler. A
+     * rebuilt scene's binding therefore initialises to whatever count the
+     * previous scene already consumed, which reads as a change from the
+     * property's 0 default and replays the last prompt -- during construction,
+     * before the scene has been parented or laid out. Every watcher ignores 0,
+     * so resetting is invisible to a scene that is still attached.
+     *
+     * <p>Call this before the new scene is created, never from a secondary scene
+     * (the desktop lyric window) that shares the same controller.
+     */
+    public void resetSceneEventRevisions() {
+        pluginInstallPromptRevision.set(0L);
+        pluginRemovalPromptRevision.set(0L);
+        pluginSettingsRevision.set(0L);
+        sourceSetupRevision.set(0L);
+        pageNavigationRevision.set(0L);
+        credentialNoticeRevision.set(0L);
+        credentialReloginRevision.set(0L);
+        webLoginSuccessRevision.set(0L);
+        debugRouteRevision.set(0L);
+        // The install prompt is the only one of these holding work in progress.
+        // With its event channel zeroed nothing can ever confirm it again, and
+        // the host may already have swept the package out of the cache, so let
+        // it go rather than leaving a reference to a file that is gone.
+        cancelPendingPluginInstall();
+    }
+
     /** Host debug automation (adb broadcast). QML watches the revision and
      *  applies {@link #debugRouteType}/{@link #debugRouteId}. */
     public final Property<String> debugRouteType = new Property<>("");
