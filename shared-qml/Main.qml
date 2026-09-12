@@ -623,8 +623,14 @@ Rectangle {
                                 player.requestPluginUi(modelData.pluginId,
                                                        modelData.contributionId)
                             } else if (modelData.action === "account") {
-                                if (player.loggedIn) app.replacePage("account", 0)
-                                else app.loginOpen = true
+                                // Also when signed out: the account page lists one
+                                // row per installed source and signing in lives
+                                // behind each row's gear, so gating this on
+                                // loggedIn would make that unreachable. With no
+                                // source installed at all the page is covered by
+                                // SourceSetupPrompt, which is the right answer
+                                // there anyway.
+                                app.replacePage("account", 0)
                             } else {
                                 app.replacePage("settings", 0)
                             }
@@ -683,7 +689,8 @@ Rectangle {
             visible: !app.wide
             type: "standard"
             icon: player.loggedIn ? "account_circle" : "login"
-            onClicked: if (player.loggedIn) app.replacePage("account", 0); else app.loginOpen = true
+            // Signed out too -- see the rail's account action.
+            onClicked: app.replacePage("account", 0)
         }
         IconButton {
             visible: !app.wide

@@ -63,11 +63,15 @@ Rectangle {
                 spacing: 14
 
                 // --- profile header ------------------------------------
+                // The primary source's signed-in user. Hidden when there is no
+                // session to describe -- an empty avatar over "匿名 / Lv.0" says
+                // nothing the signed-out row below doesn't already say better.
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.leftMargin: 12
                     Layout.rightMargin: 12
                     Layout.topMargin: 6
+                    visible: player.loggedIn
                     radius: 18
                     color: Theme.color.surfaceContainerHighest
                     implicitHeight: profileRow.implicitHeight + 32
@@ -177,13 +181,15 @@ Rectangle {
                 }
 
                 // --- every source's account ----------------------------
-                // The header above is the primary source alone; without this a
-                // second signed-in source is nowhere to be seen. Primary sorts
-                // first, which is the order the controller publishes.
+                // One row per installed source that can report an account,
+                // signed in or not -- signing in and out both live behind the
+                // row's own gear, so a source must be listed before it can be
+                // signed into. Primary sorts first, which is the order the
+                // controller publishes.
                 Text {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
-                    visible: (player.sourceAccounts || []).length > 1
+                    visible: (player.sourceAccounts || []).length > 0
                     text: i18n.t("account.sources")
                     color: Theme.color.primary
                     font.family: Theme.typography.bodySmall.family
@@ -192,8 +198,7 @@ Rectangle {
                 }
 
                 Repeater {
-                    model: (player.sourceAccounts || []).length > 1
-                           ? player.sourceAccounts : null
+                    model: player.sourceAccounts || null
                     delegate: Rectangle {
                         Layout.fillWidth: true
                         Layout.leftMargin: 12
@@ -302,10 +307,13 @@ Rectangle {
                 }
 
                 // --- stats ---------------------------------------------
+                // Counts belong to the primary source's session, so they hide
+                // with the header rather than reading a confident "0 / 0".
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.leftMargin: 12
                     Layout.rightMargin: 12
+                    visible: player.loggedIn
                     radius: 18
                     color: Theme.color.surfaceContainerHighest
                     implicitHeight: statsRow.implicitHeight + 32
@@ -363,22 +371,11 @@ Rectangle {
                     }
                 }
 
-                // --- actions -------------------------------------------
+                // Every source is listed now, so signing in and out belongs to
+                // each row's own gear -- a page-level button could only ever mean
+                // one of them, and would be a second way to do what the single
+                // row's gear already does.
                 Item { Layout.preferredHeight: 8 }
-
-                // With several sources listed, signing in and out belongs to each
-                // source's own gear -- a single button here could only ever mean
-                // one of them. It stays for the single-source case.
-                Button {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 12
-                    Layout.rightMargin: 12
-                    visible: (player.sourceAccounts || []).length <= 1
-                    type: "outlined"
-                    icon: "logout"
-                    text: i18n.t("account.logout")
-                    onClicked: logoutDialog.open()
-                }
             }
         }
     }
@@ -407,13 +404,4 @@ Rectangle {
         onAccepted: if (page.menuRow) player.logoutSource(page.menuRow.providerId)
     }
 
-    Dialog {
-        id: logoutDialog
-        title: i18n.t("account.logout")
-        text: i18n.t("account.logout.confirm")
-        icon: "logout"
-        acceptText: i18n.t("account.logout.accept")
-        rejectText: i18n.t("common.cancel")
-        onAccepted: { player.logout(); page.back(); }
-    }
 }
