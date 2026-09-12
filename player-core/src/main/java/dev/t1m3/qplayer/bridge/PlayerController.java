@@ -3758,7 +3758,7 @@ public final class PlayerController {
                 post(() -> playing.set(true));
                 notifyPlayback();
                 loadPluginLyrics(t, i);
-                cachePluginAudioAsync(t, false, null);
+                cachePluginAudioAfterStart(t);
             } else {
                 t.streamUrl = null;
                 t.streamHeaders.clear();
@@ -4698,8 +4698,35 @@ public final class PlayerController {
             playingIntent = true;
             post(() -> playing.set(true));
             notifyPlayback();
-            cachePluginAudioAsync(track, false, null);
+            cachePluginAudioAfterStart(track);
         }));
+    }
+
+    /**
+     * Delay before the background auto-cache download starts, in ms.
+     *
+     * <p>Playing an uncached track pulls the same bytes twice at once: the
+     * backend streams the URL to play it, and this cache download fetches the
+     * identical file again. Where bandwidth is the limit -- phones especially --
+     * the two halve each other, and the half that suffers is the one the user is
+     * waiting on, which is why a first play drags while a second (served from
+     * disk, no network at all) starts immediately. Letting playback have the
+     * pipe to itself first costs the cache nothing: it still finishes long
+     * before the track does.
+     */
+    private static final long AUTO_CACHE_DELAY_MS = 6_000L;
+
+    /** Queue the auto-cache for a track that just started playing. Skipped if the
+     *  user has moved on by the time it fires -- caching a track they skipped past
+     *  would take bandwidth from whatever they skipped to. */
+    private void cachePluginAudioAfterStart(Track track) {
+        final String mediaId = track != null ? track.canonicalId() : "";
+        if (mediaId.isEmpty() || diskCache.hasAudio(mediaId)) return;
+        fadeWorker.schedule(() -> onMain(() -> {
+            Track current = currentTrack();
+            if (current == null || !mediaId.equals(current.canonicalId())) return;
+            cachePluginAudioAsync(track, false, null);
+        }), AUTO_CACHE_DELAY_MS, TimeUnit.MILLISECONDS);
     }
 
     private void cachePluginAudioAsync(Track track, boolean active, Runnable completion) {
